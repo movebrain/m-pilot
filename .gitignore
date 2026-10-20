@@ -1,0 +1,32 @@
+# 비밀 정보: 절대 올리지 않기!
+.env
+.env.*
+!.env.example
+
+# 가상환경, 캐시: 각자 PC에서 다시 만들 수 있음
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# 벡터 DB 저장 폴더: 용량이 크고 build_index로 다시 생성 가능
+chroma_db/
+data/chroma/
+
+# 업로드 사진: 실행하면 생기는 로컬 데이터 (접수 건은 MySQL 컨테이너에 저장)
+data/photos/
+
+# 제품 카탈로그(실제 공개 문서): 공개 저장소에 올리지 않기
+*E-Cat2025*
+
+# OS·에디터 자동 생성 파일 (Mac / Windows 차이)
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code 개인 설정 (팀 공유 규칙은 CLAUDE.md)
+CLAUDE.local.md
+.claude/settings.local.json
