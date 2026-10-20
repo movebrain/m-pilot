@@ -34,7 +34,7 @@ mpilot/
   data/              errorcodes.csv, history_seed.csv, eval_questions.csv,
                      equipment.csv, glossary.csv, photos/
   app.py             Gradio Blocks: 고객 Tab, 엔지니어 Tab, 가상 데이터 안내
-  mpilot/
+  src/
     schema.py        Pydantic: ErrorCode, ServiceCase, Answer, CaseBrief  (F01)
     db.py            SQLite 접수 건 저장·조회                             (F04)
     indexing.py      표 → 검색용 문서 → Chroma(manual, history)           (F03, F04)
