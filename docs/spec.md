@@ -20,6 +20,7 @@
 ├── requirements.txt               패키지 버전 고정, 마지막 줄 `-e .`
 ├── pyproject.toml                 `src/` 편집 설치 설정(`import db`로 가져오기 위함), pytest `real_db` 마커 등록
 ├── src/                           모듈 = 파일 하나, 타입·프롬프트는 모듈 안. 베이스라인이 전 모듈을 스텁으로 먼저 올리고 담당이 덮어씀(소유는 roles.md)
+│   ├── config.py                  `.env` 로드, LLM·임베딩 생성(`get_llm`, `get_embeddings`)
 │   ├── errorcodes.py              에러코드 표 로더·검증, 설비 목록
 │   ├── parsing.py                 사양서 PDF 본문 → 청크(쪽·절)
 │   ├── indexing.py                Chroma `manual`·`history` 생성·질의·인용 원문(`python -m indexing --reset`)
@@ -37,16 +38,18 @@
 │   ├── merge_errorcodes.py        표 9-4 추출·`data/raw/` 에러코드 CSV 병합·대조 리포트
 │   ├── convert_history.py         장애 기록 더미 4종(`data/raw/`) → `history_seed.csv` 변환(5.3)
 │   ├── init_db.py                 스키마·시드 적재, `--reset`, `--check`(이력 시드 검증)
+│   ├── make_sample.py             `data/raw/`에서 개발용 샘플(에러코드 10행, 이력 5건) 추출 → `data/sample/`
 │   └── schema.sql                 MySQL 스키마(`cases`, `case_errors`, `case_messages`)
 ├── tests/
 │   ├── conftest.py                다른 파트 모듈을 모의 데이터로 대체하는 픽스처(CI는 API 키 없이 돌림)
+│   ├── test_contracts.py          6장 시그니처가 바뀌지 않았는지 검사(CI)
 │   ├── test_<모듈>.py               7.2 인수 기준
 │   └── test_integration.py        7.4 통합 시나리오
 ├── data/
 │   ├── errorcodes.csv, history_seed.csv, eval_questions.csv
 │   ├── raw/                       제공 원본(읽기 전용): 에러코드 CSV, 장애 기록 더미 4종
 │   ├── manuals/                   사양서 PDF 4종(제공 원본, 가상 문서)
-│   ├── sample/                    개발용 샘플(에러코드 10행, 이력 5건)
+│   ├── sample/                    개발용 샘플(`make_sample.py`가 생성): `errorcodes.csv`, `history_seed.csv`
 │   ├── chroma/                    Chroma 저장(생성, 저장소 제외)
 │   └── photos/                    신고 사진(생성, 저장소 제외)
 ├── .github/                       워크플로(라벨러). `real_db` CI는 첫 구현이 올라온 뒤 추가
@@ -63,6 +66,7 @@
 | `.gitignore` | `.env`, `data/chroma/`, `data/photos/`, `__pycache__/` 제외 |  | 서비스 이력 |
 | `requirements.txt` | 패키지 버전 고정, 마지막 줄 `-e .` |  | 서비스 이력 |
 | `pyproject.toml` | `src/` 편집 설치 설정, pytest `real_db` 마커 등록 | 의존성은 `requirements.txt`에 둔다 | 서비스 이력 |
+| `src/config.py` | `.env`를 읽고 LLM(`get_llm`, `temperature=0`)과 임베딩(`get_embeddings`)을 만든다. 모델명은 환경 변수 | 호출할 때 만들어 import 시 API에 접속하지 않는다. 테스트는 이 두 함수를 가짜 모델로 바꾼다 | 서비스 이력 |
 | `src/errorcodes.py` | `errorcodes.csv`를 로드·검증하고 설비 목록을 만든다(`ErrorCode`) | 분기·검색 판단은 하지 않는다. 의존 없음 | 벡터 DB·데이터 |
 | `src/parsing.py` | 사양서 PDF 본문을 쪽·절 청크로 나눈다 | 표 9-4는 다루지 않는다(`merge_errorcodes.py`). 의존 없음 | 벡터 DB·데이터 |
 | `src/indexing.py` | Chroma `manual`·`history` 생성·질의(설비 필터), 인용 원문 조회, 확정 이력 추가. `python -m indexing --reset`으로 재생성 | 질문 해석·판정은 하지 않는다. 의존: `errorcodes`, `parsing`, `history_seed.csv` | 벡터 DB·인덱싱 |
@@ -78,16 +82,18 @@
 | `scripts/merge_errorcodes.py` | 사양서 표 9-4를 추출해 CSV와 코드 기준으로 병합하고 대조 리포트를 낸다 → `errorcodes.csv` | 일회성이고 앱이 부르지 않는다 | 벡터 DB·데이터 |
 | `scripts/convert_history.py` | 장애 기록 더미 200건을 접수 건 형식으로 바꾼다 → `history_seed.csv` | 일회성이고 보강분은 손으로 쓴다 | MySQL |
 | `scripts/init_db.py` | 스키마·시드 적재, `--reset`, `--check` | DDL은 `schema.sql`에, 쿼리는 `db.py`에 둔다 | MySQL |
+| `scripts/make_sample.py` | `data/raw/`에서 함정 코드와 설비별 저위험 코드 10행, 그 이력 5건을 뽑아 `data/sample/`에 쓴다 | 원인·조치는 비운다(표 9-4 병합은 US-01) | 서비스 이력 |
 | `scripts/schema.sql` | `cases`, `case_errors`, `case_messages` 정의 |  | MySQL |
 | `tests/test_<모듈>.py` | 모듈별 인수 기준(7.2) | `db`의 `real_db` 테스트는 `test_db.py`에 두고 CI에서만 돌린다 | 각 파트 |
 | `tests/test_integration.py` | 통합 시나리오 1~4(7.4) |  | 서비스 이력 |
-| `tests/conftest.py` | 다른 파트 모듈을 모의 데이터로 대체하는 픽스처 | 실제 LLM·Chroma를 부르지 않는다 | 서비스 이력 |
+| `tests/conftest.py` | 다른 파트 모듈, 메모리 `db`(`fake_db`), LLM·임베딩(`fake_llm`)을 모의 데이터로 대체하는 픽스처 | 실제 LLM·Chroma·MySQL을 부르지 않는다 | 서비스 이력 |
+| `tests/test_contracts.py` | 6장 함수의 인자 이름·순서와 반환 타입이 계약과 같은지 검사한다 | 동작은 검사하지 않는다(각 파트의 AC 테스트 몫) | 서비스 이력 |
 | `data/errorcodes.csv` | 에러코드 표 정본(249행) | `merge_errorcodes.py`가 만든다 | 벡터 DB·데이터 |
 | `data/history_seed.csv` | 가상 이력(원본 변환 + 보강분) | `convert_history.py`가 만든다 | MySQL |
 | `data/eval_questions.csv` | 평가 질문 | 데이터를 만들지 않은 사람이 쓴다 | 서비스 이력 |
 | `data/raw/` | 제공 원본(읽기 전용): `error_code_table.csv`, `{agv,mini_loader,rtv,srm}_error_history_dummy.csv` | 앱이 직접 읽지 않고 `scripts/`가 변환한다 | 팀 |
 | `data/manuals/` | 사양서 PDF 4종(제공 원본) | `parsing`이 직접 읽는다 | 벡터 DB·데이터 |
-| `data/sample/` | 개발용 샘플(에러코드 10행, 이력 5건) |  | MySQL |
+| `data/sample/` | 개발용 샘플(에러코드 10행, 이력 5건) | `make_sample.py`가 만든다. 실제 데이터가 나오기 전 인덱싱·검색 개발용 | 서비스 이력 |
 | `data/chroma/`, `data/photos/` | Chroma 저장, 신고 사진 | 생성물이고 저장소에서 제외한다 | 인덱싱 / 고객 접수 |
 | `.github/` | 이슈 템플릿, 라벨러 워크플로 | `real_db` CI는 첫 구현이 올라온 뒤 추가한다 | 팀 |
 | `docs/` | `intent.md`(SOT), `spec.md`(계약), `roles.md`(운영), `issues.md`(이슈) |  | 팀 |
@@ -97,7 +103,7 @@
 | 항목         | 결정                                                                                                                                                                                                                                                                                            |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 언어·UI      | Python, Gradio Blocks(Tab)                                                                                                                                                                                                                                                                      |
-| LLM·임베딩   | OpenAI API(채팅 + 임베딩), 모델명은 환경 변수. LangChain으로 연결                                                                                                                                                                                                                               |
+| LLM·임베딩   | OpenAI API(채팅 + 임베딩), LangChain으로 연결. 키는 `OPENAI_API_KEY`, 모델명은 `OPENAI_CHAT_MODEL`·`OPENAI_EMBEDDING_MODEL`(기본값 `gpt-4o-mini`, `text-embedding-3-small`)이고 `src/config.py`가 만든다 (기본값)                                                                                                                                                                                                                               |
 | 벡터DB       | Chroma(수업에서 쓰는 벡터DB 기준, 다르면 교체) (기본값)                                                                                                                                                                                                                                         |
 | 접수 건 저장 | MySQL(Docker, PyMySQL). 로컬 테스트는 모두 연결을 목으로 바꿔 DB 없이 돌고, SQL 동작 테스트(`real_db`)는 CI의 MySQL에서만 돌린다. 시연과 `scripts/init_db.py`는 로컬 MySQL을 쓴다. ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
 | PDF 파싱     | pdfplumber. 사양서 4종은 표 추출이 되는 텍스트 PDF다 (기본값)                                                                                                                                                                                                                                   |
@@ -123,7 +129,7 @@
 - **분기**: 신고 핸들러(`src/ui/customer.py`)가 `create_case` → `route(pairs)` → `update_case`(`branch`) 순서로 처리한다. 복합 신고는 쌍마다 판정해 모든 쌍이 `guide`일 때만 `guide`다. P1의 `route()`는 항상 `support`다. 저위험 코드는 에러코드 표 249개 중 78개이고, 심각도 상 150개는 `조치 구분`과 무관하게 항상 `support`다(이 중 51개는 사양서가 고객사 조치로 분류하지만 고객에게 안내하지 않는다). 신고 접수와 분기는 LLM 없이 동작한다.
 - **저장**: DB 접속은 `src/db.py`에서만 하고 다른 모듈은 공개 함수만 호출한다. `case_id` 채번은 동시 접수에도 겹치지 않게 DB 안에서 처리한다.
 - **검색**: Chroma 컬렉션은 `manual`(에러코드 행 1개 = 문서 1개, 사양서 본문은 절 단위 청크)과 `history`(확정된 접수 건의 쌍 1개 = 문서 1개, 내용은 건 전체)다. 모든 검색에 `equipment` 필터를 적용하고 `history` 결과는 `case_id`로 중복을 제거한다. 메타데이터는 `manual` 행 문서 `equipment`, `code`, `severity`, `action_owner`, `row_id`, 본문 청크 `equipment`, `section`, `page`, `history` `equipment`, `code`, `case_id`, `resolution`이다.
-- **답변**: 복합 신고의 `brief`는 쌍마다 `retrieve`해 쌍별 섹션으로 만든다. LLM 호출이 실패하면 세션 화면에 에러와 재시도 버튼을 보이고 접수 건은 바뀌지 않는다.
+- **답변**: 복합 신고도 건 단위로 처리한다. `brief`는 설비 필터 때문에 쌍마다 `retrieve`하고, 증거를 합쳐 건 단위로 한 번 판정한다. 쌍 구분은 인용의 `ref_id`(`{equipment}/{code}`)로 한다. LLM 호출이 실패하면 세션 화면에 에러와 재시도 버튼을 보이고 접수 건은 바뀌지 않는다.
 - **모듈**: 모듈은 import할 때 DB·Chroma에 접속하지 않는다. 데이터 경로는 `Path(__file__)` 기준이다.
 - **화면**: 고객 Tab과 엔지니어 Tab은 한 앱의 Tab이다. 접근을 막지 않고 고객 Tab 코드가 고객 노출 필드만 렌더링한다.
 
@@ -258,6 +264,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | 모듈         | 함수                                                                      | 입력 → 출력                                                                                                                                                                                       |
 | ------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `errorcodes` | `load_error_codes(path)`, `equipment_list(codes)`                         | CSV → `list[ErrorCode]` (검증 실패는 예외) / → 설비 목록(`equipment` 고유값)                                                                                                                      |
+| `config`     | `get_llm()`, `get_embeddings()`                                           | → LangChain 채팅 모델(`temperature=0`) / 임베딩. 호출할 때 만든다. `search`, `answer`, `history`, `indexing`은 LLM·임베딩을 이 함수로만 얻는다 |
 | `parsing`    | `parse_body(dir)`                                                         | 사양서 PDF 4종 → `list[Chunk]`(쪽·절). 표 9-4는 `scripts/merge_errorcodes.py`가 `errorcodes.csv`로 합친다                                                                                             |
 | `indexing`   | `build_index(reset)`, `add_history(case)`                                 | CSV, 파싱 결과, 시드 → Chroma `manual`, `history`(`python -m indexing --reset`으로 실행) / 확정된 `ServiceCase` → `history`에 추가                                                                                                       |
 | `indexing`   | `query(collection, text, equipment, k)`, `get_source(ref_id)`             | 설비 필터를 적용한 벡터 질의 → `list[Hit]` / 인용 원문(표 행, 본문, 이력) 조회                                                                                                          |
@@ -268,7 +275,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `search`     | `analyze_query(text, default_equipment, default_code)`                    | → `QueryAnalysis`. 4개 설비 밖이면 `equipment=other`                                                                                                                                              |
 | `search`     | `lookup_error_code(equipment, code)`                                      | → 정확히 1행 또는 `None`                                                                                                                                                                          |
 | `search`     | `retrieve(analysis, k_manual=3, k_history=3)`                             | 키워드 기반 조회 + 매뉴얼·이력 검색을 병렬로 → `Evidence`                                                                                                                                                |
-| `search`     | `decide_verdict(analysis, evidence)`                                      | → `"answered"` \| `"insufficient_evidence"` \| `"not_applicable"`. `analysis.equipment=other`이면 `evidence=None`(검색하지 않음)으로 불러 `not_applicable`, 아니면 `evidence.has_evidence`가 거짓일 때 `insufficient_evidence`, 아니면 `answered`. `brief`는 쌍마다, `ask`는 질문마다 부른다 |
+| `search`     | `decide_verdict(analysis, evidence)`                                      | → `"answered"` \| `"insufficient_evidence"` \| `"not_applicable"`. `analysis.equipment=other`이면 `evidence=None`(검색하지 않음)으로 불러 `not_applicable`, 아니면 `evidence.has_evidence`가 거짓일 때 `insufficient_evidence`, 아니면 `answered`. `brief`는 건마다 한 번(쌍별 검색 결과를 합친 증거로), `ask`는 질문마다 부른다 |
 | `answer`     | `brief(case)`                                                             | → `CaseBrief`. 저장하고 이미 있으면 재생성하지 않는다                                                                                                                                             |
 | `answer`     | `ask(case_id, question)`                                                  | → `Answer`. 접수번호별 대화 기억을 반영한다                                                                                                                                                       |
 | `routing`    | `route(pairs)`                                                            | `pairs`는 `(equipment, code)` 1~4개. DB 비의존. → `"support"` \| `"guide"`(건 단위)                                                                                                    |
@@ -278,7 +285,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `evaluate`   | `run_eval(questions_csv)`                                                 | → 지표 리포트(8장)                                                                                                                                                                                |
 | `ui.customer`, `ui.engineer`, `ui.history_editor` | `build()` | `gr.Tab` 안에서 호출되어 그 Tab의 컴포넌트와 이벤트를 만든다. `app.py`가 Tab 순서대로 부른다 |
 
-베이스라인(프로젝트 시작 전에 서비스 이력 담당이 올린다)이 `src/`의 모든 모듈을 이 표의 시그니처와 5.4 타입으로 만들고, 함수 본문은 모의 데이터를 돌려주는 스텁으로 둔다. 각 담당은 자기 모듈의 스텁을 같은 시그니처의 실제 구현으로 덮어쓴다. 스텁의 쓰기 함수(`add_history`, `confirm_case`)는 저장하지 않는다. 단위 테스트와 CI는 `tests/conftest.py`의 픽스처가 다른 파트의 모듈을 같은 종류의 모의 데이터로 대체해서 실제 LLM·Chroma 없이 돈다.
+베이스라인(프로젝트 시작 전에 서비스 이력 담당이 올린다)이 `src/`의 모든 모듈을 이 표의 시그니처와 5.4 타입으로 만들고, 함수 본문은 모의 데이터를 돌려주는 스텁으로 둔다. 각 담당은 자기 모듈의 스텁을 같은 시그니처의 실제 구현으로 덮어쓴다. 스텁의 쓰기 함수(`add_history`, `confirm_case`)는 저장하지 않는다. 실제 구현은 자기 AC 테스트와 `tests/test_contracts.py`를 통과한 PR로만 develop에 머지한다. 그 전까지 develop에는 스텁이 남아 의존 파트가 항상 동작하는 인터페이스를 쓴다. 단위 테스트와 CI는 `tests/conftest.py`의 픽스처가 다른 파트의 모듈, `db`(`fake_db`), LLM·임베딩(`fake_llm`)을 모의 데이터로 대체해서 실제 LLM·Chroma·MySQL 없이 돈다.
 
 ## 7. 기능 명세
 
@@ -326,7 +333,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | AC-03.2 | 같은 코드로 새 신고를 하면 방금 확정한 접수 건이 요약·대응 방안과 답변의 근거로 나타난다                                                                                                                                                          | 통합 시나리오 3                   |
 | AC-04.1 | `create_case`는 `case_id`(`SC-YYYYMMDD-NNN`)를 부여하고 쌍 1~4개를 `case_errors`에 저장하며(0개, 5개 이상, 같은 쌍 중복은 거부. 같은 설비의 다른 코드는 허용) `status=접수`로 저장한다. 동시에 접수해도 `case_id`가 겹치지 않는다                 | DB 확인                           |
 | AC-04.2 | 요약·대응 방안·대화 기록·상태를 저장하고 조회한다. `transition`이 상태 전이를 4장 표대로만 허용한다                                                                                                                                               | 저장 후 조회, 전이                |
-| AC-05.1 | 제공된 장애 기록 200건을 `convert_history.py`로 변환하고 복합·함정 보강분을 더해 가상 이력을 만든다(미해결 포함). `data/sample/`(샘플 에러코드 10행, 이력 5건)도 만든다. `init_db.py --check`가 이력의 코드·형식(5.3 검증 항목)을 검증한다                                                                                                     | `init_db.py --check`, 상호 검수   |
+| AC-05.1 | 제공된 장애 기록 200건을 `convert_history.py`로 변환하고 복합·함정 보강분을 더해 가상 이력을 만든다(미해결 포함). 개발용 샘플 `data/sample/`은 베이스라인의 `scripts/make_sample.py`가 만든다. `init_db.py --check`가 이력의 코드·형식(5.3 검증 항목)을 검증한다                                                                                                     | `init_db.py --check`, 상호 검수   |
 | AC-05.2 | `load_seed`가 `history_seed.csv`를 `cases`(`source=authored`, `confirmed=true`)로 적재한다. `case_id`는 원본 이력ID, `created_at`은 발생일시다                                                                                                                                                        | 건수                              |
 | AC-06.1 | 설비와 에러코드는 필수이고 에러코드는 고른 설비의 목록에서만 고른다. 한 건에 쌍을 1~4개 고를 수 있고(복합 장애) 같은 쌍을 두 번 고르거나 5번째 쌍을 추가할 수 없다. 같은 설비의 다른 코드는 함께 고를 수 있다. 증상 메모와 사진은 비워도 접수된다 | 폼 테스트, 최소 입력              |
 | AC-06.2 | 사진은 jpg/jpeg/png, 5MB 이하만 저장한다. 초과하면 거부 메시지를 보이되 사진 없이 접수할 수 있다                                                                                                                                                  | 큰 파일, 다른 형식                |
@@ -346,7 +353,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | AC-13.2 | 다시 열면 저장된 요약·대응 방안·대화를 그대로 보인다                                                                                                                                                                                              | 재열기                            |
 | AC-13.3 | 인용을 누르면 `indexing.get_source`로 가져온 원문(표 행, 본문, 이력)이 보인다. 근거 부족과 적용 대상 아님은 눈에 띄게 표시된다                                                                                                                    | 화면                              |
 | AC-13.4 | 접수 사진을 열람하고 상태를 `조치 중`으로 바꿀 수 있다                                                                                                                                                                                            | 사진 있는 건, 상태 변경           |
-| AC-14.1 | `brief`는 요약(쌍마다 설비, 코드의 증상·원인과 쌍별 근거, 증상 메모, 사진 유무, 유사 이력 유무)과 대응 방안을 반환한다. 메모와 코드가 어긋나면 둘 다 보이고 코드를 우선한다                                                                       | 샘플 3건                          |
+| AC-14.1 | `brief`는 요약(쌍마다 설비, 코드의 증상·원인, 증상 메모, 사진 유무, 유사 이력 유무)과 대응 방안을 반환한다. 판정은 건 단위로 한 번이고, 근거가 없는 쌍은 요약에 표시한다. 메모와 코드가 어긋나면 둘 다 보이고 코드를 우선한다                                                                       | 샘플 3건                          |
 | AC-14.2 | 심각도가 상인 코드의 대응 방안에는 매뉴얼의 안전 수칙 단계가 포함된다                                                                                                                                                                             | 샘플 확인                         |
 | AC-14.3 | 접수 건당 한 번만 생성해 저장하고, 이미 있으면 LLM을 다시 호출하지 않는다                                                                                                                                                                         | 재호출 횟수                       |
 | AC-14.4 | 복합 신고에서 쌍 사이의 인과 관계는 근거가 있을 때만 말하고, 근거가 없으면 추측하지 않는다                                                                                                                                                        | 복합 샘플 확인                    |
@@ -376,7 +383,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 판정 순서는 적용 대상 아님 → 근거 부족이다. 판정은 `search.decide_verdict`(코드)가 하고 LLM은 바꾸지 못한다. `answer`는 그 결과를 `Answer.verdict`에 옮길 뿐이다.
 
 - **적용 대상 아님**: `analyze_query`가 질문이 가리키는 설비를 고정 목록 4개 중 하나 또는 `other`로 분류한다. `other`이면 코드가 `not_applicable`로 판정하고 검색 없이 답한다. LLM은 분류만 한다.
-- **근거 부족**: 키워드 기반 조회가 근거로 인정되거나, 매뉴얼·이력의 상위 k 히트 중 하나라도 거리가 임계값 τ 이하이면 근거가 있다. 둘 다 아니면 `insufficient_evidence`다. 키워드 기반 조회는 `brief`에서는 접수 건의 각 쌍의 코드로(쌍마다 따로 판정), `ask`에서는 질문에 코드가 명시된 경우(`code_in_question`)에만 근거로 인정한다. 접수 건의 쌍으로 채운 경우를 빼서, 코드와 무관한 질문이 항상 근거 있음으로 판정되지 않게 한다. τ는 거리 로그로 정하고 평가 질문으로 한 번 조정한 뒤 고정한다.
+- **근거 부족**: 키워드 기반 조회가 근거로 인정되거나, 매뉴얼·이력의 상위 k 히트 중 하나라도 거리가 임계값 τ 이하이면 근거가 있다. 둘 다 아니면 `insufficient_evidence`다. 복합 신고는 쌍 중 하나라도 근거가 있으면 근거가 있다(건 단위 판정). 키워드 기반 조회는 `brief`에서는 접수 건의 쌍 코드로, `ask`에서는 질문에 코드가 명시된 경우(`code_in_question`)에만 근거로 인정한다. 접수 건의 쌍으로 채운 경우를 빼서, 코드와 무관한 질문이 항상 근거 있음으로 판정되지 않게 한다. τ는 거리 로그로 정하고 평가 질문으로 한 번 조정한 뒤 고정한다.
 
 ### 7.4 통합 시나리오 (시연·통합 테스트)
 
