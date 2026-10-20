@@ -13,9 +13,9 @@ __pycache__/
 
 # 벡터 DB 저장 폴더: 용량이 크고 build_index로 다시 생성 가능
 chroma_db/
+data/chroma/
 
-# 접수 건 저장소와 업로드 사진: 실행하면 생기는 로컬 데이터
-mpilot.db
+# 업로드 사진: 실행하면 생기는 로컬 데이터 (접수 건은 MySQL 컨테이너에 저장)
 data/photos/
 
 # 제품 카탈로그(실제 공개 문서): 공개 저장소에 올리지 않기
