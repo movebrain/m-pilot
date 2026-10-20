@@ -14,13 +14,12 @@
 
 ```
 ├── app.py                         Gradio Blocks 조립, "모든 데이터는 가상" 배너
-├── docker-compose.yml             MySQL 컨테이너(통합·시연, CI의 `real_db`)
+├── docker-compose.yml             MySQL 컨테이너(앱 실행·시연, CI의 `real_db`)
 ├── .env.example                   API 키, MySQL 접속 정보 예시
 ├── .gitignore                     `.env`, `data/chroma/`, `data/photos/`, `__pycache__/`
 ├── requirements.txt               패키지 버전 고정, 마지막 줄 `-e .`
-├── pyproject.toml                 `src/` 편집 설치 설정(`import db`로 가져오기 위함)
-├── src/                           모듈 = 파일 하나, 타입·프롬프트는 모듈 안(소유 파트는 roles.md)
-│   ├── registry.py                모듈별 실제/가짜 전환(`MPILOT_FAKES`)
+├── pyproject.toml                 `src/` 편집 설치 설정(`import db`로 가져오기 위함), pytest `real_db` 마커 등록
+├── src/                           모듈 = 파일 하나, 타입·프롬프트는 모듈 안. 베이스라인이 전 모듈을 스텁으로 먼저 올리고 담당이 덮어씀(소유는 roles.md)
 │   ├── errorcodes.py              에러코드 표 로더·검증, 설비 목록
 │   ├── parsing.py                 사양서 PDF 본문 → 청크(쪽·절)
 │   ├── indexing.py                Chroma `manual`·`history` 생성·질의·인용 원문(`python -m indexing --reset`)
@@ -35,24 +34,63 @@
 │       ├── engineer.py            엔지니어 Tab: 접수 목록, 세션
 │       └── history_editor.py      엔지니어 Tab: 이력 작성
 ├── scripts/                       일회성 데이터 준비와 DB 초기화
-│   ├── merge_errorcodes.py        표 9-4 추출·CSV 병합·대조 리포트
-│   ├── convert_history.py         장애 기록 더미 4종(`resources/`) → `history_seed.csv` 변환(5.3)
+│   ├── merge_errorcodes.py        표 9-4 추출·`data/raw/` 에러코드 CSV 병합·대조 리포트
+│   ├── convert_history.py         장애 기록 더미 4종(`data/raw/`) → `history_seed.csv` 변환(5.3)
 │   ├── init_db.py                 스키마·시드 적재, `--reset`, `--check`(이력 시드 검증)
 │   └── schema.sql                 MySQL 스키마(`cases`, `case_errors`, `case_messages`)
 ├── tests/
-│   ├── conftest.py                `real_db` 픽스처(테스트 DB 접속, 테스트마다 비움)
+│   ├── conftest.py                다른 파트 모듈을 모의 데이터로 대체하는 픽스처(CI는 API 키 없이 돌림)
 │   ├── test_<모듈>.py               7.2 인수 기준
 │   └── test_integration.py        7.4 통합 시나리오
 ├── data/
 │   ├── errorcodes.csv, history_seed.csv, eval_questions.csv
-│   ├── manuals/                   사양서 PDF 4종(가상 문서)
-│   ├── sample/                    개발용 샘플(에러코드 10행, 이력 5건), 가짜 응답 `<모듈>.json`
+│   ├── raw/                       제공 원본(읽기 전용): 에러코드 CSV, 장애 기록 더미 4종
+│   ├── manuals/                   사양서 PDF 4종(제공 원본, 가상 문서)
+│   ├── sample/                    개발용 샘플(에러코드 10행, 이력 5건)
 │   ├── chroma/                    Chroma 저장(생성, 저장소 제외)
 │   └── photos/                    신고 사진(생성, 저장소 제외)
-├── resources/                     제공 원본(읽기 전용): 사양서 PDF, 장애 기록 더미, 에러코드 CSV
 ├── .github/                       워크플로(라벨러). `real_db` CI는 첫 구현이 올라온 뒤 추가
 └── docs/                          intent.md, spec.md, roles.md, issues.md
 ```
+
+파일별 일과 경계다. 함수 시그니처는 6장, 타입은 5.4가 정한다.
+
+| 파일 | 하는 일 | 경계(하지 않는 일, 의존) | 소유 |
+| --- | --- | --- | --- |
+| `app.py` | 고객·엔지니어 Tab을 조립하고 "모든 데이터는 가상" 배너를 단다 | 화면 로직과 규칙은 `src/ui/`와 모듈에 있다 | 고객 접수 |
+| `docker-compose.yml` | 로컬 MySQL 컨테이너(앱 실행·시연)와 CI의 `real_db`용 MySQL | 앱 코드와 무관 | MySQL |
+| `.env.example` | API 키, MySQL 접속 정보 템플릿 | 실제 값은 `.env`(저장소 제외)에 둔다 | 서비스 이력 |
+| `.gitignore` | `.env`, `data/chroma/`, `data/photos/`, `__pycache__/` 제외 |  | 서비스 이력 |
+| `requirements.txt` | 패키지 버전 고정, 마지막 줄 `-e .` |  | 서비스 이력 |
+| `pyproject.toml` | `src/` 편집 설치 설정, pytest `real_db` 마커 등록 | 의존성은 `requirements.txt`에 둔다 | 서비스 이력 |
+| `src/errorcodes.py` | `errorcodes.csv`를 로드·검증하고 설비 목록을 만든다(`ErrorCode`) | 분기·검색 판단은 하지 않는다. 의존 없음 | 벡터 DB·데이터 |
+| `src/parsing.py` | 사양서 PDF 본문을 쪽·절 청크로 나눈다 | 표 9-4는 다루지 않는다(`merge_errorcodes.py`). 의존 없음 | 벡터 DB·데이터 |
+| `src/indexing.py` | Chroma `manual`·`history` 생성·질의(설비 필터), 인용 원문 조회, 확정 이력 추가. `python -m indexing --reset`으로 재생성 | 질문 해석·판정은 하지 않는다. 의존: `errorcodes`, `parsing`, `history_seed.csv` | 벡터 DB·인덱싱 |
+| `src/db.py` | 접수 건·쌍·대화 저장, 상태 전이, 시드 적재(`ServiceCase`) | SQL은 여기에만 둔다. LLM·Chroma를 모르고 `answer`를 임포트하지 않는다 | MySQL |
+| `src/search.py` | 질문 분석(LLM), 키워드 기반 조회, 매뉴얼·이력 병렬 검색, 판정(`decide_verdict`) | 판정은 코드가 하고 LLM은 분류만 한다. 답변 문장은 만들지 않는다. 의존: `indexing`, `errorcodes` | RAG 검색 |
+| `src/answer.py` | 요약·대응 방안(`brief`), 후속 질문 답변(`ask`), 모든 단계에 인용이 있는지 검증 | 검색은 `search.retrieve`로만, 저장은 `db`로만 한다. 의존: `search`, `db`, `indexing.get_source` | 엔지니어 세션 |
+| `src/history.py` | 이력 초안 구조화(`structure_resolution`), 이력 확정(`confirm_case`) | 화면은 만들지 않는다. 의존: `db`, `indexing.add_history` | 서비스 이력 |
+| `src/routing.py` | 분기(`route`), 셀프 가이드(`guide_for`) | DB·LLM을 쓰지 않고 에러코드 표만 읽는다. 의존: `errorcodes` | 고객 접수 |
+| `src/evaluate.py` | 화면 없이 엔진을 직접 호출해 지표를 계산한다(`run_eval`) | 화면에 의존하지 않는다. 의존: `db`, `indexing`, `search`, `answer` | 서비스 이력 |
+| `src/ui/customer.py` | 신고 폼, 접수번호 조회, 기술지원 대기 안내, 셀프 가이드(해결됨/해결 안 됨). 제출 핸들러가 `create_case` → `route` → `update_case`를 실행한다 | 고객에게 보이는 필드만 렌더링한다. 의존: `db`, `errorcodes`, `routing` | 고객 접수 |
+| `src/ui/engineer.py` | 접수 목록, 세션(요약 카드, 인용 원문, 질문, 사진 열람, 상태 변경) | 이력 작성은 `history_editor.py`가 한다. 의존: `answer`, `db`, `indexing.get_source` | 엔지니어 세션 |
+| `src/ui/history_editor.py` | 이력 초안 확인·수정, "예상과 달랐는지" 체크, 확정 | 구조화·저장은 `history`가 한다. 의존: `history`, `db` | 서비스 이력 |
+| `scripts/merge_errorcodes.py` | 사양서 표 9-4를 추출해 CSV와 코드 기준으로 병합하고 대조 리포트를 낸다 → `errorcodes.csv` | 일회성이고 앱이 부르지 않는다 | 벡터 DB·데이터 |
+| `scripts/convert_history.py` | 장애 기록 더미 200건을 접수 건 형식으로 바꾼다 → `history_seed.csv` | 일회성이고 보강분은 손으로 쓴다 | MySQL |
+| `scripts/init_db.py` | 스키마·시드 적재, `--reset`, `--check` | DDL은 `schema.sql`에, 쿼리는 `db.py`에 둔다 | MySQL |
+| `scripts/schema.sql` | `cases`, `case_errors`, `case_messages` 정의 |  | MySQL |
+| `tests/test_<모듈>.py` | 모듈별 인수 기준(7.2) | `db`의 `real_db` 테스트는 `test_db.py`에 두고 CI에서만 돌린다 | 각 파트 |
+| `tests/test_integration.py` | 통합 시나리오 1~4(7.4) |  | 서비스 이력 |
+| `tests/conftest.py` | 다른 파트 모듈을 모의 데이터로 대체하는 픽스처 | 실제 LLM·Chroma를 부르지 않는다 | 서비스 이력 |
+| `data/errorcodes.csv` | 에러코드 표 정본(249행) | `merge_errorcodes.py`가 만든다 | 벡터 DB·데이터 |
+| `data/history_seed.csv` | 가상 이력(원본 변환 + 보강분) | `convert_history.py`가 만든다 | MySQL |
+| `data/eval_questions.csv` | 평가 질문 | 데이터를 만들지 않은 사람이 쓴다 | 서비스 이력 |
+| `data/raw/` | 제공 원본(읽기 전용): `error_code_table.csv`, `{agv,mini_loader,rtv,srm}_error_history_dummy.csv` | 앱이 직접 읽지 않고 `scripts/`가 변환한다 | 팀 |
+| `data/manuals/` | 사양서 PDF 4종(제공 원본) | `parsing`이 직접 읽는다 | 벡터 DB·데이터 |
+| `data/sample/` | 개발용 샘플(에러코드 10행, 이력 5건) |  | MySQL |
+| `data/chroma/`, `data/photos/` | Chroma 저장, 신고 사진 | 생성물이고 저장소에서 제외한다 | 인덱싱 / 고객 접수 |
+| `.github/` | 이슈 템플릿, 라벨러 워크플로 | `real_db` CI는 첫 구현이 올라온 뒤 추가한다 | 팀 |
+| `docs/` | `intent.md`(SOT), `spec.md`(계약), `roles.md`(운영), `issues.md`(이슈) |  | 팀 |
 
 ## 3. 기술 결정
 
@@ -61,9 +99,9 @@
 | 언어·UI      | Python, Gradio Blocks(Tab)                                                                                                                                                                                                                                                                      |
 | LLM·임베딩   | OpenAI API(채팅 + 임베딩), 모델명은 환경 변수. LangChain으로 연결                                                                                                                                                                                                                               |
 | 벡터DB       | Chroma(수업에서 쓰는 벡터DB 기준, 다르면 교체) (기본값)                                                                                                                                                                                                                                         |
-| 접수 건 저장 | MySQL(Docker, PyMySQL). 단위 테스트는 연결을 목으로 바꿔 DB 없이 돌고, SQL 동작 테스트·통합·시연은 실제 MySQL을 쓴다. ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
+| 접수 건 저장 | MySQL(Docker, PyMySQL). 로컬 테스트는 모두 연결을 목으로 바꿔 DB 없이 돌고, SQL 동작 테스트(`real_db`)는 CI의 MySQL에서만 돌린다. 시연과 `scripts/init_db.py`는 로컬 MySQL을 쓴다. ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
 | PDF 파싱     | pdfplumber. 사양서 4종은 표 추출이 되는 텍스트 PDF다 (기본값)                                                                                                                                                                                                                                   |
-| API 계층     | 두지 않는다(FastAPI 없음). Gradio 핸들러가 `registry.get(...)`로 받은 모듈과 `db`를 직접 호출한다. 필요해지면 `mount_gradio_app`으로 얹는다 (기본값)                                                                                                                                                 |
+| API 계층     | 두지 않는다(FastAPI 없음). Gradio 핸들러가 `import`한 모듈을 직접 호출한다. 필요해지면 `mount_gradio_app`으로 얹는다 (기본값)                                                                                                                                                 |
 | 임포트 | `src/` 안 모듈은 서로 `import db`처럼 `src.` 없이 가져오고 `app.py`·`scripts/`·`tests/`도 같다. `pyproject.toml`이 `src/`를 편집 설치(`pip install -e .`)해 임포트 경로에 올린다. 모듈 이름은 외부 패키지와 겹치지 않게 짓는다(예: 같은 이름의 `evaluate` 패키지를 requirements에 넣지 않는다) |
 | 개발·실행    | 처음 한 번 `pip install -r requirements.txt`(마지막 줄 `-e .`가 `src/`를 임포트 경로에 올린다). `python -m scripts.init_db`로 누구나 같은 DB(스키마, 가상 이력 시드)를 만들고 `--reset`으로 되돌린다. 먼저 `docker compose up`으로 MySQL을 띄운다(DB 확인은 `docker compose exec`로 `mysql` CLI). 실행은 저장소 루트에서 `python app.py`, `python -m indexing --reset`(인덱스 생성), `python -m evaluate`, `python -m pytest` |
 | 키·재현성    | `.env`에 API 키·MySQL 접속 정보(저장소에 올리지 않음, `.env.example` 제공). LLM `temperature=0`, 평가는 고정 스냅샷                                                                                                                                                                             |
@@ -86,7 +124,7 @@
 - **저장**: DB 접속은 `src/db.py`에서만 하고 다른 모듈은 공개 함수만 호출한다. `case_id` 채번은 동시 접수에도 겹치지 않게 DB 안에서 처리한다.
 - **검색**: Chroma 컬렉션은 `manual`(에러코드 행 1개 = 문서 1개, 사양서 본문은 절 단위 청크)과 `history`(확정된 접수 건의 쌍 1개 = 문서 1개, 내용은 건 전체)다. 모든 검색에 `equipment` 필터를 적용하고 `history` 결과는 `case_id`로 중복을 제거한다. 메타데이터는 `manual` 행 문서 `equipment`, `code`, `severity`, `action_owner`, `row_id`, 본문 청크 `equipment`, `section`, `page`, `history` `equipment`, `code`, `case_id`, `resolution`이다.
 - **답변**: 복합 신고의 `brief`는 쌍마다 `retrieve`해 쌍별 섹션으로 만든다. LLM 호출이 실패하면 세션 화면에 에러와 재시도 버튼을 보이고 접수 건은 바뀌지 않는다.
-- **모듈**: 실제 모듈은 import할 때 DB·Chroma에 접속하지 않는다. `MPILOT_FAKES`는 `registry.get()`을 호출할 때 읽고, 데이터 경로는 `Path(__file__)` 기준이다.
+- **모듈**: 모듈은 import할 때 DB·Chroma에 접속하지 않는다. 데이터 경로는 `Path(__file__)` 기준이다.
 - **화면**: 고객 Tab과 엔지니어 Tab은 한 앱의 Tab이다. 접근을 막지 않고 고객 Tab 코드가 고객 노출 필드만 렌더링한다.
 
 상태 전이:
@@ -105,7 +143,7 @@
 
 ### 5.1 ErrorCode (`data/errorcodes.csv`)
 
-제공된 에러코드 CSV(5열, 249행)에 사양서 표 9-4의 원인·조치를 코드 기준으로 합친 표다.
+제공된 에러코드 CSV(`data/raw/error_code_table.csv`, 249행, 열은 `equipment`·`code`·`name`·`severity`·`action_owner`로 이 표와 이름이 같다)에 사양서 표 9-4의 원인·조치를 코드 기준으로 합친 표다.
 
 | 컬럼           | 규칙                                                                        |
 | -------------- | --------------------------------------------------------------------------- |
@@ -148,7 +186,7 @@
 
 ### 5.3 가상 이력 (`data/history_seed.csv`)
 
-- 원본: `resources/{agv,mini_loader,rtv,srm}_error_history_dummy.csv` 4종 200건(설비당 50건, 열 19~20개, RTV만 `OBC 버전` 열이 하나 더 있다). `scripts/convert_history.py`가 접수 건 형식으로 바꿔 `history_seed.csv`를 만들고, 팀이 보강한 이력(아래)을 더한다.
+- 원본: `data/raw/{agv,mini_loader,rtv,srm}_error_history_dummy.csv` 4종 200건(설비당 50건, 열 19~20개, RTV만 `OBC 버전` 열이 하나 더 있다). `scripts/convert_history.py`가 접수 건 형식으로 바꿔 `history_seed.csv`를 만들고, 팀이 보강한 이력(아래)을 더한다.
 - 컬럼: `case_id`, `equipment`, `code`(5.1과 일치, 코드 없는 이력 없음. 복합 장애는 `;`로 구분해 같은 순서로 나열한다. 예: `RTV;SRM` / `R201;S101`. 같은 쌍은 중복 불가, 같은 설비의 다른 코드는 가능, 최대 4개), `memo`, `engineer_action`, `cause_found`, `resolution`, `resolution_note`, `actor`, `created_at`, `diverged`(선택).
 - `load_seed`는 `equipment`, `code`를 `;`로 쪼개 `case_errors`에 쌍당 1행으로 적재한다(두 값의 개수가 다르면 예외).
 - `source=authored`, `confirmed=true`로 적재하고 `summary`, `proposal`은 비워 둔다(기본값). `status`는 `resolution=해결`이면 `완료`, `미해결`이면 `조치 중`이다.
@@ -190,9 +228,14 @@
 
 ### 5.4 답변·검색 타입 (Pydantic)
 
-타입은 소유 모듈 파일에 두고 소유자만 바꾼다. `ErrorCode`는 `src/errorcodes.py`, `ServiceCase`는 `src/db.py`, `QueryAnalysis`·`Evidence`는 `src/search.py`, `Citation`·`Step`·`Answer`·`CaseBrief`는 `src/answer.py`에 둔다. 다른 담당은 import만 한다. `db`는 `proposal`을 JSON으로 저장하므로 `answer`를 import하지 않는다.
+타입은 소유 모듈 파일에 두고 소유자만 바꾼다. `Equipment`·`ErrorCode`는 `src/errorcodes.py`, `Chunk`는 `src/parsing.py`, `Hit`은 `src/indexing.py`, `ServiceCase`는 `src/db.py`, `Verdict`·`QueryAnalysis`·`Evidence`는 `src/search.py`, `Citation`·`Step`·`Answer`·`CaseBrief`는 `src/answer.py`, `ResolutionDraft`는 `src/history.py`에 둔다. 다른 담당은 import만 한다. `db`는 `proposal`을 JSON으로 저장하므로 `answer`를 import하지 않는다.
 
 ```
+Equipment:     Literal["Mini Loader", "SRM", "AGV", "RTV"]
+Verdict:       Literal["answered", "insufficient_evidence", "not_applicable"]
+Chunk:         equipment, section, page, text
+Hit:           ref_id, text, distance, metadata
+ResolutionDraft: cause_found, engineer_action, resolution("해결"|"미해결")
 Citation:      kind("manual"|"history"), ref_id, locator
 Step:          text, citations: list[Citation]          # 1개 이상
 Answer:        steps: list[Step], verdict("answered"|"insufficient_evidence"|"not_applicable"), notice: str | None
@@ -215,10 +258,9 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | 모듈         | 함수                                                                      | 입력 → 출력                                                                                                                                                                                       |
 | ------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `errorcodes` | `load_error_codes(path)`, `equipment_list(codes)`                         | CSV → `list[ErrorCode]` (검증 실패는 예외) / → 설비 목록(`equipment` 고유값)                                                                                                                      |
-| `registry`   | `get(name)`                                                               | 모듈 이름(`indexing`, `search`, `answer`, `history`) → 실제 또는 가짜 모듈. 환경 변수 `MPILOT_FAKES`로 전환. 가짜는 `data/sample/<모듈>.json` 고정 응답이다. `db`는 가짜가 없어 registry를 거치지 않고 직접 import한다 |
-| `parsing`    | `parse_body(dir)`                                                         | 사양서 PDF 4종 → 본문 청크(쪽·절). 표 9-4는 `scripts/merge_errorcodes.py`가 `errorcodes.csv`로 합친다                                                                                             |
+| `parsing`    | `parse_body(dir)`                                                         | 사양서 PDF 4종 → `list[Chunk]`(쪽·절). 표 9-4는 `scripts/merge_errorcodes.py`가 `errorcodes.csv`로 합친다                                                                                             |
 | `indexing`   | `build_index(reset)`, `add_history(case)`                                 | CSV, 파싱 결과, 시드 → Chroma `manual`, `history`(`python -m indexing --reset`으로 실행) / 확정된 `ServiceCase` → `history`에 추가                                                                                                       |
-| `indexing`   | `query(collection, text, equipment, k)`, `get_source(ref_id)`             | 설비 필터를 적용한 벡터 질의(히트: 거리, 메타데이터) / 인용 원문(표 행, 본문, 이력) 조회                                                                                                          |
+| `indexing`   | `query(collection, text, equipment, k)`, `get_source(ref_id)`             | 설비 필터를 적용한 벡터 질의 → `list[Hit]` / 인용 원문(표 행, 본문, 이력) 조회                                                                                                          |
 | `db`         | `create_case(errors, memo, photo)`                                        | `errors`는 `(equipment, code)` 쌍 1~4개 → `ServiceCase`(접수번호 부여, `status=접수`, 쌍은 `case_errors`에 저장)                                                                                  |
 | `db`         | `get_case`, `list_cases`, `update_case`, `append_message`, `get_messages` | 조회, 목록, 수정, 대화 기록 저장·조회                                                                                                                                                             |
 | `db`         | `load_seed(path)`                                                         | `history_seed.csv` → `cases`(`source=authored`, `confirmed=true`)                                                                                                                                 |
@@ -231,15 +273,16 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `answer`     | `ask(case_id, question)`                                                  | → `Answer`. 접수번호별 대화 기억을 반영한다                                                                                                                                                       |
 | `routing`    | `route(pairs)`                                                            | `pairs`는 `(equipment, code)` 1~4개. DB 비의존. → `"support"` \| `"guide"`(건 단위)                                                                                                    |
 | `routing`    | `guide_for(errors)`                                                       | `errors`는 `(equipment, code)` 쌍 1~4개 → 모든 쌍이 저위험이면 쌍별 `action` 목록, 하나라도 아니면 `None`                                                                                         |
-| `history`    | `structure_resolution(case_id, freeform, draft)`                          | → 구조화된 원인·조치·결과 초안(저장하지 않음)                                                                                                                                                     |
+| `history`    | `structure_resolution(case_id, freeform, draft)`                          | → `ResolutionDraft`(저장하지 않음)                                                                                                                                                     |
 | `history`    | `confirm_case(case_id, fields, diverged)`                                 | 확인된 값 저장 → `confirmed=true`, `add_history`, 해결이면 `status=완료`                                                                                                                          |
 | `evaluate`   | `run_eval(questions_csv)`                                                 | → 지표 리포트(8장)                                                                                                                                                                                |
+| `ui.customer`, `ui.engineer`, `ui.history_editor` | `build()` | `gr.Tab` 안에서 호출되어 그 Tab의 컴포넌트와 이벤트를 만든다. `app.py`가 Tab 순서대로 부른다 |
 
-실제와 가짜는 시그니처가 같다. 가짜는 `data/sample/<모듈>.json`의 함수별 고정 응답을 5.4 타입으로 바꿔 돌려주고, 쓰기 함수(`add_history`, `confirm_case`)는 저장하지 않는다. `registry`는 모듈 전환 장치이며 설비 목록과 다르다.
+베이스라인(프로젝트 시작 전에 서비스 이력 담당이 올린다)이 `src/`의 모든 모듈을 이 표의 시그니처와 5.4 타입으로 만들고, 함수 본문은 모의 데이터를 돌려주는 스텁으로 둔다. 각 담당은 자기 모듈의 스텁을 같은 시그니처의 실제 구현으로 덮어쓴다. 스텁의 쓰기 함수(`add_history`, `confirm_case`)는 저장하지 않는다. 단위 테스트와 CI는 `tests/conftest.py`의 픽스처가 다른 파트의 모듈을 같은 종류의 모의 데이터로 대체해서 실제 LLM·Chroma 없이 돈다.
 
 ## 7. 기능 명세
 
-기능은 사용자 스토리(US-번호)와 인수 기준(AC-스토리번호.순번)으로 정리한다. 스토리 하나는 담당 파트 한 곳이 책임지고, 다른 파트의 기능은 6장 인터페이스(가짜 구현 포함)로만 부른다(roles.md). 서비스 사용자는 엔지니어와 고객뿐이고, "팀원"은 개발·평가용 내부 스토리의 표기다. 인수 기준의 `검증` 열은 다른 파트의 가짜 위에서도, 실제 구현으로 바꾼 뒤에도 통과해야 한다.
+기능은 사용자 스토리(US-번호)와 인수 기준(AC-스토리번호.순번)으로 정리한다. 스토리 하나는 담당 파트 한 곳이 책임지고, 다른 파트의 기능은 6장 인터페이스(스텁 포함)로만 부른다(roles.md). 서비스 사용자는 엔지니어와 고객뿐이고, "팀원"은 개발·평가용 내부 스토리의 표기다. 인수 기준의 `검증` 열은 다른 파트의 스텁 위에서도, 실제 구현으로 바꾼 뒤에도 통과해야 한다.
 
 ### 7.1 사용자 스토리
 
