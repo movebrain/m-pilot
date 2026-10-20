@@ -20,7 +20,7 @@
 
 ```
 ├── app.py                         Gradio Blocks 조립(`src/ui/` 화면을 Tab에 올림), "모든 데이터는 가상" 배너
-├── docker-compose.yml             MySQL 컨테이너(통합·시연, 팀원별 로컬)
+├── docker-compose.yml             MySQL 컨테이너(통합·시연, CI의 실제 DB 테스트)
 ├── .env.example                   API 키, MySQL 접속 정보 예시
 ├── .gitignore                     `.env`, `data/chroma/`, `data/photos/`, `__pycache__/`
 ├── requirements.txt               패키지 버전 고정
@@ -63,7 +63,7 @@
 | 언어·UI      | Python, Gradio Blocks(Tab)                                                                                                                                                                                                                                                                      |
 | LLM·임베딩   | OpenAI API(채팅 + 임베딩), 모델명은 환경 변수. LangChain으로 연결                                                                                                                                                                                                                               |
 | 벡터DB       | Chroma(수업에서 쓰는 벡터DB 기준, 다르면 교체) (기본값)                                                                                                                                                                                                                                         |
-| 접수 건 저장 | 개발·테스트·통합·시연 모두 MySQL(팀원별 로컬 Docker, PyMySQL). ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
+| 접수 건 저장 | MySQL(Docker, PyMySQL). 단위 테스트는 연결을 목으로 바꿔 DB 없이 돌고, SQL 동작 테스트·통합·시연은 실제 MySQL을 쓴다. ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
 | PDF 파싱     | pdfplumber. 사양서 4종은 표 추출이 되는 텍스트 PDF다 (기본값)                                                                                                                                                                                                                                   |
 | API 계층     | 두지 않는다(FastAPI 없음). Gradio 핸들러가 `registry.get(...)`로 받은 모듈과 `db`를 직접 호출한다. 필요해지면 `mount_gradio_app`으로 얹는다 (기본값)                                                                                                                                                 |
 | 개발·실행    | `python -m scripts.init_db`로 누구나 같은 DB(스키마, 가상 이력 시드)를 만들고 `--reset`으로 되돌린다. 먼저 `docker compose up`으로 MySQL을 띄운다(DB 확인은 `docker compose exec`로 `mysql` CLI). 실행은 저장소 루트에서 `python app.py`, `python -m src.evaluate`, `python -m pytest`(그냥 `pytest`는 `src` import 실패) |
