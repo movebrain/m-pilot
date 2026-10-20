@@ -1,6 +1,6 @@
 """질문 분석(LLM), 키워드 기반 조회, 매뉴얼·이력 병렬 검색, 판정. 소유: RAG 검색.
 
-판정은 코드가 하고 LLM은 분류만 한다. 답변 문장은 만들지 않는다.
+판정은 코드가 하고 LLM은 분류만 한다. 답변 문장은 만들지 않는다. LLM·임베딩은 `config.get_llm()`·`config.get_embeddings()`로만 얻는다.
 베이스라인 스텁이다. 담당이 같은 시그니처의 실제 구현으로 덮어쓴다(spec 6장).
 """
 from typing import Literal

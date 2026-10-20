@@ -1,6 +1,6 @@
 """요약·대응 방안(brief), 후속 질문 답변(ask), 인용 검증. 소유: 엔지니어 세션.
 
-검색은 search.retrieve로만, 저장은 db로만 한다.
+검색은 search.retrieve로만, 저장은 db로만 한다. LLM·임베딩은 `config.get_llm()`·`config.get_embeddings()`로만 얻는다.
 베이스라인 스텁이다. 담당이 같은 시그니처의 실제 구현으로 덮어쓴다(spec 6장).
 """
 from typing import Literal
@@ -40,7 +40,7 @@ _MOCK_ANSWER = Answer(
 
 
 def brief(case: ServiceCase) -> CaseBrief:
-    """접수 건 요약과 대응 방안. 저장하고 이미 있으면 재생성하지 않는다(AC-14.1, AC-14.3)."""
+    """접수 건 요약과 대응 방안. 복합 신고도 쌍별 검색 결과를 합쳐 건 단위로 한 번 판정한다. 저장하고 이미 있으면 재생성하지 않는다(AC-14.1, AC-14.3)."""
     return CaseBrief(summary="모의 요약", proposal=_MOCK_ANSWER)
 
 

@@ -1,6 +1,6 @@
 """Chroma manual·history 생성·질의(설비 필터), 인용 원문 조회, 확정 이력 추가. 소유: 벡터 DB·인덱싱.
 
-질문 해석·판정은 하지 않는다. import할 때 Chroma에 접속하지 않는다.
+질문 해석·판정은 하지 않는다. import할 때 Chroma에 접속하지 않는다. LLM·임베딩은 `config.get_llm()`·`config.get_embeddings()`로만 얻는다.
 베이스라인 스텁이다. 담당이 같은 시그니처의 실제 구현으로 덮어쓴다(spec 6장). 스텁의 add_history는 저장하지 않는다.
 """
 import argparse
