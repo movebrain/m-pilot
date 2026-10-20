@@ -17,22 +17,23 @@
 ├── docker-compose.yml             MySQL 컨테이너(통합·시연, CI의 `real_db`)
 ├── .env.example                   API 키, MySQL 접속 정보 예시
 ├── .gitignore                     `.env`, `data/chroma/`, `data/photos/`, `__pycache__/`
-├── requirements.txt               패키지 버전 고정
+├── requirements.txt               패키지 버전 고정, 마지막 줄 `-e .`
+├── pyproject.toml                 `src/` 편집 설치 설정(`import db`로 가져오기 위함)
 ├── src/                           모듈 = 파일 하나, 타입·프롬프트는 모듈 안(소유 파트는 roles.md)
 │   ├── registry.py                모듈별 실제/가짜 전환(`MPILOT_FAKES`)
 │   ├── errorcodes.py              에러코드 표 로더·검증, 설비 목록
 │   ├── parsing.py                 사양서 PDF 본문 → 청크(쪽·절)
-│   ├── indexing.py                Chroma `manual`·`history` 생성·질의·인용 원문(`python -m src.indexing --reset`)
+│   ├── indexing.py                Chroma `manual`·`history` 생성·질의·인용 원문(`python -m indexing --reset`)
 │   ├── db.py                      접수 건 저장·조회, 상태 전이, 시드 적재
 │   ├── search.py                  질문 분석, 키워드 기반 조회, 검색, 판정
 │   ├── answer.py                  요약·대응 방안(`brief`), 질문 답변(`ask`)
 │   ├── history.py                 이력 구조화·확정
 │   ├── routing.py                 분기(`route`), 셀프 가이드(`guide_for`)
-│   ├── evaluate.py                평가 실행(`python -m src.evaluate`)
+│   ├── evaluate.py                평가 실행(`python -m evaluate`)
 │   └── ui/
 │       ├── customer.py            고객 Tab: 신고, 접수번호 조회, 기술지원 대기 안내, 해결됨/해결 안 됨
 │       ├── engineer.py            엔지니어 Tab: 접수 목록, 세션
-│       └── resolution.py          엔지니어 Tab: 이력 작성, 독립 조회·평가 화면(P3)
+│       └── history_editor.py      엔지니어 Tab: 이력 작성
 ├── scripts/                       일회성 데이터 준비와 DB 초기화
 │   ├── merge_errorcodes.py        표 9-4 추출·CSV 병합·대조 리포트
 │   ├── convert_history.py         장애 기록 더미 4종(`resources/`) → `history_seed.csv` 변환(5.3)
@@ -43,7 +44,7 @@
 │   ├── test_<모듈>.py               7.2 인수 기준
 │   └── test_integration.py        7.4 통합 시나리오
 ├── data/
-│   ├── errorcodes.csv, history_seed.csv, eval_questions.csv, synonyms.csv
+│   ├── errorcodes.csv, history_seed.csv, eval_questions.csv
 │   ├── manuals/                   사양서 PDF 4종(가상 문서)
 │   ├── sample/                    개발용 샘플(에러코드 10행, 이력 5건), 가짜 응답 `<모듈>.json`
 │   ├── chroma/                    Chroma 저장(생성, 저장소 제외)
@@ -63,7 +64,8 @@
 | 접수 건 저장 | MySQL(Docker, PyMySQL). 단위 테스트는 연결을 목으로 바꿔 DB 없이 돌고, SQL 동작 테스트·통합·시연은 실제 MySQL을 쓴다. ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
 | PDF 파싱     | pdfplumber. 사양서 4종은 표 추출이 되는 텍스트 PDF다 (기본값)                                                                                                                                                                                                                                   |
 | API 계층     | 두지 않는다(FastAPI 없음). Gradio 핸들러가 `registry.get(...)`로 받은 모듈과 `db`를 직접 호출한다. 필요해지면 `mount_gradio_app`으로 얹는다 (기본값)                                                                                                                                                 |
-| 개발·실행    | `python -m scripts.init_db`로 누구나 같은 DB(스키마, 가상 이력 시드)를 만들고 `--reset`으로 되돌린다. 먼저 `docker compose up`으로 MySQL을 띄운다(DB 확인은 `docker compose exec`로 `mysql` CLI). 실행은 저장소 루트에서 `python app.py`, `python -m src.indexing --reset`(인덱스 생성), `python -m src.evaluate`, `python -m pytest`(그냥 `pytest`는 `src` import 실패) |
+| 임포트 | `src/` 안 모듈은 서로 `import db`처럼 `src.` 없이 가져오고 `app.py`·`scripts/`·`tests/`도 같다. `pyproject.toml`이 `src/`를 편집 설치(`pip install -e .`)해 임포트 경로에 올린다. 모듈 이름은 외부 패키지와 겹치지 않게 짓는다(예: 같은 이름의 `evaluate` 패키지를 requirements에 넣지 않는다) |
+| 개발·실행    | 처음 한 번 `pip install -r requirements.txt`(마지막 줄 `-e .`가 `src/`를 임포트 경로에 올린다). `python -m scripts.init_db`로 누구나 같은 DB(스키마, 가상 이력 시드)를 만들고 `--reset`으로 되돌린다. 먼저 `docker compose up`으로 MySQL을 띄운다(DB 확인은 `docker compose exec`로 `mysql` CLI). 실행은 저장소 루트에서 `python app.py`, `python -m indexing --reset`(인덱스 생성), `python -m evaluate`, `python -m pytest` |
 | 키·재현성    | `.env`에 API 키·MySQL 접속 정보(저장소에 올리지 않음, `.env.example` 제공). LLM `temperature=0`, 평가는 고정 스냅샷                                                                                                                                                                             |
 
 ## 4. 아키텍처
@@ -206,7 +208,6 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 ### 5.5 기타 데이터
 
 - 설비 목록: 별도 파일 없이 `errorcodes.csv`의 `equipment` 고유값(4종)이며 질문 분석의 고정 목록 원천이다. 모델 단위는 두지 않는다. 설비 추가(P3)는 그 설비의 에러코드 행을 추가한다.
-- `data/synonyms.csv`: 용어·동의어와 코드 표기 정규화. 질문 분석과 검색 전에 쓴다.
 - `data/eval_questions.csv`: 8장.
 
 ## 6. 모듈 인터페이스
@@ -216,7 +217,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `errorcodes` | `load_error_codes(path)`, `equipment_list(codes)`                         | CSV → `list[ErrorCode]` (검증 실패는 예외) / → 설비 목록(`equipment` 고유값)                                                                                                                      |
 | `registry`   | `get(name)`                                                               | 모듈 이름(`indexing`, `search`, `answer`, `history`) → 실제 또는 가짜 모듈. 환경 변수 `MPILOT_FAKES`로 전환. 가짜는 `data/sample/<모듈>.json` 고정 응답이다. `db`는 가짜가 없어 registry를 거치지 않고 직접 import한다 |
 | `parsing`    | `parse_body(dir)`                                                         | 사양서 PDF 4종 → 본문 청크(쪽·절). 표 9-4는 `scripts/merge_errorcodes.py`가 `errorcodes.csv`로 합친다                                                                                             |
-| `indexing`   | `build_index(reset)`, `add_history(case)`                                 | CSV, 파싱 결과, 시드 → Chroma `manual`, `history`(`python -m src.indexing --reset`으로 실행) / 확정된 `ServiceCase` → `history`에 추가                                                                                                       |
+| `indexing`   | `build_index(reset)`, `add_history(case)`                                 | CSV, 파싱 결과, 시드 → Chroma `manual`, `history`(`python -m indexing --reset`으로 실행) / 확정된 `ServiceCase` → `history`에 추가                                                                                                       |
 | `indexing`   | `query(collection, text, equipment, k)`, `get_source(ref_id)`             | 설비 필터를 적용한 벡터 질의(히트: 거리, 메타데이터) / 인용 원문(표 행, 본문, 이력) 조회                                                                                                          |
 | `db`         | `create_case(errors, memo, photo)`                                        | `errors`는 `(equipment, code)` 쌍 1~4개 → `ServiceCase`(접수번호 부여, `status=접수`, 쌍은 `case_errors`에 저장)                                                                                  |
 | `db`         | `get_case`, `list_cases`, `update_case`, `append_message`, `get_messages` | 조회, 목록, 수정, 대화 기록 저장·조회                                                                                                                                                             |
@@ -264,7 +265,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | US-18 | 엔지니어      | 에러코드의 원인·조치를 설비를 혼동하지 않고 정확히 조회한다                            | 엉뚱한 설비의 조치를 따르지 않으려고            | P1  | RAG 검색       |
 | US-19 | 엔지니어      | 증상만으로 관련 매뉴얼 본문과 과거 이력을 찾는다                                       | 매뉴얼을 직접 뒤지는 시간을 줄이려고            | P1  | RAG 검색       |
 | US-20 | 엔지니어      | 4개 설비 밖의 질문은 "적용 대상 아님"으로 구분받는다                                   | 자료에 없는 것과 우리 설비가 아닌 것을 가르려고 | P1  | RAG 검색       |
-| US-21 | 엔지니어      | 현장 용어·동의어·코드 표기가 달라도 같은 결과를 받는다                                 | 표기 때문에 답을 놓치지 않으려고                | P1  | RAG 검색       |
+| US-21 | 엔지니어      | 코드 표기(대소문자·하이픈·공백)가 달라도 같은 결과를 받는다                                 | 표기 때문에 답을 놓치지 않으려고                | P1  | RAG 검색       |
 | US-22 | 엔지니어      | 이력 작성 화면에서 초안을 확인·수정하고 확정한다                                       | 조치 결과를 쉽게 남기려고                       | P2  | 서비스 이력      |
 | US-23 | 엔지니어      | 서비스 조치 이력이 자동으로 구조화되어 확인 후 저장된다                                       | 다음 대응의 근거로 돌려주려고                   | P2  | 서비스 이력      |
 | US-24 | 엔지니어      | 접수 없이 설비·질문만으로 바로 조회한다                                                | 현장에서 빠르게 확인하려고                      | P3  | 서비스 이력      |
@@ -319,7 +320,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | AC-19.3 | 이력은 확정된 건만 검색된다. `resolution=미해결` 이력은 제외하지 않고 "실패 이력"으로 표시한다                                                                                                                                                    | 진행 중 건, 미해결 이력 검색      |
 | AC-19.4 | `Evidence.has_evidence`는 7.3의 근거 부족 규칙대로 계산하고, `decide_verdict`는 적용 대상 아님 → 근거 부족 순으로 판정한다                                                                                                                                                                                       | 근거 없는 질문                    |
 | AC-20.1 | `analyze_query`가 4개 설비 밖의 설비·장비를 `equipment=other`로 분류하면 `decide_verdict`가 `not_applicable`로 판정하고 검색 없이 답하게 한다. LLM은 분류만 한다                                                                                              | 대형 AMR, 입출고 스테이션 질문    |
-| AC-21.1 | `synonyms.csv`의 동의어·표기로 질문을 정규화한 뒤 분석한다                                                                                                                                                                                        | 동의어 질문                       |
+| AC-21.1 | `analyze_query`와 `lookup_error_code`가 코드 표기 변형(대소문자·하이픈·공백, 예: `r-201`, `R 201`)을 같은 코드로 정규화한 뒤 조회한다 | 표기 변형 코드 |
 | AC-22.1 | 이력 작성 화면이 세션 기록 기반 초안을 보여주고, 자유서술 입력과 "예상과 달랐는지" 체크박스를 제공한다                                                                                                                                            | 세션 후 화면                      |
 | AC-22.2 | 엔지니어가 확인·수정해 확정 버튼을 누르기 전에는 저장하지 않는다                                                                                                                                                                                  | 저장 전 DB                        |
 | AC-23.1 | `cause_found`, `engineer_action` 초안을 세션 기록으로 채우고 `structure_resolution`이 구조화한다. 확인 전에는 저장하지 않는다                                                                                                                     | 세션 후, 저장 전 DB               |
@@ -365,7 +366,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | 인용 정확도         | 인용이 단계 내용을 뒷받침하는 비율                                                                     | 사람이 무작위 20개 단계 확인 |
 | 채택률(시연용)      | `diverged=false` 비율                                                                                  | 자동                         |
 
-- 스냅샷: `data/`의 CSV·사양서 PDF를 저장소에 두고 Chroma 디렉터리는 올리지 않고, DB는 `scripts/init_db.py`로 각자 만든다(평가·시연은 MySQL). 각자 `python -m src.indexing --reset`으로 재생성하고, 평가 직전에도 이 명령과 `scripts/init_db.py --reset`으로 인덱스와 DB를 시드 상태로 되돌려 시연 중 확정된 이력의 영향을 없앤다.
+- 스냅샷: `data/`의 CSV·사양서 PDF를 저장소에 두고 Chroma 디렉터리는 올리지 않고, DB는 `scripts/init_db.py`로 각자 만든다(평가·시연은 MySQL). 각자 `python -m indexing --reset`으로 재생성하고, 평가 직전에도 이 명령과 `scripts/init_db.py --reset`으로 인덱스와 DB를 시드 상태로 되돌려 시연 중 확정된 이력의 영향을 없앤다.
 
 ## 9. 기본값 (팀 확인 필요)
 
