@@ -6,11 +6,13 @@
 
 ## 1. 범위
 
-| 우선순위 | 기능                           | 한 줄                                                                                                                          |
-| -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| P1       | US-01, 02, 04~09, 12~16, 18~21 | 신고 → 접수 → (P1은 모두 기술지원) 세션: AI 요약·대응 방안 자동 + 엔지니어 질문 답변(에러코드 표·사양서 본문 파싱·임베딩 포함) |
-| P2       | US-03, 10, 11, 17, 22, 23      | 이력 작성·서비스 이력 추가, 저위험 분기·셀프 가이드(반복 에러 전환 포함), 정답률 평가                                                      |
-| P3(선택) | US-24                          | 독립 조회 Q&A 화면, 평가 화면, 설비 추가                                                                                       |
+| 우선순위 | 기능 |
+| -------- | ---- |
+| P1       | US-01, 02, 04~09, 12~16, 18~21 |
+| P2       | US-03, 10, 11, 17, 22, 23 |
+| P3(선택) | US-24 |
+
+우선순위별 범위 설명은 [intent.md](intent.md)의 우선순위를 따른다.
 
 비범위: 로그인·권한, 로그 첨부, 사진 AI 판독, 고객 서명·완료 확인 기록, 실시간 푸시, 다중 고객사 격리, 영어 지원.
 
@@ -29,7 +31,7 @@
 │   ├── parsing.py                 사양서 PDF 본문 → 청크(쪽·절)
 │   ├── indexing.py                Chroma 컬렉션 manual, history 생성·추가, 벡터 질의, 인용 원문 조회
 │   ├── db.py                      ServiceCase 타입, 접수 건 저장·조회, 상태 전이, 24시간 건수, 시드 적재
-│   ├── search.py                  QueryAnalysis, Evidence 타입; 질문 분석, 정확 조회, 검색, 판정(decide_verdict)
+│   ├── search.py                  QueryAnalysis, Evidence 타입; 질문 분석, 키워드 기반 조회, 검색, 판정(decide_verdict)
 │   ├── answer.py                  Citation, Step, Answer, CaseBrief 타입; 요약·대응 방안(brief), 질문 답변(ask)
 │   ├── history.py                 이력 구조화, 이력 확정
 │   ├── routing.py                 분기(route), 셀프 가이드(guide_for)
@@ -83,7 +85,7 @@
 | ---- | ------------------------------------------------------------- | ------------------------------- |
 | 화면 | 고객 Tab(신고, 조회), 엔지니어 Tab(목록, 세션, 이력)          | `app.py`, `src/ui/`             |
 | 저장 | 접수 건(MySQL), 에러코드 표(CSV)                              | `db`, `errorcodes`              |
-| 검색 | PDF 파싱, Chroma(manual, history), 질문 분석, 정확 조회, 판정 | `parsing`, `indexing`, `search` |
+| 검색 | PDF 파싱, Chroma(manual, history), 질문 분석, 키워드 기반 조회, 판정 | `parsing`, `indexing`, `search` |
 | 답변 | 요약·대응 방안, 질문 답변, 이력 구조화                        | `answer`, `history`             |
 | 분기 | 저위험·반복 에러 규칙                                         | `routing`                       |
 | 평가 | 엔진 직접 호출 평가                                           | `evaluate`                      |
@@ -242,7 +244,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `db`         | `transition(case_id, event)`                                              | 3장 상태 전이 표대로 상태를 바꾼다. 허용되지 않는 전이는 예외                                                                                                                                     |
 | `search`     | `analyze_query(text, default_equipment, default_code)`                    | → `QueryAnalysis`. 4개 설비 밖이면 `equipment=other`                                                                                                                                              |
 | `search`     | `lookup_error_code(equipment, code)`                                      | → 정확히 1행 또는 `None`                                                                                                                                                                          |
-| `search`     | `retrieve(analysis, k_manual=3, k_history=3)`                             | 정확 조회 + 매뉴얼·이력 검색을 병렬로 → `Evidence`                                                                                                                                                |
+| `search`     | `retrieve(analysis, k_manual=3, k_history=3)`                             | 키워드 기반 조회 + 매뉴얼·이력 검색을 병렬로 → `Evidence`                                                                                                                                                |
 | `search`     | `decide_verdict(analysis, evidence)`                                      | → `"answered"` \| `"insufficient_evidence"` \| `"not_applicable"`. `analysis.equipment=other`이면 `evidence=None`(검색하지 않음)으로 불러 `not_applicable`, 아니면 `evidence.has_evidence`가 거짓일 때 `insufficient_evidence`, 아니면 `answered`. `brief`는 쌍마다, `ask`는 질문마다 부른다 |
 | `answer`     | `brief(case)`                                                             | → `CaseBrief`. 저장하고 이미 있으면 재생성하지 않는다                                                                                                                                             |
 | `answer`     | `ask(case_id, question)`                                                  | → `Answer`. 접수번호별 대화 기억을 반영한다                                                                                                                                                       |
@@ -284,7 +286,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | US-20 | 엔지니어      | 4개 설비 밖의 질문은 "적용 대상 아님"으로 구분받는다                                   | 자료에 없는 것과 우리 설비가 아닌 것을 가르려고 | P1  | RAG 검색       |
 | US-21 | 엔지니어      | 현장 용어·동의어·코드 표기가 달라도 같은 결과를 받는다                                 | 표기 때문에 답을 놓치지 않으려고                | P1  | RAG 검색       |
 | US-22 | 엔지니어      | 이력 작성 화면에서 초안을 확인·수정하고 확정한다                                       | 조치 결과를 쉽게 남기려고                       | P2  | 서비스 이력      |
-| US-23 | 엔지니어      | 조치 이력이 자동으로 구조화되어 확인 후 저장된다                                       | 다음 대응의 근거로 돌려주려고                   | P2  | 서비스 이력      |
+| US-23 | 엔지니어      | 서비스 조치 이력이 자동으로 구조화되어 확인 후 저장된다                                       | 다음 대응의 근거로 돌려주려고                   | P2  | 서비스 이력      |
 | US-24 | 엔지니어      | 접수 없이 설비·질문만으로 바로 조회한다                                                | 현장에서 빠르게 확인하려고                      | P3  | 서비스 이력      |
 
 ### 6.2 인수 기준
@@ -334,7 +336,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | AC-17.2 | 6.4 통합 시나리오 1~4가 통과한다                                                                                                                                                                                                                  | `tests/test_integration.py`       |
 | AC-18.1 | `analyze_query`의 `equipment`는 고정 목록 4개 중 하나다(4개 밖은 US-20)                                                                                                                                                                           | 구조화 출력                       |
 | AC-18.2 | `lookup_error_code`는 정확히 1행 또는 `None`이고, 비슷한 코드나 다른 설비의 같은 이름 에러(R206 / S115 / M406)를 반환하지 않는다                                                                                                                  | 함정 케이스                       |
-| AC-19.1 | `retrieve`는 정확 조회, 매뉴얼 검색, 이력 검색을 병렬로 실행하고 모두 설비 필터를 적용한다. 다른 설비의 문서가 나오지 않는다                                                                                                                      | 호출 인자, 필터 검색              |
+| AC-19.1 | `retrieve`는 키워드 기반 조회, 매뉴얼 검색, 이력 검색을 병렬로 실행하고 모두 설비 필터를 적용한다. 다른 설비의 문서가 나오지 않는다                                                                                                                      | 호출 인자, 필터 검색              |
 | AC-19.2 | 매뉴얼 결과는 에러코드 행(원본 행 번호) 또는 본문 청크(사양서 파일·쪽·절)로 출처를 알 수 있다                                                                                                                                                     | 메타데이터                        |
 | AC-19.3 | 이력은 확정된 건만 검색된다. `resolution=미해결` 이력은 제외하지 않고 "실패 이력"으로 표시한다                                                                                                                                                    | 진행 중 건, 미해결 이력 검색      |
 | AC-19.4 | `Evidence.has_evidence`는 6.3의 근거 부족 규칙대로 계산하고, `decide_verdict`는 적용 대상 아님 → 근거 부족 순으로 판정한다                                                                                                                                                                                       | 근거 없는 질문                    |
@@ -352,7 +354,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 판정 순서는 적용 대상 아님 → 근거 부족이다. 판정은 `search.decide_verdict`(코드)가 하고 LLM은 바꾸지 못한다. `answer`는 그 결과를 `Answer.verdict`에 옮길 뿐이다.
 
 - **적용 대상 아님**: `analyze_query`가 질문이 가리키는 설비를 고정 목록 4개 중 하나 또는 `other`로 분류한다. `other`이면 코드가 `not_applicable`로 판정하고 검색 없이 답한다. LLM은 분류만 한다.
-- **근거 부족**: 정확 조회가 근거로 인정되거나, 매뉴얼·이력의 상위 k 히트 중 하나라도 거리가 임계값 τ 이하이면 근거가 있다. 둘 다 아니면 `insufficient_evidence`다. 정확 조회는 `brief`에서는 접수 건의 각 쌍의 코드로(쌍마다 따로 판정), `ask`에서는 질문에 코드가 명시된 경우(`code_in_question`)에만 근거로 인정한다. 접수 건의 쌍으로 채운 경우를 빼서, 코드와 무관한 질문이 항상 근거 있음으로 판정되지 않게 한다. τ는 거리 로그로 정하고 평가 질문으로 한 번 조정한 뒤 고정한다.
+- **근거 부족**: 키워드 기반 조회가 근거로 인정되거나, 매뉴얼·이력의 상위 k 히트 중 하나라도 거리가 임계값 τ 이하이면 근거가 있다. 둘 다 아니면 `insufficient_evidence`다. 키워드 기반 조회는 `brief`에서는 접수 건의 각 쌍의 코드로(쌍마다 따로 판정), `ask`에서는 질문에 코드가 명시된 경우(`code_in_question`)에만 근거로 인정한다. 접수 건의 쌍으로 채운 경우를 빼서, 코드와 무관한 질문이 항상 근거 있음으로 판정되지 않게 한다. τ는 거리 로그로 정하고 평가 질문으로 한 번 조정한 뒤 고정한다.
 
 ### 6.4 통합 시나리오 (시연·통합 테스트)
 
@@ -374,7 +376,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 
 | 지표                | 계산                                                                                                   | 판정                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| 정확 조회 정답률    | `lookup`에서 반환 행이 `expected_ref`와 일치한 비율                                                    | 자동                         |
+| 키워드 기반 조회 정답률    | `lookup`에서 반환 행이 `expected_ref`와 일치한 비율                                                    | 자동                         |
 | 설비 혼동           | `confusion`에서 다른 설비의 행이 나온 건수                                                             | 자동                         |
 | 복합 신고 쌍별 근거 | `compound`에서 각 쌍의 근거가 해당 쌍의 `expected_ref`와 일치하고 다른 쌍·설비의 행이 섞이지 않은 비율 | 자동(인용은 사람 샘플)       |
 | 증상 검색 적중      | `symptom`에서 `expected_ref`가 상위 k(=3)에 포함된 비율                                                | 자동                         |
@@ -406,7 +408,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | 제품 카탈로그(E-Cat2025)  | 검색 인덱스에 넣지 않고 용어 근거로만 사용. 공개 저장소에 올리지 않음                                                                                                |
 | 가상 이력의 요약·제안     | 비워 둔다                                                                                                                                                            |
 | 접수 목록                 | `source=authored` 시드는 엔지니어 Tab의 접수 목록에 나타나지 않는다 |
-| 모델별 값                 | `대상 모델`은 `extra.target_models`에 보관하고 답변에 병기한다. 신고에서 모델은 받지 않는다 |
+| 모델별 값                 | `대상 모델`은 `extra.target_models`에 보관하고 답변에 병기한다. 신고에서 S/W 버전과 모델은 받지 않는다. 병기 형식은 팀이 정한다 |
 | 고객에게 보이는 서비스 조치 결과 | 확정된 `engineer_action`과 `resolution`                                                                                                                              |
 
-외부 확인 사항(P1 범위·일정 합의, 평가 질문 작성자, S/W 버전·모델 병기 형식, 보강 이력 작성자)은 intent.md의 Open questions를 따른다.
+외부 확인 사항(P1 범위·일정 합의, 평가 질문 작성자, 사용자 구성)은 intent.md의 Open questions를, 보강 이력 작성자는 roles.md를 따른다.

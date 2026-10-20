@@ -17,18 +17,18 @@
 | DB     | MySQL          | US-04, 05   | MySQL 환경, 접수 건·쌍(`case_errors`)·대화 저장과 상태 전이, 24시간 건수, 가상 이력(원본 200건 변환 + 보강분)                             |
 | RAG·UI | 고객 접수      | US-06~11    | 신고 폼(사진 포함, 설비-에러코드 쌍 1~4개 입력), 접수번호 조회, 기술지원 대기 안내, 저위험·반복 에러 분기(`route`), 셀프 가이드, 배너, `app.py` Tab 조립                                       |
 | RAG·UI | 엔지니어 세션  | US-12~16    | 접수 목록과 세션 화면, 요약·대응 방안(`brief`, 복합 건은 쌍별 `retrieve`), 질문 답변(`ask`, 인용 검증), 근거 부족·적용 대상 아님 안내                             |
-| RAG·UI | RAG 검색       | US-18~21    | 질문 분석, 에러코드 정확 조회, 매뉴얼·이력 검색, 적용 대상 아님·근거 부족 판정(`decide_verdict`), τ, 동의어 사전                                                                                          |
+| RAG·UI | RAG 검색       | US-18~21    | 질문 분석, 에러코드 키워드 기반 조회, 매뉴얼·이력 검색, 적용 대상 아님·근거 부족 판정(`decide_verdict`), τ, 동의어 사전                                                                                          |
 | RAG·UI | 서비스 이력      | US-17, 22~24    | 가짜 전환(`registry`)과 저장소 공통 파일(`requirements.txt`, `.gitignore`, `.env.example`), 이력 작성 화면, 이력 구조화, 확정과 인덱스 추가(`confirm_case`), 평가 실행(`run_eval`)과 통합 시나리오 점검, 독립 조회·평가 화면(P3)                                                                                              |
 
 파트별 소유와 인계:
 
 - **벡터 DB·데이터**: 코드 `src/errorcodes.py`(타입 `ErrorCode`), `src/parsing.py`, `scripts/merge_errorcodes.py`. 데이터 `errorcodes.csv` 249개, `data/manuals/` 관리. 제공: `errorcodes` 로더, `errorcodes.csv`, 본문 청크. 의존: 없음(사양서 개정본은 수령 완료). 검수: MySQL의 `history_seed.csv`
 - **벡터 DB·인덱싱**: 코드 `src/indexing.py`, `scripts/build_index.py`. 데이터 Chroma 컬렉션(저장소 제외, `build_index`로 재생성), 가짜 응답 `data/sample/indexing.json`. 제공: `indexing.query`, `get_source`, `add_history`. 의존: `errorcodes`, `parsing`, `history_seed.csv`
-- **MySQL**: 코드 `src/db.py`(타입 `ServiceCase`, 대화 기록, `count_recent`, `load_seed`, `transition`), `scripts/init_db.py`(`--reset`, `--check`), `scripts/convert_history.py`, `scripts/schema.sql`, `docker-compose.yml`(MySQL). 데이터 `history_seed.csv`(원본 200건 변환 + 복합·함정 보강분), `data/sample/`. 제공: MySQL 환경(`docker-compose.yml`), `db`(가장 먼저). 검수: `errorcodes.csv`(저위험 78개 문구의 안전 수칙 부합, 다른 절 참조·전문 용어). 보강: 복합 장애·함정 이력을 쓴다(4.3, 작성자는 intent Open questions 5)
+- **MySQL**: 코드 `src/db.py`(타입 `ServiceCase`, 대화 기록, `count_recent`, `load_seed`, `transition`), `scripts/init_db.py`(`--reset`, `--check`), `scripts/convert_history.py`, `scripts/schema.sql`, `docker-compose.yml`(MySQL). 데이터 `history_seed.csv`(원본 200건 변환 + 복합·함정 보강분), `data/sample/`. 제공: MySQL 환경(`docker-compose.yml`), `db`(가장 먼저). 검수: `errorcodes.csv`(저위험 78개 문구의 안전 수칙 부합, 다른 절 참조·전문 용어). 보강: 복합 장애·함정 이력을 쓴다(4.3, 작성자는 MySQL 담당을 기본값으로 한다(팀 확인 필요))
 - **고객 접수**: 코드 `app.py`(Tab 조립, 배너), `src/ui/customer.py`, `src/routing.py`. 의존: `db`, `errorcodes`
 - **엔지니어 세션**: 코드 `src/ui/engineer.py`(목록·세션), `src/answer.py`(타입 `Answer` 등, 프롬프트 2종). 데이터 가짜 응답 `data/sample/answer.json`. 제공: `brief`, `ask`. 의존: `search`(`retrieve`, `decide_verdict`), `db`, `indexing.get_source`
 - **RAG 검색**: 코드 `src/search.py`(타입 `QueryAnalysis`, `Evidence`, 질문 분석 프롬프트), τ 조정. 데이터 `synonyms.csv`, 가짜 응답 `data/sample/search.json`. 제공: `retrieve`, `lookup_error_code`, `decide_verdict`. 의존: `indexing.query`, `errorcodes`
-- **서비스 이력**: 조치 이력의 작성·확정이 본업이고, 평가·통합과 저장소 공통 장치(`registry` 등)도 맡는다. 코드 `src/registry.py`, `src/history.py`(프롬프트 1종), `src/ui/resolution.py`(이력 작성, 독립 조회·평가 화면), `src/evaluate.py`, `tests/test_integration.py`, `.env.example`, `.gitignore`, `requirements.txt`. 데이터 `eval_questions.csv`, 가짜 응답 `data/sample/history.json`, 통합 시나리오 실행, 인용 샘플 확인. 제공: `registry`(가장 먼저), `structure_resolution`, `confirm_case`, `run_eval`. 의존: `db`, `indexing.add_history`, `search`·`answer`(`run_eval`과 US-24의 `retrieve`, `ask`). 평가 질문은 `expected_ref`를 벡터 DB·데이터와 MySQL 담당이 확인한다
+- **서비스 이력**: 서비스 조치 이력의 작성·확정이 본업이고, 평가·통합과 저장소 공통 장치(`registry` 등)도 맡는다. 코드 `src/registry.py`, `src/history.py`(프롬프트 1종), `src/ui/resolution.py`(이력 작성, 독립 조회·평가 화면), `src/evaluate.py`, `tests/test_integration.py`, `.env.example`, `.gitignore`, `requirements.txt`. 데이터 `eval_questions.csv`, 가짜 응답 `data/sample/history.json`, 통합 시나리오 실행, 인용 샘플 확인. 제공: `registry`(가장 먼저), `structure_resolution`, `confirm_case`, `run_eval`. 의존: `db`, `indexing.add_history`, `search`·`answer`(`run_eval`과 US-24의 `retrieve`, `ask`). 평가 질문은 `expected_ref`를 벡터 DB·데이터와 MySQL 담당이 확인한다
 
 ## 2. 병렬 개발 규칙
 
