@@ -30,7 +30,7 @@
 │   ├── errorcodes.py              ErrorCode 타입, 에러코드 표 로더·검증, 설비 목록
 │   ├── parsing.py                 사양서 PDF 본문 → 청크(쪽·절)
 │   ├── indexing.py                Chroma 컬렉션 manual, history 생성·추가, 벡터 질의, 인용 원문 조회
-│   ├── db.py                      ServiceCase 타입, 접수 건 저장·조회, 상태 전이, 24시간 건수, 시드 적재
+│   ├── db.py                      ServiceCase 타입, 접수 건 저장·조회, 상태 전이, 시드 적재
 │   ├── search.py                  QueryAnalysis, Evidence 타입; 질문 분석, 키워드 기반 조회, 검색, 판정(decide_verdict)
 │   ├── answer.py                  Citation, Step, Answer, CaseBrief 타입; 요약·대응 방안(brief), 질문 답변(ask)
 │   ├── history.py                 이력 구조화, 이력 확정
@@ -87,12 +87,12 @@
 | 저장 | 접수 건(MySQL), 에러코드 표(CSV)                              | `db`, `errorcodes`              |
 | 검색 | PDF 파싱, Chroma(manual, history), 질문 분석, 키워드 기반 조회, 판정 | `parsing`, `indexing`, `search` |
 | 답변 | 요약·대응 방안, 질문 답변, 이력 구조화                        | `answer`, `history`             |
-| 분기 | 저위험·반복 에러 규칙                                         | `routing`                       |
+| 분기 | 저위험 규칙                                         | `routing`                       |
 | 평가 | 엔진 직접 호출 평가                                           | `evaluate`                      |
 
 설계 규칙:
 
-- **분기**: `route()`는 DB를 읽지 않고 메모리의 에러코드 표만 본다. 신고 핸들러(`src/ui/customer.py`)가 `create_case` → 쌍마다 `count_recent`(이번 건 포함) → `route(pairs)` → `update_case`(`branch`, `repeat_flag`) 순서로 처리한다. 복합 신고는 쌍마다 판정해 모든 쌍이 `guide`일 때만 `guide`다. P1의 `route()`는 항상 `support`다. 저위험 코드는 에러코드 표 249개 중 78개이고, 심각도 상 150개는 `조치 구분`과 무관하게 항상 `support`다(이 중 51개는 사양서가 고객사 조치로 분류하지만 고객에게 안내하지 않는다). 신고 접수와 분기는 LLM 없이 동작한다.
+- **분기**: `route()`는 DB를 읽지 않고 메모리의 에러코드 표만 본다. 신고 핸들러(`src/ui/customer.py`)가 `create_case` → `route(pairs)` → `update_case`(`branch`) 순서로 처리한다. 복합 신고는 쌍마다 판정해 모든 쌍이 `guide`일 때만 `guide`다. P1의 `route()`는 항상 `support`다. 저위험 코드는 에러코드 표 249개 중 78개이고, 심각도 상 150개는 `조치 구분`과 무관하게 항상 `support`다(이 중 51개는 사양서가 고객사 조치로 분류하지만 고객에게 안내하지 않는다). 신고 접수와 분기는 LLM 없이 동작한다.
 - **저장**: DB 접속은 `src/db.py`에서만 하고 다른 모듈은 공개 함수만 호출한다. `case_id` 채번은 동시 접수에도 겹치지 않게 DB 안에서 처리한다.
 - **검색**: Chroma 컬렉션은 `manual`(에러코드 행 1개 = 문서 1개, 사양서 본문은 절 단위 청크)과 `history`(확정된 접수 건의 쌍 1개 = 문서 1개, 내용은 건 전체)다. 모든 검색에 `equipment` 필터를 적용하고 `history` 결과는 `case_id`로 중복을 제거한다. 메타데이터는 `manual` 행 문서 `equipment`, `code`, `severity`, `action_owner`, `row_id`, 본문 청크 `equipment`, `section`, `page`, `history` `equipment`, `code`, `case_id`, `resolution`이다.
 - **답변**: 요약·대응 방안은 접수 건당 한 번만 생성해 저장한다. 복합 신고의 `brief`는 쌍마다 `retrieve`해 쌍별 섹션으로 만든다. LLM 호출이 실패하면 세션 화면에 에러와 재시도 버튼을 보이고 접수 건은 바뀌지 않는다.
@@ -142,7 +142,6 @@
 | `photo_path`                                   | TEXT null       | `data/photos/{case_id}.{ext}`(선택). jpg/jpeg/png, 5MB 이하            |
 | `status`                                       | TEXT            | `접수` / `분석 중` / `조치 중` / `완료`                                |
 | `branch`                                       | TEXT            | `support`(기술지원) / `guide`(셀프 가이드). 신고 직후 `route()`가 정한다 |
-| `repeat_flag`                                  | BOOL            | 쌍 중 하나라도 24시간 내 5회 이상이라 기술지원으로 전환된 건이면 true  |
 | `summary`, `proposal`                          | TEXT, JSON null | AI 요약, 대응 방안(`Answer`). 세션을 처음 열 때 생성·저장              |
 | `cause_found`, `engineer_action`, `resolution` | TEXT null       | 구조화된 원인, 조치, `해결` / `미해결`                                 |
 | `resolution_note`                              | TEXT null       | 결과 원문(예: `해결(부품 교체)`, `임시 조치(재발 감시)`). 가상 이력에서 온다 |
@@ -177,7 +176,7 @@
 | `조치 내용` | `engineer_action` | 그대로 |
 | `결과` | `resolution`, `resolution_note` | 아래 표. 원문은 `resolution_note`에 남긴다 |
 | `조치자` | `actor` | 그대로 |
-| `발생일시` | `created_at` | 그대로. 가장 최근이 2026-10-16이라 시연 때 `count_recent`의 24시간 창에 걸리지 않는다 |
+| `발생일시` | `created_at` | 그대로 |
 | `에러명`, `심각도`, `조치 구분` | 적재하지 않음 | 에러코드 표와 모두 일치한다. 변환 검증에만 쓴다 |
 | `호기`, `발생 위치`, `정지시간(분)`, `복구일시`, `참조 매뉴얼`, `비고`, `OBC 버전` | 적재하지 않음 | (기본값) 필요해지면 컬럼을 더한다 |
 
@@ -200,7 +199,6 @@
 
 더미에 이미 있어 그대로 쓰는 것:
 
-- 반복 에러 소재: 같은 코드가 24시간 안에 5건 나온 묶음이 A316, M420, R214, S135에 있다. 시드의 `created_at`이 과거라 시연 때 `count_recent`에 잡히지 않으므로, 시나리오 3은 새 신고로 5회를 채운다.
 - 실패 이력: `미해결` 16건(원본 `임시 조치` 12 + `미해결` 4)으로 "실패 이력" 표시를 시연한다.
 - 이력의 범위: 엔지니어뿐 아니라 고객사가 직접 조치한 기록도 이력이다(`actor`로 구분한다).
 - 검증(`init_db.py --check`): 모든 코드가 4.1에 있고, `resolution`이 2종이며, `case_id`가 겹치지 않고, 복합은 `equipment`와 `code`의 `;` 개수가 같다.
@@ -239,7 +237,6 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `indexing`   | `query(collection, text, equipment, k)`, `get_source(ref_id)`             | 설비 필터를 적용한 벡터 질의(히트: 거리, 메타데이터) / 인용 원문(표 행, 본문, 이력) 조회                                                                                                          |
 | `db`         | `create_case(errors, memo, photo)`                                        | `errors`는 `(equipment, code)` 쌍 1~4개 → `ServiceCase`(접수번호 부여, `status=접수`, 쌍은 `case_errors`에 저장)                                                                                  |
 | `db`         | `get_case`, `list_cases`, `update_case`, `append_message`, `get_messages` | 조회, 목록, 수정, 대화 기록 저장·조회                                                                                                                                                             |
-| `db`         | `count_recent(equipment, code, hours=24)`                                 | → 한 쌍(설비·코드)이 들어 있는 최근 접수 건수(이번 건 포함). 복합 건은 건당 1회로 센다                                                                                                            |
 | `db`         | `load_seed(path)`                                                         | `history_seed.csv` → `cases`(`source=authored`, `confirmed=true`)                                                                                                                                 |
 | `db`         | `transition(case_id, event)`                                              | 3장 상태 전이 표대로 상태를 바꾼다. 허용되지 않는 전이는 예외                                                                                                                                     |
 | `search`     | `analyze_query(text, default_equipment, default_code)`                    | → `QueryAnalysis`. 4개 설비 밖이면 `equipment=other`                                                                                                                                              |
@@ -248,7 +245,7 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | `search`     | `decide_verdict(analysis, evidence)`                                      | → `"answered"` \| `"insufficient_evidence"` \| `"not_applicable"`. `analysis.equipment=other`이면 `evidence=None`(검색하지 않음)으로 불러 `not_applicable`, 아니면 `evidence.has_evidence`가 거짓일 때 `insufficient_evidence`, 아니면 `answered`. `brief`는 쌍마다, `ask`는 질문마다 부른다 |
 | `answer`     | `brief(case)`                                                             | → `CaseBrief`. 저장하고 이미 있으면 재생성하지 않는다                                                                                                                                             |
 | `answer`     | `ask(case_id, question)`                                                  | → `Answer`. 접수번호별 대화 기억을 반영한다                                                                                                                                                       |
-| `routing`    | `route(pairs)`                                                            | `pairs`는 `(equipment, code, count_24h)` 1~4개. DB 비의존. → `"support"` \| `"guide"`(건 단위)                                                                                                    |
+| `routing`    | `route(pairs)`                                                            | `pairs`는 `(equipment, code)` 1~4개. DB 비의존. → `"support"` \| `"guide"`(건 단위)                                                                                                    |
 | `routing`    | `guide_for(errors)`                                                       | `errors`는 `(equipment, code)` 쌍 1~4개 → 모든 쌍이 저위험이면 쌍별 `action` 목록, 하나라도 아니면 `None`                                                                                         |
 | `history`    | `structure_resolution(case_id, freeform, draft)`                          | → 구조화된 원인·조치·결과 초안(저장하지 않음)                                                                                                                                                     |
 | `history`    | `confirm_case(case_id, fields, diverged)`                                 | 확인된 값 저장 → `confirmed=true`, `add_history`, 해결이면 `status=완료`                                                                                                                          |
@@ -302,23 +299,21 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 | AC-03.2 | 같은 코드로 새 신고를 하면 방금 확정한 접수 건이 요약·대응 방안과 답변의 근거로 나타난다                                                                                                                                                          | 통합 시나리오 3                   |
 | AC-04.1 | `create_case`는 `case_id`(`SC-YYYYMMDD-NNN`)를 부여하고 쌍 1~4개를 `case_errors`에 저장하며(0개, 5개 이상, 같은 쌍 중복은 거부. 같은 설비의 다른 코드는 허용) `status=접수`로 저장한다. 동시에 접수해도 `case_id`가 겹치지 않는다                 | DB 확인                           |
 | AC-04.2 | 요약·대응 방안·대화 기록·상태를 저장하고 조회한다. `transition`이 상태 전이를 3장 표대로만 허용한다                                                                                                                                               | 저장 후 조회, 전이                |
-| AC-04.3 | `count_recent`는 한 쌍(설비·코드)이 들어 있는 최근 24시간 접수 건수(이번 건 포함, 복합 건은 건당 1회)를 반환한다                                                                                                                                  | 경계 시각                         |
 | AC-05.1 | 제공된 장애 기록 200건을 `convert_history.py`로 변환하고 복합·함정 보강분을 더해 가상 이력을 만든다(미해결 포함). `data/sample/`(샘플 에러코드 10행, 이력 5건)도 만든다. `init_db.py --check`가 이력의 코드·형식(4.3 검증 항목)을 검증한다                                                                                                     | `init_db.py --check`, 상호 검수   |
 | AC-05.2 | `load_seed`가 `history_seed.csv`를 `cases`(`source=authored`, `confirmed=true`)로 적재한다. `case_id`는 원본 이력ID, `created_at`은 발생일시다                                                                                                                                                        | 건수                              |
 | AC-06.1 | 설비와 에러코드는 필수이고 에러코드는 고른 설비의 목록에서만 고른다. 한 건에 쌍을 1~4개 고를 수 있고(복합 장애) 같은 쌍을 두 번 고르거나 5번째 쌍을 추가할 수 없다. 같은 설비의 다른 코드는 함께 고를 수 있다. 증상 메모와 사진은 비워도 접수된다 | 폼 테스트, 최소 입력              |
 | AC-06.2 | 사진은 jpg/jpeg/png, 5MB 이하만 저장한다. 초과하면 거부 메시지를 보이되 사진 없이 접수할 수 있다                                                                                                                                                  | 큰 파일, 다른 형식                |
-| AC-06.3 | 제출하면 접수번호가 보이고 접수 버튼은 없다. 신고 처리 순서는 `create_case` → `count_recent`(쌍마다) → `route` → `update_case`다                                                                                                                  | 화면, 호출 순서                   |
+| AC-06.3 | 제출하면 접수번호가 보이고 접수 버튼은 없다. 신고 처리 순서는 `create_case` → `route` → `update_case`다                                                                                                                  | 화면, 호출 순서                   |
 | AC-07.1 | 접수번호로 상태(접수 / 분석 중 / 조치 중 / 완료)와 서비스 조치 결과를 조회한다                                                                                                                                                                           | 조회 테스트                       |
 | AC-07.2 | 고객 Tab은 접수번호, 설비-코드 쌍, 상태, 셀프 가이드, 기술지원 대기 안내, 확정된 서비스 조치 결과만 렌더링한다. AI 요약·대응 방안·이력 원문은 렌더링하지 않는다(접근 차단은 아님, 기본값)                                                                      | 코드 경로 점검                    |
 | AC-08.1 | `branch=support`인 건의 고객 화면에 기술지원 대기 안내(안전 확보, 설비 정지 유지, 기술지원팀 연락)가 보인다                                                                                                                                                | 기술지원 건 조회                  |
 | AC-09.1 | 모든 화면 상단에 "모든 데이터는 가상" 배너를 둔다. 화면·발표 문구는 "AI가 학습한다"가 아니라 "검색 근거가 늘어난다"로 쓴다                                                                                                                        | 화면·문구 점검                    |
 | AC-10.1 | `branch=guide`이면 셀프 가이드(`guide_for`, 복합 신고는 쌍별 조치 문구)와 "해결됨 / 해결 안 됨" 버튼을 보인다                                                                                                                                       | 저위험 코드 신고                  |
 | AC-10.2 | "해결됨"이면 곧바로 `완료`(기본값), "해결 안 됨"이면 `branch=support`로 바뀌어 세션을 열 수 있다                                                                                                                                                  | 두 경로                           |
-| AC-11.1 | 쌍마다 `severity=상`이면 `support`, `action_owner=고객사 조치`이고 `severity`가 중·하이며 `count_24h`가 5 미만이면 `guide`, 그 밖에는 `support`다. 건 단위 합치기는 3장 분기 규칙을 따르고, P1에서는 항상 `support`다                             | 심각도 3 × 조치 구분 2, 복합 혼합 |
-| AC-11.2 | 쌍 중 하나라도 `count_24h`(이번 건 포함)가 5 이상이면 저위험 코드도 `support`이고 `repeat_flag=true`다                                                                                                                                            | 4와 5 경계값                      |
-| AC-11.3 | `route`는 쌍 목록(`equipment`, `code`, `count_24h`)만 입력받고 에러코드 표 외에는 읽지 않는다(DB 비의존). 증상 메모와 사진을 쓰지 않는다                                                                                                          | 시그니처                          |
-| AC-11.4 | `guide_for`는 모든 쌍이 저위험이면 쌍별 행의 `action` 목록을, 하나라도 아니면 `None`을 반환한다(저위험 쌍의 셀프 가이드도 내보내지 않는다)                                                                                                               | 저위험 행, 상 행, 복합 혼합       |
-| AC-12.1 | 새 신고가 목록 새로고침으로 나타나고 상태·분기·반복 에러가 표시된다. `source=authored` 시드 이력은 목록에 나타나지 않는다                                                                                                                                                                               | 신고 후 새로고침                  |
+| AC-11.1 | 쌍마다 `severity=상`이면 `support`, `action_owner=고객사 조치`이고 `severity`가 중·하이면 `guide`, 그 밖에는 `support`다. 건 단위 합치기는 3장 분기 규칙을 따르고, P1에서는 항상 `support`다                             | 심각도 3 × 조치 구분 2, 복합 혼합 |
+| AC-11.2 | `route`는 쌍 목록(`equipment`, `code`)만 입력받고 에러코드 표 외에는 읽지 않는다(DB 비의존). 증상 메모와 사진을 쓰지 않는다                                                                                                          | 시그니처                          |
+| AC-11.3 | `guide_for`는 모든 쌍이 저위험이면 쌍별 행의 `action` 목록을, 하나라도 아니면 `None`을 반환한다(저위험 쌍의 셀프 가이드도 내보내지 않는다)                                                                                                               | 저위험 행, 상 행, 복합 혼합       |
+| AC-12.1 | 새 신고가 목록 새로고침으로 나타나고 상태·분기가 표시된다. `source=authored` 시드 이력은 목록에 나타나지 않는다                                                                                                                                                                               | 신고 후 새로고침                  |
 | AC-12.2 | `branch=guide`인 건은 세션을 만들지 않고 목록에 "셀프 가이드"로 표시한다                                                                                                                                                                            | 목록                              |
 | AC-13.1 | 세션은 `branch=support`인 건에만 열린다. 처음 열면 `brief` 결과를 요약·대응 방안 카드로 보이고 `status=분석 중`이 된다                                                                                                                            | 세션 열기                         |
 | AC-13.2 | 다시 열면 저장된 요약·대응 방안·대화를 그대로 보인다                                                                                                                                                                                              | 재열기                            |
@@ -360,8 +355,8 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 
 1. 저위험 코드 신고(US-06, US-11) → 셀프 가이드(US-10) → "해결됨" → `완료`.
 2. 심각도 상 코드 신고(US-06) → 기술지원, 세션(US-13, US-14, US-15) → 인용 확인 → 이력 확정(US-22, US-23).
-3. 같은 코드로 재신고 → 방금 확정한 이력이 근거로 나타남(US-03). 같은 저위험 코드를 5회 신고 → 기술지원으로 전환(AC-11.2).
-4. 복합 신고(저위험 쌍 1개 + 상 쌍 1개) → 건 전체가 기술지원, 저위험 쌍의 셀프 가이드는 고객에게 나가지 않음(AC-11.1, AC-11.4) → 세션에서 쌍별 근거가 구분되어 보임(AC-14.1) → 이력 확정 후 각 쌍의 코드로 재신고하면 근거로 나타남(AC-03.1).
+3. 같은 코드로 재신고 → 방금 확정한 이력이 근거로 나타남(US-03).
+4. 복합 신고(저위험 쌍 1개 + 상 쌍 1개) → 건 전체가 기술지원, 저위험 쌍의 셀프 가이드는 고객에게 나가지 않음(AC-11.1, AC-11.3) → 세션에서 쌍별 근거가 구분되어 보임(AC-14.1) → 이력 확정 후 각 쌍의 코드로 재신고하면 근거로 나타남(AC-03.1).
 
 ## 7. 평가
 
@@ -398,7 +393,6 @@ Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evide
 
 | 항목                      | 기본값                                                                                                                                                               |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 반복 에러 집계            | 같은 설비·코드, 24시간 슬라이딩 창, 이번 건 포함 5회째부터 전환. 복합 신고는 쌍마다 한 번씩 센다                                                                     |
 | 상태 값                   | 4단계. 저위험 건은 "접수"에 "셀프 가이드" 표시. 세션을 열면 "분석 중"                                                                                                  |
 | 고객 "해결됨"             | 엔지니어 확인 없이 곧바로 `완료`                                                                                                                                     |
 | 요약·대응 방안 생성 시점  | 엔지니어가 세션을 처음 열 때 생성하고 저장                                                                                                                           |
