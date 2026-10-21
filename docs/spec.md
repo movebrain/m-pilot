@@ -1,369 +1,437 @@
 # Spec: M-Pilot 장애 대응 지원 서비스
 
-- 근거 문서: [intent.md](intent.md), [features.md](features.md), 기획안(무브레인, 2026-10-19 초안)
-- 상태: draft
-- 용도: Day 1에 7명이 계약(데이터 모델, 인터페이스, 수용 기준)을 합의하는 기준 문서다. 다음 단계는 plan.md다.
-- 표기: **확정**은 사용자가 정한 것, **기본값**은 제가 정한 값으로 팀 확인이 필요하다(15장에 모음).
+- 근거 문서: [intent.md](intent.md)(SOT). 이 문서가 intent.md와 어긋나면 intent.md가 우선한다.
+- 상태: draft. 개발 시작 전에 7명이 아래 계약(구조, 데이터 모델, 인터페이스, 수용 기준)을 합의한다. 파트별 역할, 제출물 담당, 리스크는 [roles.md](roles.md)에 둔다. 6장 시그니처와 5장 타입이 파트 사이의 계약이다.
+- 표기: "(기본값)"은 팀 확인이 필요한 값이다. 모아서 9장에 둔다.
 
 ## 1. 범위
 
-| 우선순위 | 기능    | 한 줄                                                                                |
-| -------- | ------- | ------------------------------------------------------------------------------------ |
-| P1       | F01~F08 | 신고 → 접수 → (P1은 모두 기술지원) 세션: AI 요약·대응 방안 자동 + 엔지니어 질문 답변 |
-| P2       | F09~F11 | 이력 작성·환류, 저위험 분기·셀프 가이드, 정답률 평가                                 |
-| P3(선택) | F12     | 독립 조회 Q&A 화면, 평가 화면, 설비 추가                                             |
+우선순위는 7.1의 `P` 열과 [intent.md](intent.md)의 우선순위를 따른다.
 
-비범위: 로그인·권한, 사전 브리핑, 로그 첨부, 사진 AI 판독, 고객 서명·완료 확인 기록, 실시간 알림, 다중 고객사 격리, 영어 지원.
+비범위: 로그인·권한, 로그 첨부, 사진 AI 판독, 고객 서명·완료 확인 기록, 실시간 푸시, 다중 고객사 격리, 영어 지원.
 
-## 2. 기술 결정
-
-| 항목           | 결정                                                                                                                                                        | 구분         |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| 언어·UI        | Python, Gradio Blocks(Tab)                                                                                                                                  | 확정         |
-| LLM·임베딩     | OpenAI API(채팅 + 임베딩). 모델명은 환경 변수로 둔다                                                                                                        | 확정         |
-| 오케스트레이션 | LangChain: `PydanticOutputParser`, `Literal`, `@tool`, `RunnableParallel`, `RunnablePassthrough.assign`, `RunnableLambda`, 대화 기억(session_id = 접수번호) | 확정(기획안) |
-| 벡터DB         | Chroma(디스크 저장, 메타데이터 필터)                                                                                                                        | 확정         |
-| 접수 건 저장소 | SQLite(`mpilot.db`). 정적 표·이력 시드는 CSV를 pandas로 읽는다                                                                                              | 기본값       |
-| 키 관리        | `.env`에 API 키, `.gitignore` 등록. 키는 저장소에 올리지 않는다                                                                                             | 기본값       |
-| 재현성         | LLM `temperature=0`, 평가는 고정 스냅샷(`data/` + 인덱스 재생성 스크립트)                                                                                   | 확정         |
-
-프로젝트 구조(기본값):
+## 2. 프로젝트 구조
 
 ```
-mpilot/
-  data/              errorcodes.csv, history_seed.csv, eval_questions.csv,
-                     equipment.csv, glossary.csv, photos/
-  app.py             Gradio Blocks: 고객 Tab, 엔지니어 Tab, 가상 데이터 안내
-  src/
-    schema.py        Pydantic: ErrorCode, ServiceCase, Answer, CaseBrief  (F01)
-    db.py            SQLite 접수 건 저장·조회                             (F04)
-    indexing.py      표 → 검색용 문서 → Chroma(manual, history)           (F03, F04)
-    search.py        analyze_query, lookup_error_code, retrieve           (F05)
-    answer.py        brief(case), ask(case_id, question)                  (F06)
-    routing.py       route(case), guide_for(code)                         (F10)
-    history.py       structure_resolution, confirm_case                   (F09)
-    evaluate.py      run_eval                                             (F11)
-  scripts/           build_index.py, run_eval.py
+├── app.py                         Gradio Blocks 조립, "모든 데이터는 가상" 배너
+├── docker-compose.yml             MySQL 컨테이너(앱 실행·시연, CI의 `real_db`)
+├── .env.example                   API 키, MySQL 접속 정보 예시
+├── .gitignore                     `.env`, `data/chroma/`, `data/photos/`, `__pycache__/`
+├── requirements.txt               패키지 버전 고정, 마지막 줄 `-e .`
+├── pyproject.toml                 `src/` 편집 설치 설정(`import db`로 가져오기 위함), pytest `real_db` 마커 등록
+├── src/                           모듈 = 파일 하나, 타입·프롬프트는 모듈 안. 베이스라인이 전 모듈을 스텁으로 먼저 올리고 담당이 덮어씀(소유는 roles.md)
+│   ├── config.py                  `.env` 로드, LLM·임베딩 생성(`get_llm`, `get_embeddings`)
+│   ├── errorcodes.py              에러코드 표 로더·검증, 설비 목록
+│   ├── parsing.py                 사양서 PDF 본문 → 청크(쪽·절)
+│   ├── indexing.py                Chroma `manual`·`history` 생성·질의·인용 원문(`python -m indexing --reset`)
+│   ├── db.py                      접수 건 저장·조회, 상태 전이, 시드 적재
+│   ├── search.py                  질문 분석, 키워드 기반 조회, 검색, 판정
+│   ├── answer.py                  요약·대응 방안(`brief`), 질문 답변(`ask`)
+│   ├── history.py                 이력 구조화·확정
+│   ├── routing.py                 분기(`route`), 셀프 가이드(`guide_for`)
+│   ├── evaluate.py                평가 실행(`python -m evaluate`)
+│   └── ui/
+│       ├── customer.py            고객 Tab: 신고, 접수번호 조회, 기술지원 대기 안내, 해결됨/해결 안 됨
+│       ├── engineer.py            엔지니어 Tab: 접수 목록, 세션
+│       └── history_editor.py      엔지니어 Tab: 이력 작성
+├── scripts/                       일회성 데이터 준비와 DB 초기화
+│   ├── merge_errorcodes.py        표 9-4 추출·`data/raw/` 에러코드 CSV 병합·대조 리포트
+│   ├── convert_history.py         장애 기록 더미 4종(`data/raw/`) → `history_seed.csv` 변환(5.3)
+│   ├── init_db.py                 스키마·시드 적재, `--reset`, `--check`(이력 시드 검증)
+│   ├── make_sample.py             `data/raw/`에서 개발용 샘플(에러코드 10행, 이력 5건) 추출 → `data/sample/`
+│   └── schema.sql                 MySQL 스키마(`cases`, `case_errors`, `case_messages`)
+├── tests/
+│   ├── conftest.py                다른 파트 모듈을 모의 데이터로 대체하는 픽스처(CI는 API 키 없이 돌림)
+│   ├── test_contracts.py          6장 시그니처와 5.4 모델 필드가 바뀌지 않았는지 검사(CI)
+│   ├── test_<모듈>.py               7.2 인수 기준
+│   └── test_integration.py        7.4 통합 시나리오
+├── data/
+│   ├── errorcodes.csv, history_seed.csv, eval_questions.csv
+│   ├── raw/                       제공 원본(읽기 전용): 에러코드 CSV, 장애 기록 더미 4종
+│   ├── manuals/                   사양서 PDF 4종(제공 원본, 가상 문서)
+│   ├── sample/                    개발용 샘플(`make_sample.py`가 생성): `errorcodes.csv`, `history_seed.csv`
+│   ├── chroma/                    Chroma 저장(생성, 저장소 제외)
+│   └── photos/                    신고 사진(생성, 저장소 제외)
+├── .github/                       워크플로(라벨러). `real_db` CI는 첫 구현이 올라온 뒤 추가
+└── docs/                          intent.md, spec.md, roles.md, issues.md
 ```
 
-## 3. 데이터 모델
+파일별 일과 경계다. 함수 시그니처는 6장, 타입은 5.4가 정한다.
 
-### 3.1 ErrorCode (`data/errorcodes.csv`, D1)
+| 파일 | 하는 일 | 경계(하지 않는 일, 의존) | 소유 |
+| --- | --- | --- | --- |
+| `app.py` | 고객·엔지니어 Tab을 조립하고 "모든 데이터는 가상" 배너를 단다 | 화면 로직과 규칙은 `src/ui/`와 모듈에 있다 | 고객 접수 |
+| `docker-compose.yml` | 로컬 MySQL 컨테이너(앱 실행·시연)와 CI의 `real_db`용 MySQL | 앱 코드와 무관 | MySQL |
+| `.env.example` | API 키, MySQL 접속 정보 템플릿 | 실제 값은 `.env`(저장소 제외)에 둔다 | 서비스 이력 |
+| `.gitignore` | `.env`, `data/chroma/`, `data/photos/`, `__pycache__/` 제외 |  | 서비스 이력 |
+| `requirements.txt` | 패키지 버전 고정, 마지막 줄 `-e .` |  | 서비스 이력 |
+| `pyproject.toml` | `src/` 편집 설치 설정, pytest `real_db` 마커 등록 | 의존성은 `requirements.txt`에 둔다 | 서비스 이력 |
+| `src/config.py` | `.env`를 읽고 LLM(`get_llm`, `temperature=0`)과 임베딩(`get_embeddings`)을 만든다. 모델명은 환경 변수 | 호출할 때 만들어 import 시 API에 접속하지 않는다. 테스트는 이 두 함수를 가짜 모델로 바꾼다 | 서비스 이력 |
+| `src/errorcodes.py` | `errorcodes.csv`를 로드·검증하고 설비 목록을 만든다(`ErrorCode`) | 분기·검색 판단은 하지 않는다. 의존 없음 | 벡터 DB·데이터 |
+| `src/parsing.py` | 사양서 PDF 본문을 쪽·절 청크로 나눈다 | 표 9-4는 다루지 않는다(`merge_errorcodes.py`). 의존 없음 | 벡터 DB·데이터 |
+| `src/indexing.py` | Chroma `manual`·`history` 생성·질의(설비 필터), 인용 원문 조회, 확정 이력 추가. `python -m indexing --reset`으로 재생성 | 질문 해석·판정은 하지 않는다. 의존: `errorcodes`, `parsing`, `history_seed.csv` | 벡터 DB·인덱싱 |
+| `src/db.py` | 접수 건·쌍·대화 저장, 상태 전이, 시드 적재(`ServiceCase`) | SQL은 여기에만 둔다. LLM·Chroma를 모르고 `answer`를 임포트하지 않는다 | MySQL |
+| `src/search.py` | 질문 분석(LLM), 키워드 기반 조회, 매뉴얼·이력 병렬 검색, 판정(`decide_verdict`) | 판정은 코드가 하고 LLM은 분류만 한다. 답변 문장은 만들지 않는다. 의존: `indexing`, `errorcodes` | RAG 검색 |
+| `src/answer.py` | 요약·대응 방안(`brief`), 후속 질문 답변(`ask`), 모든 단계에 인용이 있는지 검증 | 검색은 `search.retrieve`로만, 저장은 `db`로만 한다. 의존: `search`, `db`, `indexing.get_source` | 엔지니어 세션 |
+| `src/history.py` | 이력 초안 구조화(`structure_resolution`), 이력 확정(`confirm_case`) | 화면은 만들지 않는다. 의존: `db`, `indexing.add_history` | 서비스 이력 |
+| `src/routing.py` | 분기(`route`), 셀프 가이드(`guide_for`) | DB·LLM을 쓰지 않고 에러코드 표만 읽는다. 의존: `errorcodes` | 고객 접수 |
+| `src/evaluate.py` | 화면 없이 엔진을 직접 호출해 지표를 계산한다(`run_eval`) | 화면에 의존하지 않는다. 의존: `db`, `indexing`, `search`, `answer` | 서비스 이력 |
+| `src/ui/customer.py` | 신고 폼, 접수번호 조회, 기술지원 대기 안내, 셀프 가이드(해결됨/해결 안 됨). 제출 핸들러가 `create_case` → `route` → `update_case`를 실행한다 | 고객에게 보이는 필드만 렌더링한다. 의존: `db`, `errorcodes`, `routing` | 고객 접수 |
+| `src/ui/engineer.py` | 접수 목록, 세션(요약 카드, 인용 원문, 질문, 사진 열람, 상태 변경) | 이력 작성은 `history_editor.py`가 한다. 의존: `answer`, `db`, `indexing.get_source` | 엔지니어 세션 |
+| `src/ui/history_editor.py` | 이력 초안 확인·수정, "예상과 달랐는지" 체크, 확정 | 구조화·저장은 `history`가 한다. 의존: `history`, `db` | 서비스 이력 |
+| `scripts/merge_errorcodes.py` | 사양서 표 9-4를 추출해 CSV와 코드 기준으로 병합하고 대조 리포트를 낸다 → `errorcodes.csv` | 일회성이고 앱이 부르지 않는다 | 벡터 DB·데이터 |
+| `scripts/convert_history.py` | 장애 기록 더미 200건을 접수 건 형식으로 바꾼다 → `history_seed.csv` | 일회성이고 보강분은 손으로 쓴다 | MySQL |
+| `scripts/init_db.py` | 스키마·시드 적재, `--reset`, `--check` | DDL은 `schema.sql`에, 쿼리는 `db.py`에 둔다 | MySQL |
+| `scripts/make_sample.py` | `data/raw/`에서 함정 코드와 설비별 저위험 코드 10행, 그 이력 5건을 뽑아 `data/sample/`에 쓴다 | 원인·조치는 비운다(표 9-4 병합은 US-01) | 서비스 이력 |
+| `scripts/schema.sql` | `cases`, `case_errors`, `case_messages` 정의 |  | MySQL |
+| `tests/test_<모듈>.py` | 모듈별 인수 기준(7.2) | `db`의 `real_db` 테스트는 `test_db.py`에 두고 CI에서만 돌린다 | 각 파트 |
+| `tests/test_integration.py` | 통합 시나리오 1~4(7.4) |  | 서비스 이력 |
+| `tests/conftest.py` | 다른 파트 모듈, 메모리 `db`(`fake_db`), LLM·임베딩(`fake_llm`)을 모의 데이터로 대체하는 픽스처 | 실제 LLM·Chroma·MySQL을 부르지 않는다 | 서비스 이력 |
+| `tests/test_contracts.py` | 6장 함수의 인자 이름·순서·타입과 반환 타입, 5.4 모델의 필드 이름·타입이 계약과 같은지 검사한다. 이 파일을 바꾼 PR에는 `계약 변경` 라벨을 붙인다 | 동작은 검사하지 않는다(각 파트의 AC 테스트 몫) | 서비스 이력 |
+| `data/errorcodes.csv` | 에러코드 표 정본(249행) | `merge_errorcodes.py`가 만든다 | 벡터 DB·데이터 |
+| `data/history_seed.csv` | 가상 이력(원본 변환 + 보강분) | `convert_history.py`가 만든다 | MySQL |
+| `data/eval_questions.csv` | 평가 질문 | 데이터를 만들지 않은 사람이 쓴다 | 서비스 이력 |
+| `data/raw/` | 제공 원본(읽기 전용): `error_code_table.csv`, `{agv,mini_loader,rtv,srm}_error_history_dummy.csv` | 앱이 직접 읽지 않고 `scripts/`가 변환한다 | 팀 |
+| `data/manuals/` | 사양서 PDF 4종(제공 원본) | `parsing`이 직접 읽는다 | 벡터 DB·데이터 |
+| `data/sample/` | 개발용 샘플(에러코드 10행, 이력 5건) | `make_sample.py`가 만든다. 실제 데이터가 나오기 전 인덱싱·검색 개발용 | 서비스 이력 |
+| `data/chroma/`, `data/photos/` | Chroma 저장, 신고 사진 | 생성물이고 저장소에서 제외한다 | 인덱싱 / 고객 접수 |
+| `.github/` | 이슈 템플릿, 라벨러 워크플로 | `real_db` CI는 첫 구현이 올라온 뒤 추가한다 | 팀 |
+| `docs/` | `intent.md`(SOT), `spec.md`(계약), `roles.md`(운영), `issues.md`(이슈) |  | 팀 |
 
-| 컬럼        | 규칙                                                               |
-| ----------- | ------------------------------------------------------------------ |
-| `equipment` | `Mini Loader` / `SRM` / `AGV` / `RTV` 중 하나                      |
-| `code`      | 설비 안에서 유일. 같은 코드가 다른 설비에 있어도 된다              |
-| `grade`     | `A` / `B` / `C` / `I` 중 하나. 비어 있으면 로드 실패               |
-| `symptom`   | 화면·현상 서술                                                     |
-| `cause`     | 추정 원인 (순서대로, `;`로 구분)                                   |
-| `action`    | 조치 (순서대로, `;`로 구분). 안전 수칙이 필요한 조치는 문장에 명시 |
-| `guide`     | 고객용 가이드 문구. 비어 있으면 저위험이 아님. 작성 규칙은 3.6     |
-| `extra`     | 설비별 부가 정보(JSON 문자열, 선택)                                |
+## 3. 기술 결정
 
-- 기본키는 (`equipment`, `code`)이고 로드할 때 중복을 검사한다.
-- 표가 원본이다. 검색용 문서는 표에서 생성하고 사람이 문서를 직접 고치지 않는다.
+| 항목         | 결정                                                                                                                                                                                                                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 언어·UI      | Python, Gradio Blocks(Tab)                                                                                                                                                                                                                                                                      |
+| LLM·임베딩   | OpenAI API(채팅 + 임베딩), LangChain으로 연결. 키는 `OPENAI_API_KEY`, 모델명은 `OPENAI_CHAT_MODEL`·`OPENAI_EMBEDDING_MODEL`(기본값 `gpt-4o-mini`, `text-embedding-3-small`)이고 `src/config.py`가 만든다 (기본값)                                                                                                                                                                                                                               |
+| 벡터DB       | Chroma(수업에서 쓰는 벡터DB 기준, 다르면 교체) (기본값)                                                                                                                                                                                                                                         |
+| 접수 건 저장 | MySQL(Docker, PyMySQL). 로컬 테스트는 모두 연결을 목으로 바꿔 DB 없이 돌고, SQL 동작 테스트(`real_db`)는 CI의 MySQL에서만 돌린다. 시연과 `scripts/init_db.py`는 로컬 MySQL을 쓴다. ORM 없음, SQL은 `src/db.py`에만 두고 연결은 호출마다 열고 닫는다. 정적 표·이력 시드는 CSV를 pandas로 읽는다 (기본값)                                                                                                             |
+| PDF 파싱     | pdfplumber. 사양서 4종은 표 추출이 되는 텍스트 PDF다 (기본값)                                                                                                                                                                                                                                   |
+| API 계층     | 두지 않는다(FastAPI 없음). Gradio 핸들러가 `import`한 모듈을 직접 호출한다. 필요해지면 `mount_gradio_app`으로 얹는다 (기본값)                                                                                                                                                 |
+| 임포트 | `src/` 안 모듈은 서로 `import db`처럼 `src.` 없이 가져오고 `app.py`·`scripts/`·`tests/`도 같다. `pyproject.toml`이 `src/`를 편집 설치(`pip install -e .`)해 임포트 경로에 올린다. 모듈 이름은 외부 패키지와 겹치지 않게 짓는다(예: 같은 이름의 `evaluate` 패키지를 requirements에 넣지 않는다) |
+| 개발·실행    | 처음 한 번 `pip install -r requirements.txt`(마지막 줄 `-e .`가 `src/`를 임포트 경로에 올린다). `python -m scripts.init_db`로 누구나 같은 DB(스키마, 가상 이력 시드)를 만들고 `--reset`으로 되돌린다. 먼저 `docker compose up`으로 MySQL을 띄운다(DB 확인은 `docker compose exec`로 `mysql` CLI). 실행은 저장소 루트에서 `python app.py`, `python -m indexing --reset`(인덱스 생성), `python -m evaluate`, `python -m pytest` |
+| 키·재현성    | `.env`에 API 키·MySQL 접속 정보(저장소에 올리지 않음, `.env.example` 제공). LLM `temperature=0`, 평가는 고정 스냅샷                                                                                                                                                                             |
 
-### 3.2 ServiceCase (SQLite `cases`)
-
-| 컬럼                       | 타입      | 설명                                                                   |
-| -------------------------- | --------- | ---------------------------------------------------------------------- |
-| `case_id`                  | TEXT PK   | `SC-YYYYMMDD-NNN`(날짜별 일련번호, 기본값). 세션 키로 쓴다             |
-| `customer_id`              | TEXT      | 상수 `CUST-DEMO`. 검증 항목 없음                                       |
-| `equipment`, `error_code`  | TEXT      | 신고에서 고른 값 (필수)                                                |
-| `memo`                     | TEXT null | 증상 메모(선택)                                                        |
-| `photo_path`               | TEXT null | 사진 경로(선택)                                                        |
-| `status`                   | TEXT      | `접수` / `분석 중` / `조치 중` / `완료`                                |
-| `branch`                   | TEXT      | `support`(기술지원) / `guide`(고객 안내). 신고 직후 `route()`가 정한다 |
-| `guide_result`             | TEXT null | `solved` / `unsolved`. 고객 입력                                       |
-| `summary`                  | TEXT null | AI 요약. 세션을 처음 열 때 생성해 저장                                 |
-| `proposal`                 | JSON null | Answer(대응 방안, 인용). 세션을 처음 열 때 생성해 저장                 |
-| `engineer_action`          | TEXT null | 구조화된 엔지니어 조치                                                 |
-| `cause_found`              | TEXT null | 구조화된 실제 원인                                                     |
-| `resolution`               | TEXT null | `해결` / `미해결`                                                      |
-| `diverged`                 | BOOL null | 답변이 "예상과 달랐는지" 체크박스                                      |
-| `source`                   | TEXT      | `authored`(작성, 가상 이력) / `engineer`(엔지니어 입력)                |
-| `confirmed`                | BOOL      | 이력으로 확정되었는지. 확정된 건만 검색 대상                           |
-| `created_at`, `updated_at` | TEXT      | ISO 시각                                                               |
-
-- 가상 이력 50건(D2)은 `source=authored`, `confirmed=true`로 적재하고 `summary`, `proposal`은 비워 둔다(기본값).
-- 조치 결과가 "해결"일 때만 `status`를 `완료`로 바꾼다. 이 전이는 `confirm_case`가 한다.
-
-### 3.3 Answer·CaseBrief (Pydantic)
-
-```
-Citation:   kind("manual"|"history"), ref_id, locator
-Step:       text, citations: list[Citation]   # 1개 이상
-Answer:     steps: list[Step], insufficient_evidence: bool, notice: str | None
-CaseBrief:  summary: str, proposal: Answer
-```
-
-- `ref_id`: 매뉴얼은 `{equipment}/{code}`, 이력은 `case_id`.
-- `locator`: 매뉴얼은 `errorcodes.csv`의 행 번호, 이력은 해당 이력의 필드명(예: `engineer_action`).
-- 인용 단위는 **조치 단계**다(확정). 모든 `Step`에 `Citation`이 1개 이상 있어야 한다.
-- `insufficient_evidence=true`이면 `steps`는 비워 두고 `notice`에 "근거 부족"과 담당 엔지니어 확인 안내를 넣는다.
-
-### 3.4 사진·접수번호 (기본값)
-
-- 사진은 `data/photos/{case_id}.{ext}`로 저장한다. 허용 형식은 jpg, jpeg, png이고 최대 5MB다. 초과하면 거부 메시지를 보이고 신고는 사진 없이 계속 접수할 수 있다.
-- 접수번호는 신고 제출 시 `create_case`가 만든다. 접수 버튼은 없다.
-
-### 3.5 가상 이력 (`data/history_seed.csv`, D2)
-
-| 컬럼                                           | 규칙                                             |
-| ---------------------------------------------- | ------------------------------------------------ |
-| `case_id`                                      | `SC-SEED-NNN`                                    |
-| `equipment`, `error_code`                      | 3.1의 값과 일치 (코드 없는 이력은 만들지 않는다) |
-| `memo`                                         | 신고 메모 서술                                   |
-| `engineer_action`, `cause_found`, `resolution` | 실제 조치, 원인, `해결`/`미해결`                 |
-| `diverged`                                     | 선택                                             |
-
-- 50건이고 복합 장애는 뺀다. 함정 케이스를 일부러 넣는다: 다른 장비의 같은 코드, 같은 장비 안의 비슷한 코드, 매뉴얼과 다른 실제 조치, 표기가 제각각인 이력.
-- `미해결`(실패한 조치) 이력을 최소 몇 건 넣어 "실패 이력" 표시를 시연할 수 있게 한다.
-
-### 3.6 가이드 문구 작성 규칙 (기본값)
-
-- 작성자는 고객이 직접 해도 되는 코드에만 `guide`를 쓴다.
-- 통로 진입, LOTO, 캐리지 고정, 안전 파라미터 변경이 필요한 조치는 쓰지 않는다. 화면 확인, 단순 재시도, 담당자 연락처럼 설비에 손대지 않는 안내만 쓴다.
-- 등급 A/B 행에는 문구를 쓰지 않는다. 써도 노출되지 않는다.
-- 데이터 담당 2명이 서로의 `guide`를 검수한다.
-
-## 4. 구조와 흐름
+## 4. 아키텍처
 
 ```
-고객 Tab            create_case ──► route(case) ──► branch=guide   ──► guide_for(code) ──► 고객 안내
-(설비·코드·사진)         (F07)         (F10)          │                                     ├ 해결됨 → 완료
-                                                      │                                     └ 해결 안 됨 → branch=support
-                                                      └► branch=support ──► 엔지니어 Tab: 접수 목록 (F08)
-                                                                              세션 열기 → brief(case) (F06)
-                                                                              질문 → ask(case_id, q)   (F06)
-                                                                              이력 작성 → confirm_case (F09) → history 인덱스에 추가
+고객 Tab                          엔지니어 Tab
+신고 폼 ─► create_case(쌍 1~4) ─► route(pairs)
+                           ├ guide   ─► 셀프 가이드(guide_for) ─┬ 해결됨 ─► 완료
+                           │                                    └ 해결 안 됨 ─► support 전환
+                           └ support ─► 접수 목록 ─► 세션 열기 ─► brief(case)
+                                                                  ├ 질문 ─► ask(case_id, q)
+                                                                  └ 이력 작성 ─► confirm_case ─► history 인덱스에 추가
 ```
 
-- P1의 `route()`는 항상 `support`를 반환한다. F10을 붙이면 같은 호출이 `guide`도 반환한다.
-- 인덱스는 Chroma 컬렉션 두 개다. `manual`은 에러코드 행 1개 = 문서 1개, `history`는 확정된 접수 건 1개 = 문서 1개다.
-- 매뉴얼 문서 텍스트는 `[{equipment}] {code} / 증상: … / 원인: … / 조치: …` 형식이다. 고객용 `guide`는 넣지 않는다(기본값). 메타데이터에는 `equipment`, `code`, `grade`, `row_id`를 둔다.
-- 이력 문서 텍스트는 `[{equipment}] {code} / 메모: … / 원인: … / 조치: … / 결과: …` 형식이고 메타데이터에는 `equipment`, `code`, `case_id`, `resolution`을 둔다. 확정 시 바로 추가한다.
+설계 규칙:
 
-## 5. 인터페이스
+- **분기**: 신고 핸들러(`src/ui/customer.py`)가 `create_case` → `route(pairs)` → `update_case`(`branch`) 순서로 처리한다. 복합 신고는 쌍마다 판정해 모든 쌍이 `guide`일 때만 `guide`다. P1의 `route()`는 항상 `support`다. 저위험 코드는 에러코드 표 249개 중 78개이고, 심각도 상 150개는 `조치 구분`과 무관하게 항상 `support`다(이 중 51개는 사양서가 고객사 조치로 분류하지만 고객에게 안내하지 않는다). 신고 접수와 분기는 LLM 없이 동작한다.
+- **저장**: DB 접속은 `src/db.py`에서만 하고 다른 모듈은 공개 함수만 호출한다. `case_id` 채번은 동시 접수에도 겹치지 않게 DB 안에서 처리한다.
+- **검색**: Chroma 컬렉션은 `manual`(에러코드 행 1개 = 문서 1개, 사양서 본문은 절 단위 청크)과 `history`(확정된 접수 건의 쌍 1개 = 문서 1개, 내용은 건 전체)다. 모든 검색에 `equipment` 필터를 적용하고 `history` 결과는 `case_id`로 중복을 제거한다. 메타데이터는 `manual` 행 문서 `equipment`, `code`, `severity`, `action_owner`, `row_id`, 본문 청크 `equipment`, `section`, `page`, `history` `equipment`, `code`, `case_id`, `resolution`이다.
+- **답변**: 복합 신고도 건 단위로 처리한다. `brief`는 설비 필터 때문에 쌍마다 `retrieve`하고, 증거를 합쳐 건 단위로 한 번 판정한다. 쌍 구분은 인용의 `ref_id`(`{equipment}/{code}`)로 한다. LLM 호출이 실패하면 세션 화면에 에러와 재시도 버튼을 보이고 접수 건은 바뀌지 않는다.
+- **모듈**: 모듈은 import할 때 DB·Chroma에 접속하지 않는다. 데이터 경로는 `Path(__file__)` 기준이다.
+- **화면**: 고객 Tab과 엔지니어 Tab은 한 앱의 Tab이다. 접근을 막지 않고 고객 Tab 코드가 고객 노출 필드만 렌더링한다.
 
-| 모듈       | 함수                                                   | 입력 → 출력                                                                               |
-| ---------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `schema`   | `load_error_codes(path)`                               | CSV → `list[ErrorCode]` (검증 실패는 예외)                                                |
-| `indexing` | `build_index(reset)`                                   | `errorcodes.csv`, `history_seed.csv` → Chroma 컬렉션 `manual`, `history`                  |
-| `indexing` | `add_history(case)`                                    | 확정된 `ServiceCase` → `history` 컬렉션에 추가                                            |
-| `db`       | `create_case(equipment, code, memo, photo)`            | → `ServiceCase`(접수번호 부여, `status=접수`)                                             |
-| `db`       | `get_case(id)`, `list_cases(filter)`                   | → `ServiceCase`, `list[ServiceCase]`                                                      |
-| `db`       | `update_case(id, **fields)`                            | → 변경된 `ServiceCase`                                                                    |
-| `search`   | `analyze_query(text, default_equipment, default_code)` | → `QueryAnalysis(equipment: Literal, code, symptom)`. 장비는 고정 목록                    |
-| `search`   | `lookup_error_code(equipment, code)`                   | `@tool`. → 정확히 1행 또는 `None`                                                         |
-| `search`   | `retrieve(analysis, k_manual=3, k_history=3)`          | 정확 조회 + 매뉴얼·이력 의미 검색을 병렬로 → `Evidence`(행, 매뉴얼 히트, 이력 히트, 점수) |
-| `answer`   | `brief(case)`                                          | → `CaseBrief`. 생성 후 `summary`, `proposal`을 저장하고 이미 있으면 재생성하지 않는다     |
-| `answer`   | `ask(case_id, question)`                               | → `Answer`. 접수번호별 대화 기억을 반영한다                                               |
-| `routing`  | `route(case)`                                          | → `"support"` \| `"guide"`                                                                |
-| `routing`  | `guide_for(equipment, code)`                           | → 고객용 문구 또는 `None`                                                                 |
-| `history`  | `structure_resolution(case_id, freeform, draft)`       | → 구조화된 `cause_found`, `engineer_action`, `resolution` 초안(저장하지 않음)             |
-| `history`  | `confirm_case(case_id, fields, diverged)`              | 엔지니어가 확인한 값 저장 → `confirmed=true`, `add_history`, 해결이면 `status=완료`       |
-| `evaluate` | `run_eval(questions_csv)`                              | → 지표 리포트(8장)                                                                        |
+상태 전이:
 
-## 6. 요구사항과 수용 기준
+| 현재                 | 이벤트                             | 다음                                      |
+| -------------------- | ---------------------------------- | ----------------------------------------- |
+| (없음)               | 신고 제출                          | `접수` (`route`로 `branch` 결정)          |
+| `접수`, `support`    | 엔지니어가 세션 열기(`brief` 실행) | `분석 중`                                 |
+| `접수`, `guide`      | 고객 "해결됨"                      | `완료` (기본값)                           |
+| `접수`, `guide`      | 고객 "해결 안 됨"                  | `접수`, `branch=support`                  |
+| `분석 중`            | 엔지니어가 "조치 중"으로 변경      | `조치 중`                                 |
+| `분석 중`, `조치 중` | 이력 확정, `resolution=해결`       | `완료`                                    |
+| `분석 중`, `조치 중` | 이력 확정, `resolution=미해결`     | `조치 중` (이력은 "실패 이력"으로 남는다) |
 
-각 항목은 검증할 수 있어야 한다. "검증"은 어떻게 확인하는지다.
+## 5. 데이터 모델
 
-### P1
+### 5.1 ErrorCode (`data/errorcodes.csv`)
 
-| ID    | 요구사항                                                                                                                                                           | 검증                                                                                     |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| F01-1 | 4개 설비의 에러코드 표가 `ErrorCode`로 로드된다. 등급이 비었거나 (설비, 코드)가 중복이면 실패한다                                                                  | 불량 CSV로 실패 확인                                                                     |
-| F01-2 | 같은 코드가 다른 설비에 있어도 (설비, 코드)로 구분된다                                                                                                             | 중복 코드 2건 조회                                                                       |
-| F01-3 | `ServiceCase`에 `customer_id`, `source`, `confirmed` 컬럼이 있다                                                                                                   | 스키마 확인                                                                              |
-| F02-1 | 모든 화면 상단에 "모든 데이터는 가상" 안내가 보인다                                                                                                                | 화면 확인                                                                                |
-| F02-2 | 고객 Tab은 `ServiceCase`의 고객 노출 필드(접수번호, 설비, 코드, 상태, 가이드 문구, 확정된 조치 결과)만 렌더링한다. AI 요약·대응 방안·이력 원문은 렌더링하지 않는다 | 고객 Tab의 코드 경로 점검과 화면 확인(기본값: 접근 차단이 아니라 "표시하지 않는다" 수준) |
-| F03-1 | 검색용 문서는 `errorcodes.csv`에서만 생성된다. 표를 고치고 `build_index`를 다시 돌리면 문서가 따라 바뀐다                                                          | 행 수정 후 재생성 비교                                                                   |
-| F03-2 | 문서 1개 = 에러코드 1행이고 문서에서 원본 행 번호를 알 수 있다                                                                                                     | 메타데이터 확인                                                                          |
-| F03-3 | `equipment` 필터로 검색하면 다른 설비의 문서가 나오지 않는다                                                                                                       | 필터 검색 테스트                                                                         |
-| F04-1 | 가상 이력 50건이 적재되고 `equipment` 필터로 검색된다                                                                                                              | 건수와 필터 확인                                                                         |
-| F04-2 | `confirmed=false`인 접수 건은 `history` 컬렉션에 없고 검색되지 않는다                                                                                              | 진행 중 건 검색 테스트                                                                   |
-| F04-3 | `resolution=미해결`인 이력은 제외되지 않고 결과에 "실패 이력"으로 표시된다                                                                                         | 미해결 이력 검색                                                                         |
-| F05-1 | `analyze_query`의 `equipment`는 고정 목록 4개 중 하나이고 `temperature=0`이다                                                                                      | 구조화 출력 검증                                                                         |
-| F05-2 | `lookup_error_code(equipment, code)`는 정확히 1행 또는 `None`을 반환한다. 비슷한 코드나 다른 설비의 같은 코드를 반환하지 않는다                                    | 함정 케이스 테스트                                                                       |
-| F05-3 | `retrieve`는 정확 조회, 매뉴얼 검색, 이력 검색을 병렬로 실행하고 모두 장비 필터를 적용한다                                                                         | 호출 인자 확인                                                                           |
-| F06-1 | `brief`는 요약(설비, 코드의 증상·원인, 증상 메모, 사진 유무, 유사 이력 유무)과 대응 방안을 반환한다                                                                | 샘플 접수 건 3개 확인                                                                    |
-| F06-2 | 대응 방안과 `ask`의 답변은 모든 `Step`에 `Citation`이 1개 이상 있다. 없으면 출력 검증이 실패한다                                                                   | 파서 검증 테스트                                                                         |
-| F06-3 | 근거 부족 판정(9장)이면 `insufficient_evidence=true`, `steps` 비어 있음, 담당 엔지니어 확인 안내가 나온다. 추측 답변을 만들지 않는다                               | 근거 없는 질문 테스트                                                                    |
-| F06-4 | 같은 `case_id`의 후속 질문은 앞의 질문·답변을 반영한다                                                                                                             | 두 번 연속 질문                                                                          |
-| F06-5 | 등급이 A/B인 코드의 대응 방안에는 매뉴얼의 안전 수칙 단계가 포함된다                                                                                               | A/B 코드 샘플 확인                                                                       |
-| F07-1 | 설비와 에러코드를 고르지 않으면 접수되지 않는다. 에러코드는 고른 설비의 코드 목록에서만 고른다                                                                     | 폼 테스트                                                                                |
-| F07-2 | 증상 메모와 사진은 비워도 접수된다                                                                                                                                 | 최소 입력 접수                                                                           |
-| F07-3 | 제출하면 `case_id`가 부여되고 `status=접수`다                                                                                                                      | 접수 후 DB 확인                                                                          |
-| F07-4 | 사진은 jpg/jpeg/png, 5MB 이하만 저장된다. 초과 시 거부 메시지를 보이고 사진 없이 접수할 수 있다                                                                    | 큰 파일·다른 형식 테스트                                                                 |
-| F07-5 | 고객은 접수번호로 상태를 조회한다                                                                                                                                  | 조회 테스트                                                                              |
-| F08-1 | 새 신고가 목록 새로고침으로 나타난다                                                                                                                               | 신고 후 새로고침                                                                         |
-| F08-2 | 세션은 `branch=support`인 건에만 생긴다. 처음 열면 `brief`가 실행되어 요약과 대응 방안이 나오고 `status`가 `분석 중`이 된다                                        | 세션 열기                                                                                |
-| F08-3 | 다시 열면 저장된 요약·대응 방안과 대화가 이어진다. LLM을 다시 호출하지 않는다                                                                                      | 재열기 시 호출 횟수 확인                                                                 |
-| F08-4 | 인용을 누르면 원문(매뉴얼 행 또는 이력)이 보인다. 근거 부족은 눈에 띄게 표시된다                                                                                   | 화면 확인                                                                                |
-| F08-5 | 엔지니어는 상태를 `조치 중`으로 바꿀 수 있다                                                                                                                       | 상태 변경                                                                                |
+제공된 에러코드 CSV(`data/raw/error_code_table.csv`, 249행, 열은 `equipment`·`code`·`name`·`severity`·`action_owner`로 이 표와 이름이 같다)에 사양서 표 9-4의 원인·조치를 코드 기준으로 합친 표다.
 
-### P2
+| 컬럼           | 규칙                                                                        |
+| -------------- | --------------------------------------------------------------------------- |
+| `equipment`    | `Mini Loader` / `SRM` / `AGV` / `RTV`                                       |
+| `code`         | 설비 접두 체계(`R201`, `S101`, `A301`, `M401`). 전역에서 유일               |
+| `name`         | 명칭. 증상 검색은 `name`과 `cause`를 합친 텍스트로 한다. 표기는 표 9-4 기준 |
+| `severity`     | `상` / `중` / `하`. 비면 로드 실패                                          |
+| `action_owner` | `고객사 조치` / `엔지니어 필요`. 비면 로드 실패                             |
+| `cause`        | 발생 조건·원인(표 9-4)                                                      |
+| `action`       | 조치(표 9-4). 저위험 건의 셀프 가이드로도 쓴다                           |
+| `extra`        | 설비별 부가 정보(JSON 문자열, 선택). 표 9-4의 `대상 모델`이 `전 모델`이 아니면 `{"target_models": "S10/L10/SY10"}`처럼 둔다                                         |
 
-| ID    | 요구사항                                                                                                              | 검증                        |
-| ----- | --------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| F09-1 | 이력 작성 화면을 열면 세션 기록으로 `cause_found`, `engineer_action` 초안이 채워진다                                  | 세션 후 이력 화면 확인      |
-| F09-2 | `structure_resolution`의 결과는 엔지니어가 확인·수정하기 전에는 저장되지 않는다                                       | 저장 전 DB 확인             |
-| F09-3 | `confirm_case`가 `confirmed=true`로 만들고 `history` 컬렉션에 추가한다. 확인 전 초안은 검색되지 않는다                | 확정 전후 검색 비교         |
-| F09-4 | `resolution=해결`일 때만 `status=완료`가 된다                                                                         | 미해결 저장 테스트          |
-| F09-5 | `diverged` 체크박스 값이 저장된다                                                                                     | DB 확인                     |
-| F09-6 | 같은 코드로 새 신고를 하면 방금 확정한 접수 건이 요약·대응 방안과 질문 답변의 근거로 나타난다                         | E2E-4                       |
-| F10-1 | 등급 A/B는 `guide`가 있어도 `route`가 `support`를 반환한다                                                            | A/B 행에 문구를 넣고 테스트 |
-| F10-2 | 등급 C/I이고 `guide`가 비어 있지 않으면 `route`가 `guide`를 반환한다. 그 밖에는 `support`다                           | 경우의 수 4가지             |
-| F10-3 | `route`는 `equipment`, `error_code`만 입력으로 받는다. 증상 메모와 사진은 쓰지 않는다                                 | 함수 시그니처 확인          |
-| F10-4 | `branch=guide`인 건은 세션을 만들지 않고 목록에 "고객 안내"로 표시한다                                                | 목록 확인                   |
-| F10-5 | 고객이 "해결됨"을 누르면 곧바로 `status=완료`다(기본값). "해결 안 됨"이면 `branch=support`로 바뀌고 세션을 열 수 있다 | 두 경로 테스트              |
-| F11-1 | `run_eval`은 화면 없이 엔진을 직접 호출하고 고정된 스냅샷에서 같은 결과를 낸다                                        | 두 번 실행 비교             |
-| F11-2 | 8장의 지표를 질문 유형별로 계산한다                                                                                   | 리포트 확인                 |
-| F11-3 | 채택률은 `diverged=false`인 비율이고 정답률 측정과 독립적으로 돈다                                                    | `diverged` 없이 실행        |
+- 기본키는 (`equipment`, `code`)다. `grade`, `guide`, `symptom` 컬럼은 없다.
+- 사양서 PDF 4종은 접두 체계의 최신 개정본이고 코드 집합이 `errorcodes.csv` 249개와 일치한다(2026-10-20 확인). `merge_errorcodes.py`는 표 9-4와 CSV를 코드 기준으로 합치고 코드 집합, 심각도, 조치 구분이 어긋난 행을 대조 리포트로 보고한다.
+- `대상 모델`(표 9-4)이 `전 모델`이 아닌 행은 `extra.target_models`에 저장하고 검색 문서 본문에 포함하며, 요약·대응 방안·답변은 모델별 값을 병기한다. 신고에서 모델은 받지 않고 설비 4종 단위 원칙은 유지한다.
 
-### P3
+### 5.2 ServiceCase (MySQL `cases`)
 
-- F12: `ask`와 `retrieve`를 그대로 쓰는 독립 화면. 새 검색 로직을 만들지 않는다. 장비를 고르지 않으면 질문을 보낼 수 없다. 대화는 임시 세션 키로 이어간다.
+| 컬럼                                           | 타입            | 설명                                                                   |
+| ---------------------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| `case_id`                                      | TEXT PK         | `SC-YYYYMMDD-NNN`. 세션 키로도 쓴다. 시드는 원본 이력ID(`RTV-H-0001` 등)를 그대로 쓴다                                    |
+| `company_id`                                   | TEXT            | 고객사 식별자. 상수 `COMP-DEMO`. 검증 없음                                            |
+| `memo`                                         | TEXT null       | 증상 메모(선택)                                                        |
+| `photo_path`                                   | TEXT null       | `data/photos/{case_id}.{ext}`(선택). jpg/jpeg/png, 5MB 이하            |
+| `status`                                       | TEXT            | `접수` / `분석 중` / `조치 중` / `완료`                                |
+| `branch`                                       | TEXT            | `support`(기술지원) / `guide`(셀프 가이드). 신고 직후 `route()`가 정한다 |
+| `summary`, `proposal`                          | TEXT, JSON null | AI 요약, 대응 방안(`Answer`). 세션을 처음 열 때 생성·저장              |
+| `cause_found`, `engineer_action`, `resolution` | TEXT null       | 구조화된 원인, 조치, `해결` / `미해결`                                 |
+| `resolution_note`                              | TEXT null       | 결과 원문(예: `해결(부품 교체)`, `임시 조치(재발 감시)`). 가상 이력에서 온다 |
+| `actor`                                        | TEXT null       | 조치자(서비스 엔지니어, 고객사 운영자, 자동 복구 등). 가상 이력에서 온다 |
+| `diverged`                                     | BOOL null       | 답변이 "예상과 달랐는지" 체크박스                                      |
+| `source`                                       | TEXT            | `authored`(팀이 만든 가상 이력) / `engineer`(엔지니어 입력)            |
+| `confirmed`                                    | BOOL            | 이력으로 확정됐는지. 확정된 건만 검색 대상                             |
+| `created_at`, `updated_at`                     | TEXT            | ISO 시각. 시드는 `created_at`이 장애 기록의 발생일시다                                                               |
 
-## 7. 프롬프트 개요
+- 타입은 MySQL 기준으로 옮긴다. 짧은 문자열은 `VARCHAR`, 긴 텍스트는 `TEXT`, `BOOL`은 `TINYINT(1)`, `proposal`은 `JSON`, 시각은 `DATETIME`(UTC)이다. `schema.sql`은 MySQL 문법으로 쓰고 문자셋 `utf8mb4`는 docker-compose의 DB 설정에 둔다.
+- 설비-에러코드 쌍은 `case_errors`(`case_id`, `seq`, `equipment`, `code`)에 쌍당 1행(건당 1~4행)으로 저장한다. 기본키가 (`case_id`, `equipment`, `code`)라 한 건에 같은 쌍이 두 번 들어가지 않는다. 같은 설비의 다른 코드는 함께 들어갈 수 있고, `seq`는 입력 순서(1~4)다. 모든 쌍은 5.1의 행과 일치해야 한다.
+- `cases`에는 `equipment`, `code` 컬럼이 없고 `ServiceCase`가 `errors: list[(equipment, code)]`를 가진다. 원인·조치·결과와 `diverged`는 복합 신고도 건 단위 한 벌이다.
+- 대화 기록은 `case_messages`(`case_id`, `role`, `content`, `created_at`) 테이블에 저장한다. 세션 재열기, 후속 질문의 대화 기억, 이력 초안 채우기가 이를 쓴다.
 
-공통 규칙: 한국어로 답한다. 주어진 근거(정확 조회 행, 매뉴얼 히트, 이력 히트)만 사용하고, 근거 밖의 내용은 쓰지 않는다. 출력은 Pydantic 스키마로 강제하고 모든 단계에 인용을 붙인다.
+### 5.3 가상 이력 (`data/history_seed.csv`)
 
-| 프롬프트       | 입력                                  | 출력                                           | 주의                                                                                                                                                                                  |
-| -------------- | ------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 질문 분석      | 질문 텍스트, 접수 건의 기본 장비·코드 | `QueryAnalysis`                                | `Literal`로 장비를 고정한다. 코드가 질문에 없으면 접수 건의 코드를 쓴다                                                                                                               |
-| 요약·대응 방안 | `ServiceCase` 신고 필드, `Evidence`   | `CaseBrief`                                    | 요약은 신고와 정확 조회 행으로만 쓴다. 대응 방안은 `Evidence`의 근거를 단계마다 인용한다. 증상 메모와 코드가 어긋나면 둘 다 보여주고 코드를 우선한다. 등급 A/B는 안전 수칙을 포함한다 |
-| 질문 답변      | 질문, 대화 기록, `Evidence`           | `Answer`                                       | 이력 근거와 매뉴얼 근거를 구분해 인용한다. 실패 이력은 "실패 이력"이라고 밝힌다                                                                                                       |
-| 이력 구조화    | 세션 기록, 엔지니어 자유서술          | `cause_found`, `engineer_action`, `resolution` | 엔지니어가 쓴 내용을 바꾸지 않고 항목별로 나눈다. 값이 불확실하면 비워 둔다                                                                                                           |
+- 원본: `data/raw/{agv,mini_loader,rtv,srm}_error_history_dummy.csv` 4종 200건(설비당 50건, 열 19~20개, RTV만 `OBC 버전` 열이 하나 더 있다). `scripts/convert_history.py`가 접수 건 형식으로 바꿔 `history_seed.csv`를 만들고, 팀이 보강한 이력(아래)을 더한다.
+- 컬럼: `case_id`, `equipment`, `code`(5.1과 일치, 코드 없는 이력 없음. 복합 장애는 `;`로 구분해 같은 순서로 나열한다. 예: `RTV;SRM` / `R201;S101`. 같은 쌍은 중복 불가, 같은 설비의 다른 코드는 가능, 최대 4개), `memo`, `engineer_action`, `cause_found`, `resolution`, `resolution_note`, `actor`, `created_at`, `diverged`(선택).
+- `load_seed`는 `equipment`, `code`를 `;`로 쪼개 `case_errors`에 쌍당 1행으로 적재한다(두 값의 개수가 다르면 예외).
+- `source=authored`, `confirmed=true`로 적재하고 `summary`, `proposal`은 비워 둔다(기본값). `status`는 `resolution=해결`이면 `완료`, `미해결`이면 `조치 중`이다.
+
+변환 규칙(원본 열 → 목적지):
+
+| 원본 열 | 목적지 | 규칙 |
+| --- | --- | --- |
+| `이력ID` | `case_id` | 그대로(`RTV-H-0001`). 보강분은 아래 규칙 |
+| `모델명` | `equipment` | 값이 설비 4종과 같다(`AGV`, `Mini Loader`, `RTV`, `SRM`). 세부 모델은 없다 |
+| `에러 코드` | `code` | 그대로. 에러코드 표에 없으면 변환 실패 |
+| `현장 증상`, `확인한 상태값` | `memo` | 현장 증상 뒤에 확인한 상태값을 이어 붙인다 (기본값) |
+| `원인` | `cause_found` | 그대로 |
+| `조치 내용` | `engineer_action` | 그대로 |
+| `결과` | `resolution`, `resolution_note` | 아래 표. 원문은 `resolution_note`에 남긴다 |
+| `조치자` | `actor` | 그대로 |
+| `발생일시` | `created_at` | 그대로 |
+| `에러명`, `심각도`, `조치 구분` | 적재하지 않음 | 에러코드 표와 모두 일치한다. 변환 검증에만 쓴다 |
+| `호기`, `발생 위치`, `정지시간(분)`, `복구일시`, `참조 매뉴얼`, `비고`, `OBC 버전` | 적재하지 않음 | (기본값) 필요해지면 컬럼을 더한다 |
+
+결과 대응(2026-10-20 기준 건수):
+
+| 원본 `결과` | 건수 | `resolution` |
+| --- | --- | --- |
+| 해결 | 134 | 해결 |
+| 해결(부품 교체) | 32 | 해결 |
+| 자동 복구 | 9 | 해결 |
+| 엔지니어 이관 후 해결 | 9 | 해결 |
+| 임시 조치(재발 감시) | 12 | 미해결(실패 이력) |
+| 미해결 | 4 | 미해결(실패 이력) |
+
+더미에 없어 팀이 보강하는 것:
+
+- **복합 장애**: 본문에 '동반'으로 다른 코드가 적힌 행(예: AGV-H-0011의 A381·A383, AGV-H-0021의 A309·A382)에서 일부를 골라 쌍 2~4개 이력으로 새로 만든다. 원본 단일 행은 지우지 않는다. `case_id`는 `<설비 약어>-H-C<NN>`(예: `AGV-H-C01`)이다 (기본값).
+- **함정**: 더미에 이력이 없는 R206, S115, S121과 유사 증상 A308의 이력을 코드마다 1건 이상 추가 작성한다(M406, M414는 1건씩 있다). `case_id`는 `<설비 약어>-H-T<NN>`이다. 다른 설비의 비슷한 에러(주행 브레이크 이상 R206 / S115 / M406, 낙하 방지 장치 작동 S121 / M414)가 이력 검색에서 섞이지 않는지 시험하려는 것이다.
+- 같은 설비 안의 비슷한 코드, 매뉴얼과 다른 실제 조치, 표기가 제각각인 이력은 변환 때 더미에 있는지 확인하고 부족하면 보강한다.
+
+- 검증(`init_db.py --check`): 모든 코드가 5.1에 있고, `resolution`이 2종이며, `case_id`가 겹치지 않고, 복합은 `equipment`와 `code`의 `;` 개수가 같다.
+
+### 5.4 답변·검색 타입 (Pydantic)
+
+타입은 소유 모듈 파일에 두고 소유자만 바꾼다. `Equipment`·`ErrorCode`는 `src/errorcodes.py`, `Chunk`는 `src/parsing.py`, `Hit`은 `src/indexing.py`, `ServiceCase`는 `src/db.py`, `Verdict`·`QueryAnalysis`·`Evidence`는 `src/search.py`, `Citation`·`Step`·`Answer`·`CaseBrief`는 `src/answer.py`, `ResolutionDraft`는 `src/history.py`에 둔다. 다른 담당은 import만 한다. `db`는 `proposal`을 JSON으로 저장하므로 `answer`를 import하지 않는다.
+
+```
+Equipment:     Literal["Mini Loader", "SRM", "AGV", "RTV"]
+Verdict:       Literal["answered", "insufficient_evidence", "not_applicable"]
+Chunk:         equipment, section, page, text
+Hit:           ref_id, text, distance, metadata
+ResolutionDraft: cause_found, engineer_action, resolution("해결"|"미해결")
+Citation:      kind("manual"|"history"), ref_id, locator
+Step:          text, citations: list[Citation]          # 1개 이상
+Answer:        steps: list[Step], verdict("answered"|"insufficient_evidence"|"not_applicable"), notice: str | None
+CaseBrief:     summary: str, proposal: Answer
+QueryAnalysis: equipment(Literal 4 또는 "other"), code | None, code_in_question: bool, symptom | None
+Evidence:      exact_row: ErrorCode | None, manual_hits, history_hits, has_evidence: bool
+```
+
+- `ref_id`: 행은 `{equipment}/{code}`, 본문 청크는 `{equipment}/{section}`, 이력은 `case_id`. `locator`: 행은 CSV 행 번호, 본문은 사양서 쪽·절, 이력은 필드명(예: `engineer_action`).
+- 인용 단위는 조치 단계다. 모든 `Step`에 `Citation`이 1개 이상 있어야 한다.
+- `verdict`가 `insufficient_evidence` 또는 `not_applicable`이면 `steps`는 비우고 `notice`에 "근거 부족"(담당 엔지니어 확인 안내) 또는 "적용 대상 아님"(4개 설비 밖의 설비·장비)을 넣는다.
+
+### 5.5 기타 데이터
+
+- 설비 목록: 별도 파일 없이 `errorcodes.csv`의 `equipment` 고유값(4종)이며 질문 분석의 고정 목록 원천이다. 모델 단위는 두지 않는다. 설비 추가(P3)는 그 설비의 에러코드 행을 추가한다.
+- `data/eval_questions.csv`: 8장.
+
+## 6. 모듈 인터페이스
+
+| 모듈         | 함수                                                                      | 입력 → 출력                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `errorcodes` | `load_error_codes(path)`, `equipment_list(codes)`                         | CSV → `list[ErrorCode]` (검증 실패는 예외) / → 설비 목록(`equipment` 고유값)                                                                                                                      |
+| `config`     | `get_llm()`, `get_embeddings()`                                           | → LangChain 채팅 모델(`temperature=0`) / 임베딩. 호출할 때 만든다. `search`, `answer`, `history`, `indexing`은 LLM·임베딩을 이 함수로만 얻는다 |
+| `parsing`    | `parse_body(dir)`                                                         | 사양서 PDF 4종 → `list[Chunk]`(쪽·절). 표 9-4는 `scripts/merge_errorcodes.py`가 `errorcodes.csv`로 합친다                                                                                             |
+| `indexing`   | `build_index(reset)`, `add_history(case)`                                 | CSV, 파싱 결과, 시드 → Chroma `manual`, `history`(`python -m indexing --reset`으로 실행) / 확정된 `ServiceCase` → `history`에 추가                                                                                                       |
+| `indexing`   | `query(collection, text, equipment, k)`, `get_source(ref_id)`             | 설비 필터를 적용한 벡터 질의 → `list[Hit]` / 인용 원문(표 행, 본문, 이력) 조회                                                                                                          |
+| `db`         | `create_case(errors, memo, photo)`                                        | `errors`는 `(equipment, code)` 쌍 1~4개 → `ServiceCase`(접수번호 부여, `status=접수`, 쌍은 `case_errors`에 저장)                                                                                  |
+| `db`         | `get_case`, `list_cases`, `update_case`, `append_message`, `get_messages` | 조회, 목록, 수정, 대화 기록 저장·조회                                                                                                                                                             |
+| `db`         | `load_seed(path)`                                                         | `history_seed.csv` → `cases`(`source=authored`, `confirmed=true`)                                                                                                                                 |
+| `db`         | `transition(case_id, event)`                                              | 4장 상태 전이 표대로 상태를 바꾼다. 허용되지 않는 전이는 예외                                                                                                                                     |
+| `search`     | `analyze_query(text, default_equipment, default_code)`                    | → `QueryAnalysis`. 4개 설비 밖이면 `equipment=other`                                                                                                                                              |
+| `search`     | `lookup_error_code(equipment, code)`                                      | → 정확히 1행 또는 `None`                                                                                                                                                                          |
+| `search`     | `retrieve(analysis, k_manual=3, k_history=3)`                             | 키워드 기반 조회 + 매뉴얼·이력 검색을 병렬로 → `Evidence`                                                                                                                                                |
+| `search`     | `decide_verdict(analysis, evidence)`                                      | → `"answered"` \| `"insufficient_evidence"` \| `"not_applicable"`. `analysis.equipment=other`이면 `evidence=None`(검색하지 않음)으로 불러 `not_applicable`, 아니면 `evidence.has_evidence`가 거짓일 때 `insufficient_evidence`, 아니면 `answered`. `brief`는 건마다 한 번(쌍별 검색 결과를 합친 증거로), `ask`는 질문마다 부른다 |
+| `answer`     | `brief(case)`                                                             | → `CaseBrief`. 저장하고 이미 있으면 재생성하지 않는다                                                                                                                                             |
+| `answer`     | `ask(case_id, question)`                                                  | → `Answer`. 접수번호별 대화 기억을 반영한다                                                                                                                                                       |
+| `routing`    | `route(pairs)`                                                            | `pairs`는 `(equipment, code)` 1~4개. DB 비의존. → `"support"` \| `"guide"`(건 단위)                                                                                                    |
+| `routing`    | `guide_for(errors)`                                                       | `errors`는 `(equipment, code)` 쌍 1~4개 → 모든 쌍이 저위험이면 쌍별 `action` 목록, 하나라도 아니면 `None`                                                                                         |
+| `history`    | `structure_resolution(case_id, freeform, draft)`                          | → `ResolutionDraft`(저장하지 않음)                                                                                                                                                     |
+| `history`    | `confirm_case(case_id, fields, diverged)`                                 | 확인된 값 저장 → `confirmed=true`, `add_history`, 해결이면 `status=완료`                                                                                                                          |
+| `evaluate`   | `run_eval(questions_csv)`                                                 | → 지표 리포트(8장)                                                                                                                                                                                |
+| `ui.customer`, `ui.engineer`, `ui.history_editor` | `build()` | `gr.Tab` 안에서 호출되어 그 Tab의 컴포넌트와 이벤트를 만든다. `app.py`가 Tab 순서대로 부른다 |
+
+베이스라인(프로젝트 시작 전에 서비스 이력 담당이 올린다)이 `src/`의 모든 모듈을 이 표의 시그니처와 5.4 타입으로 만들고, 함수 본문은 모의 데이터를 돌려주는 스텁으로 둔다. 각 담당은 자기 모듈의 스텁을 같은 시그니처의 실제 구현으로 덮어쓴다. 스텁의 쓰기 함수(`add_history`, `confirm_case`)는 저장하지 않는다. 실제 구현은 자기 AC 테스트와 `tests/test_contracts.py`를 통과한 PR로만 develop에 머지한다. 그 전까지 develop에는 스텁이 남아 의존 파트가 항상 동작하는 인터페이스를 쓴다. 단위 테스트와 CI는 `tests/conftest.py`의 픽스처가 다른 파트의 모듈, `db`(`fake_db`), LLM·임베딩(`fake_llm`)을 모의 데이터로 대체해서 실제 LLM·Chroma·MySQL 없이 돈다.
+
+## 7. 기능 명세
+
+기능은 사용자 스토리(US-번호)와 인수 기준(AC-스토리번호.순번)으로 정리한다. 스토리 하나는 담당 파트 한 곳이 책임지고, 다른 파트의 기능은 6장 인터페이스(스텁 포함)로만 부른다(roles.md). 서비스 사용자는 엔지니어와 고객뿐이고, "팀원"은 개발·평가용 내부 스토리의 표기다. 인수 기준의 `검증` 열은 다른 파트의 스텁 위에서도, 실제 구현으로 바꾼 뒤에도 통과해야 한다.
+
+### 7.1 사용자 스토리
+
+| ID    | 사용자        | 하고 싶은 일                                                                           | 이유                                            | P   | 담당 파트      |
+| ----- | ------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------- | --- | -------------- |
+| US-01 | 엔지니어      | 에러코드 표와 사양서 본문이 사양서 기준으로 정리되어 있다                              | 설비·코드마다 정확한 원인·조치를 믿고 보려고    | P1  | 벡터 DB·데이터 |
+| US-02 | 팀원          | 원본 자료에서 검색 인덱스를 다시 만들고, 설비 필터가 걸린 검색과 인용 원문 조회를 쓴다 | 검색 파트가 인덱스를 기다리지 않고 개발하려고   | P1  | 벡터 DB·인덱싱 |
+| US-03 | 엔지니어      | 방금 확정한 이력이 같은 코드의 새 신고에서 근거로 쓰인다                               | 조치 노하우가 개인에게 갇히지 않게              | P2  | 벡터 DB·인덱싱 |
+| US-04 | 엔지니어      | 접수 건과 대화 기록이 저장되어 세션을 다시 열어도 이어진다                             | 작업을 이어가려고                               | P1  | MySQL          |
+| US-05 | 엔지니어      | 가상 이력(제공 200건 변환 + 복합·함정 보강분, 미해결 포함)이 처음부터 적재되어 있다                         | 검색 근거와 시연에 쓰려고                       | P1  | MySQL          |
+| US-06 | 고객          | 설비와 에러코드를 (한 건에 최대 4쌍) 골라 신고하고 접수번호를 받는다                   | 초동 대응을 빨리 받으려고                       | P1  | 고객 접수      |
+| US-07 | 고객          | 접수번호로 상태와 서비스 조치 결과를 확인한다                                                 | 진행 상황을 알려고                              | P1  | 고객 접수      |
+| US-08 | 고객          | 기술지원 건이면 기술지원 대기 안내를 본다                                                       | 설비를 안전하게 두고 기다리려고                 | P1  | 고객 접수      |
+| US-09 | 고객·엔지니어 | 모든 화면에서 가상 데이터임을 알아본다                                                 | 가상 데이터를 실제로 오해하지 않으려고          | P1  | 고객 접수      |
+| US-10 | 고객          | 저위험 에러는 셀프 가이드를 받아 직접 해결하고 결과를 알린다                             | 엔지니어를 기다리지 않으려고                    | P2  | 고객 접수      |
+| US-11 | 고객          | 저위험이 아닌 에러는 바로 기술지원으로, 저위험 에러만 셀프 가이드로 분기된다                         | 위험한 조치를 직접 하지 않으려고                | P2  | 고객 접수      |
+| US-12 | 엔지니어      | 새 신고를 접수 목록에서 본다                                                           | 처리할 건을 놓치지 않으려고                     | P1  | 엔지니어 세션  |
+| US-13 | 엔지니어      | 세션 화면에서 요약·대응 방안, 인용, 사진을 보고 상태를 바꾼다                          | 한 화면에서 대응하려고                          | P1  | 엔지니어 세션  |
+| US-14 | 엔지니어      | 세션을 열면 접수 건 요약과 대응 방안을 자동으로 받는다                                 | 원인 파악과 방향 결정을 앞당기려고              | P1  | 엔지니어 세션  |
+| US-15 | 엔지니어      | 질문과 후속 질문에 출처가 붙은 답을 받는다                                             | 답을 믿고 확인하려고                            | P1  | 엔지니어 세션  |
+| US-16 | 엔지니어      | 근거가 없으면 추측 대신 "근거 부족"·"적용 대상 아님" 안내를 받는다                     | 지어낸 답에 속지 않으려고                       | P1  | 엔지니어 세션  |
+| US-17 | 팀원          | 평가 질문으로 정답률 등 지표를 재고 통합 시나리오로 전체 흐름을 점검한다               | 시연 전에 품질을 숫자로 보이려고                | P2  | 서비스 이력  |
+| US-18 | 엔지니어      | 에러코드의 원인·조치를 설비를 혼동하지 않고 정확히 조회한다                            | 엉뚱한 설비의 조치를 따르지 않으려고            | P1  | RAG 검색       |
+| US-19 | 엔지니어      | 증상만으로 관련 매뉴얼 본문과 과거 이력을 찾는다                                       | 매뉴얼을 직접 뒤지는 시간을 줄이려고            | P1  | RAG 검색       |
+| US-20 | 엔지니어      | 4개 설비 밖의 질문은 "적용 대상 아님"으로 구분받는다                                   | 자료에 없는 것과 우리 설비가 아닌 것을 가르려고 | P1  | RAG 검색       |
+| US-21 | 엔지니어      | 코드 표기(대소문자·하이픈·공백)가 달라도 같은 결과를 받는다                                 | 표기 때문에 답을 놓치지 않으려고                | P1  | RAG 검색       |
+| US-22 | 엔지니어      | 이력 작성 화면에서 초안을 확인·수정하고 확정한다                                       | 조치 결과를 쉽게 남기려고                       | P2  | 서비스 이력      |
+| US-23 | 엔지니어      | 서비스 조치 이력이 자동으로 구조화되어 확인 후 저장된다                                       | 다음 대응의 근거로 돌려주려고                   | P2  | 서비스 이력      |
+| US-24 | 엔지니어      | 접수 없이 설비·질문만으로 바로 조회한다                                                | 현장에서 빠르게 확인하려고                      | P3  | 서비스 이력      |
+
+### 7.2 인수 기준
+
+| ID      | 요구사항                                                                                                                                                                                                                                          | 검증                              |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| AC-01.1 | 249개를 `ErrorCode`로 로드한다. 심각도나 조치 구분이 비었거나 (설비, 코드)가 중복이면 실패한다. 동명 에러도 (설비, 코드)로 구분한다                                                                                                               | 불량 CSV, 동명 에러 조회          |
+| AC-01.2 | `merge_errorcodes.py`가 표 9-4와 CSV를 코드 기준으로 합쳐 `errorcodes.csv`를 만들고, 심각도·조치 구분이 어긋난 행은 목록으로 보고한다. `equipment` 값은 4종뿐이다                                                        | 대조 리포트                       |
+| AC-01.3 | 사양서 본문이 쪽·절 메타데이터가 붙은 청크로 나뉜다(`parse_body`). 표 9-4는 `merge_errorcodes.py`가 따로 합친다                                                                                                                                   | 청크 메타데이터                   |
+| AC-02.1 | 검색 문서는 원본(`errorcodes.csv`, `data/manuals/`, 시드)에서만 생성한다. 원본을 고치고 `build_index`를 다시 돌리면 문서가 따라 바뀐다. 표 문서 1개 = 에러코드 1행이다. 설비 추가(P3)도 표를 추가하고 재인덱싱한다                                | 수정 후 재생성                    |
+| AC-02.2 | `indexing.query`는 설비 필터를 적용한 히트(거리, 메타데이터)를 반환하고, `indexing.get_source`는 인용 원문을 반환한다                                                                                                                             | 필터 검색, 원문 조회              |
+| AC-03.1 | `indexing.add_history`는 확정된 건만 `history`에 추가한다. 확인 전 초안은 검색되지 않는다. 복합 건은 4장 검색 규칙대로 쌍마다 추가한다                                                                                                            | 확정 전후 검색, 복합 건           |
+| AC-03.2 | 같은 코드로 새 신고를 하면 방금 확정한 접수 건이 요약·대응 방안과 답변의 근거로 나타난다                                                                                                                                                          | 통합 시나리오 3                   |
+| AC-04.1 | `create_case`는 `case_id`(`SC-YYYYMMDD-NNN`)를 부여하고 쌍 1~4개를 `case_errors`에 저장하며(0개, 5개 이상, 같은 쌍 중복은 거부. 같은 설비의 다른 코드는 허용) `status=접수`로 저장한다. 동시에 접수해도 `case_id`가 겹치지 않는다                 | DB 확인                           |
+| AC-04.2 | 요약·대응 방안·대화 기록·상태를 저장하고 조회한다. `transition`이 상태 전이를 4장 표대로만 허용한다                                                                                                                                               | 저장 후 조회, 전이                |
+| AC-05.1 | 제공된 장애 기록 200건을 `convert_history.py`로 변환하고 복합·함정 보강분을 더해 가상 이력을 만든다(미해결 포함). 개발용 샘플 `data/sample/`은 베이스라인의 `scripts/make_sample.py`가 만든다. `init_db.py --check`가 이력의 코드·형식(5.3 검증 항목)을 검증한다                                                                                                     | `init_db.py --check`, 상호 검수   |
+| AC-05.2 | `load_seed`가 `history_seed.csv`를 `cases`(`source=authored`, `confirmed=true`)로 적재한다. `case_id`는 원본 이력ID, `created_at`은 발생일시다                                                                                                                                                        | 건수                              |
+| AC-06.1 | 설비와 에러코드는 필수이고 에러코드는 고른 설비의 목록에서만 고른다. 한 건에 쌍을 1~4개 고를 수 있고(복합 장애) 같은 쌍을 두 번 고르거나 5번째 쌍을 추가할 수 없다. 같은 설비의 다른 코드는 함께 고를 수 있다. 증상 메모와 사진은 비워도 접수된다 | 폼 테스트, 최소 입력              |
+| AC-06.2 | 사진은 jpg/jpeg/png, 5MB 이하만 저장한다. 초과하면 거부 메시지를 보이되 사진 없이 접수할 수 있다                                                                                                                                                  | 큰 파일, 다른 형식                |
+| AC-06.3 | 제출하면 접수번호가 보이고 접수 버튼은 없다. 신고 처리 순서는 `create_case` → `route` → `update_case`다                                                                                                                  | 화면, 호출 순서                   |
+| AC-07.1 | 접수번호로 상태(접수 / 분석 중 / 조치 중 / 완료)와 서비스 조치 결과를 조회한다                                                                                                                                                                           | 조회 테스트                       |
+| AC-07.2 | 고객 Tab은 접수번호, 설비-코드 쌍, 상태, 셀프 가이드, 기술지원 대기 안내, 확정된 서비스 조치 결과만 렌더링한다. AI 요약·대응 방안·이력 원문은 렌더링하지 않는다(접근 차단은 아님, 기본값)                                                                      | 코드 경로 점검                    |
+| AC-08.1 | `branch=support`인 건의 고객 화면에 기술지원 대기 안내(안전 확보, 설비 정지 유지, 기술지원팀 연락)가 보인다                                                                                                                                                | 기술지원 건 조회                  |
+| AC-09.1 | 모든 화면 상단에 "모든 데이터는 가상" 배너를 둔다. 화면·발표 문구는 "AI가 학습한다"가 아니라 "검색 근거가 늘어난다"로 쓴다                                                                                                                        | 화면·문구 점검                    |
+| AC-10.1 | `branch=guide`이면 셀프 가이드(`guide_for`, 복합 신고는 쌍별 조치 문구)와 "해결됨 / 해결 안 됨" 버튼을 보인다                                                                                                                                       | 저위험 코드 신고                  |
+| AC-10.2 | "해결됨"이면 곧바로 `완료`(기본값), "해결 안 됨"이면 `branch=support`로 바뀌어 세션을 열 수 있다                                                                                                                                                  | 두 경로                           |
+| AC-11.1 | 쌍마다 `severity=상`이면 `support`, `action_owner=고객사 조치`이고 `severity`가 중·하이면 `guide`, 그 밖에는 `support`다. 건 단위 합치기는 4장 분기 규칙을 따르고, P1에서는 항상 `support`다                             | 심각도 3 × 조치 구분 2, 복합 혼합 |
+| AC-11.2 | `route`는 쌍 목록(`equipment`, `code`)만 입력받고 에러코드 표 외에는 읽지 않는다(DB 비의존). 증상 메모와 사진을 쓰지 않는다                                                                                                          | 시그니처                          |
+| AC-11.3 | `guide_for`는 모든 쌍이 저위험이면 쌍별 행의 `action` 목록을, 하나라도 아니면 `None`을 반환한다(저위험 쌍의 셀프 가이드도 내보내지 않는다)                                                                                                               | 저위험 행, 상 행, 복합 혼합       |
+| AC-12.1 | 새 신고가 목록 새로고침으로 나타나고 상태·분기가 표시된다. `source=authored` 시드 이력은 목록에 나타나지 않는다                                                                                                                                                                               | 신고 후 새로고침                  |
+| AC-12.2 | `branch=guide`인 건은 세션을 만들지 않고 목록에 "셀프 가이드"로 표시한다                                                                                                                                                                            | 목록                              |
+| AC-13.1 | 세션은 `branch=support`인 건에만 열린다. 처음 열면 `brief` 결과를 요약·대응 방안 카드로 보이고 `status=분석 중`이 된다                                                                                                                            | 세션 열기                         |
+| AC-13.2 | 다시 열면 저장된 요약·대응 방안·대화를 그대로 보인다                                                                                                                                                                                              | 재열기                            |
+| AC-13.3 | 인용을 누르면 `indexing.get_source`로 가져온 원문(표 행, 본문, 이력)이 보인다. 근거 부족과 적용 대상 아님은 눈에 띄게 표시된다                                                                                                                    | 화면                              |
+| AC-13.4 | 접수 사진을 열람하고 상태를 `조치 중`으로 바꿀 수 있다                                                                                                                                                                                            | 사진 있는 건, 상태 변경           |
+| AC-14.1 | `brief`는 요약(쌍마다 설비, 코드의 증상·원인, 증상 메모, 사진 유무, 유사 이력 유무)과 대응 방안을 반환한다. 판정은 건 단위로 한 번이고, 근거가 없는 쌍은 요약에 표시한다. 메모와 코드가 어긋나면 둘 다 보이고 코드를 우선한다                                                                       | 샘플 3건                          |
+| AC-14.2 | 심각도가 상인 코드의 대응 방안에는 매뉴얼의 안전 수칙 단계가 포함된다                                                                                                                                                                             | 샘플 확인                         |
+| AC-14.3 | 접수 건당 한 번만 생성해 저장하고, 이미 있으면 LLM을 다시 호출하지 않는다                                                                                                                                                                         | 재호출 횟수                       |
+| AC-14.4 | 복합 신고에서 쌍 사이의 인과 관계는 근거가 있을 때만 말하고, 근거가 없으면 추측하지 않는다                                                                                                                                                        | 복합 샘플 확인                    |
+| AC-14.5 | 행의 `extra.target_models`가 있으면 요약·대응 방안과 `ask` 답변이 모델별 값을 병기한다. 신고에서 모델은 받지 않는다 | 모델별 값이 있는 행(예: RTV 제동 저항) |
+| AC-15.1 | 대응 방안과 `ask` 답변의 모든 `Step`에 `Citation`이 1개 이상 있다. 없으면 출력 검증이 실패한다                                                                                                                                                    | 파서 검증                         |
+| AC-15.2 | 같은 `case_id`의 후속 질문은 앞의 질문·답변을 반영한다                                                                                                                                                                                            | 연속 질문                         |
+| AC-16.1 | `verdict`가 `insufficient_evidence` 또는 `not_applicable`이면 `steps`가 비고 안내가 나온다. 추측 답변을 만들지 않는다                                                                                                                             | 근거 없는 질문, 4개 설비 밖 질문  |
+| AC-17.1 | `run_eval`은 화면 없이 엔진을 직접 호출하고 고정된 스냅샷에서 같은 결과를 낸다. 8장 지표를 유형별로 계산하고 채택률은 정답률과 독립적으로 돈다                                                                                                    | 두 번 실행 비교, 리포트           |
+| AC-17.2 | 7.4 통합 시나리오 1~4가 통과한다                                                                                                                                                                                                                  | `tests/test_integration.py`       |
+| AC-18.1 | `analyze_query`의 `equipment`는 고정 목록 4개 중 하나다(4개 밖은 US-20)                                                                                                                                                                           | 구조화 출력                       |
+| AC-18.2 | `lookup_error_code`는 정확히 1행 또는 `None`이고, 비슷한 코드나 다른 설비의 같은 이름 에러(R206 / S115 / M406)를 반환하지 않는다                                                                                                                  | 함정 케이스                       |
+| AC-19.1 | `retrieve`는 키워드 기반 조회, 매뉴얼 검색, 이력 검색을 병렬로 실행하고 모두 설비 필터를 적용한다. 다른 설비의 문서가 나오지 않는다                                                                                                                      | 호출 인자, 필터 검색              |
+| AC-19.2 | 매뉴얼 결과는 에러코드 행(원본 행 번호) 또는 본문 청크(사양서 파일·쪽·절)로 출처를 알 수 있다                                                                                                                                                     | 메타데이터                        |
+| AC-19.3 | 이력은 확정된 건만 검색된다. `resolution=미해결` 이력은 제외하지 않고 "실패 이력"으로 표시한다                                                                                                                                                    | 진행 중 건, 미해결 이력 검색      |
+| AC-19.4 | `Evidence.has_evidence`는 7.3의 근거 부족 규칙대로 계산하고, `decide_verdict`는 적용 대상 아님 → 근거 부족 순으로 판정한다                                                                                                                                                                                       | 근거 없는 질문                    |
+| AC-20.1 | `analyze_query`가 4개 설비 밖의 설비·장비를 `equipment=other`로 분류하면 `decide_verdict`가 `not_applicable`로 판정하고 검색 없이 답하게 한다. LLM은 분류만 한다                                                                                              | 대형 AMR, 입출고 스테이션 질문    |
+| AC-21.1 | `analyze_query`와 `lookup_error_code`가 코드 표기 변형(대소문자·하이픈·공백, 예: `r-201`, `R 201`)을 같은 코드로 정규화한 뒤 조회한다 | 표기 변형 코드 |
+| AC-22.1 | 이력 작성 화면이 세션 기록 기반 초안을 보여주고, 자유서술 입력과 "예상과 달랐는지" 체크박스를 제공한다                                                                                                                                            | 세션 후 화면                      |
+| AC-22.2 | 엔지니어가 확인·수정해 확정 버튼을 누르기 전에는 저장하지 않는다                                                                                                                                                                                  | 저장 전 DB                        |
+| AC-23.1 | `cause_found`, `engineer_action` 초안을 세션 기록으로 채우고 `structure_resolution`이 구조화한다. 확인 전에는 저장하지 않는다                                                                                                                     | 세션 후, 저장 전 DB               |
+| AC-23.2 | `confirm_case`가 `confirmed=true`로 만들고 `history`에 추가를 요청한다                                                                                                                                                                            | 확정 전후 검색                    |
+| AC-23.3 | `resolution=해결`일 때만 `status=완료`다. `diverged` 값을 저장한다                                                                                                                                                                                | 미해결 저장, DB                   |
+| AC-24.1 | 독립 조회 화면(`ask`, `retrieve` 재사용, 설비 선택 필수, 임시 세션 키), 평가 화면, 설비 추가(표 추가 후 재인덱싱). 새 검색 로직은 만들지 않는다                                                                                                   | 화면                              |
+
+### 7.3 판정 규칙 (US-16, US-19, US-20 공통)
+
+판정 순서는 적용 대상 아님 → 근거 부족이다. 판정은 `search.decide_verdict`(코드)가 하고 LLM은 바꾸지 못한다. `answer`는 그 결과를 `Answer.verdict`에 옮길 뿐이다.
+
+- **적용 대상 아님**: `analyze_query`가 질문이 가리키는 설비를 고정 목록 4개 중 하나 또는 `other`로 분류한다. `other`이면 코드가 `not_applicable`로 판정하고 검색 없이 답한다. LLM은 분류만 한다.
+- **근거 부족**: 키워드 기반 조회가 근거로 인정되거나, 매뉴얼·이력의 상위 k 히트 중 하나라도 거리가 임계값 τ 이하이면 근거가 있다. 둘 다 아니면 `insufficient_evidence`다. 복합 신고는 쌍 중 하나라도 근거가 있으면 근거가 있다(건 단위 판정). 키워드 기반 조회는 `brief`에서는 접수 건의 쌍 코드로, `ask`에서는 질문에 코드가 명시된 경우(`code_in_question`)에만 근거로 인정한다. 접수 건의 쌍으로 채운 경우를 빼서, 코드와 무관한 질문이 항상 근거 있음으로 판정되지 않게 한다. τ는 거리 로그로 정하고 평가 질문으로 한 번 조정한 뒤 고정한다.
+
+### 7.4 통합 시나리오 (시연·통합 테스트)
+
+1. 저위험 코드 신고(US-06, US-11) → 셀프 가이드(US-10) → "해결됨" → `완료`.
+2. 심각도 상 코드 신고(US-06) → 기술지원, 세션(US-13, US-14, US-15) → 인용 확인 → 이력 확정(US-22, US-23).
+3. 같은 코드로 재신고 → 방금 확정한 이력이 근거로 나타남(US-03).
+4. 복합 신고(저위험 쌍 1개 + 상 쌍 1개) → 건 전체가 기술지원, 저위험 쌍의 셀프 가이드는 고객에게 나가지 않음(AC-11.1, AC-11.3) → 세션에서 쌍별 근거가 구분되어 보임(AC-14.1) → 이력 확정 후 각 쌍의 코드로 재신고하면 근거로 나타남(AC-03.1).
 
 ## 8. 평가
 
-### 8.1 평가 질문 세트 (`data/eval_questions.csv`, D3)
+`data/eval_questions.csv` (30~40문항, 데이터를 쓰지 않은 사람이 작성):
 
-| 컬럼                                  | 설명                                                                                    |
-| ------------------------------------- | --------------------------------------------------------------------------------------- |
-| `q_id`, `type`                        | `lookup`(정확 조회) / `symptom`(증상 검색) / `confusion`(장비 혼동) / `none`(근거 없음) |
-| `equipment`, `error_code`, `question` | 입력                                                                                    |
-| `expected_ref`                        | 정답 출처(`{equipment}/{code}` 또는 `case_id`). `none`은 비움                           |
+| 컬럼                             | 설명                                                                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `q_id`, `type`                   | `lookup` / `symptom` / `confusion`(설비 혼동) / `compound`(복합 신고, 3~5문항) / `none`(근거 없음) / `not_applicable` / `spec`(사양서 본문) |
+| `subtype`                        | `spec` 세부 유형: `version` / `calc` / `xref` / `multipage`                                                                                 |
+| `equipment`, `code`, `question`  | 입력. `compound`는 `equipment`, `code`를 `;`로 같은 순서로 나열한다(5.3과 같다)                                                             |
+| `expected_ref`, `expected_value` | 정답 출처(`{equipment}/{code}`, `{equipment}/{section}`, `case_id`)와 정답 값. `none`, `not_applicable`은 비움                              |
 
-30~40문항이고 데이터를 쓰지 않은 사람이 쓴다.
+| 지표                | 계산                                                                                                   | 판정                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------- |
+| 키워드 기반 조회 정답률    | `lookup`에서 반환 행이 `expected_ref`와 일치한 비율                                                    | 자동                         |
+| 설비 혼동           | `confusion`에서 다른 설비의 행이 나온 건수                                                             | 자동                         |
+| 복합 신고 쌍별 근거 | `compound`에서 각 쌍의 근거가 해당 쌍의 `expected_ref`와 일치하고 다른 쌍·설비의 행이 섞이지 않은 비율 | 자동(인용은 사람 샘플)       |
+| 증상 검색 적중      | `symptom`에서 `expected_ref`가 상위 k(=3)에 포함된 비율                                                | 자동                         |
+| 근거 부족 처리      | `none`에서 `verdict=insufficient_evidence`인 비율(나머지는 지어낸 것)                                  | 자동                         |
+| 적용 대상 아님      | `not_applicable`에서 `verdict=not_applicable`인 비율(근거 부족 처리는 오답)                            | 자동                         |
+| 사양서 본문 정답률  | `spec`에서 답변이 `expected_value`와 일치하고 인용이 `expected_ref`를 가리키는 비율                    | 값은 자동, 인용은 사람 샘플  |
+| 응답 시간           | 질문별 소요 시간의 평균·중앙·최대(API 지연 포함)                                                       | 자동                         |
+| 인용 정확도         | 인용이 단계 내용을 뒷받침하는 비율                                                                     | 사람이 무작위 20개 단계 확인 |
+| 채택률(시연용)      | `diverged=false` 비율                                                                                  | 자동                         |
 
-### 8.2 지표
+- 스냅샷: `data/`의 CSV·사양서 PDF를 저장소에 두고 Chroma 디렉터리는 올리지 않고, DB는 `scripts/init_db.py`로 각자 만든다(평가·시연은 MySQL). 각자 `python -m indexing --reset`으로 재생성하고, 평가 직전에도 이 명령과 `scripts/init_db.py --reset`으로 인덱스와 DB를 시드 상태로 되돌려 시연 중 확정된 이력의 영향을 없앤다.
 
-| 지표             | 계산                                                                     | 판정                                      |
-| ---------------- | ------------------------------------------------------------------------ | ----------------------------------------- |
-| 정확 조회 정답률 | `lookup` 유형에서 반환 행이 `expected_ref`와 일치한 비율                 | 자동                                      |
-| 장비 혼동        | `confusion` 유형에서 다른 장비의 행이 나온 건수                          | 자동                                      |
-| 증상 검색 적중   | `symptom` 유형에서 `expected_ref`가 매뉴얼·이력 상위 k(=3)에 포함된 비율 | 자동                                      |
-| 근거 부족 처리   | `none` 유형에서 `insufficient_evidence=true`인 비율(나머지는 지어낸 것)  | 자동                                      |
-| 응답 시간        | 질문별 소요 시간의 평균·중앙·최대(API 지연 포함)                         | 자동                                      |
-| 인용 정확도      | 인용이 단계 내용을 뒷받침하는 비율                                       | 사람이 무작위 샘플(기본 20개 단계)을 확인 |
-| 채택률(시연용)   | `diverged=false` 비율                                                    | 자동                                      |
+## 9. 기본값 (팀 확인 필요)
 
-- 목표치는 정하지 않고 측정한다.
-- 이력 추가 전/후 비교는 평가와 별도 시연이다. 평가는 고정 스냅샷으로만 돈다.
+| 항목                      | 기본값                                                                                                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 상태 값                   | 4단계. 저위험 건은 "접수"에 "셀프 가이드" 표시. 세션을 열면 "분석 중"                                                                                                  |
+| 고객 "해결됨"             | 엔지니어 확인 없이 곧바로 `완료`                                                                                                                                     |
+| 요약·대응 방안 생성 시점  | 엔지니어가 세션을 처음 열 때 생성하고 저장                                                                                                                           |
+| 검색 k                    | 매뉴얼 3, 이력 3                                                                                                                                                     |
+| 청킹                      | 표 9-4는 행 단위, 산문은 절 단위. 1000자 분할 비교는 선택                                                                                                            |
+| 사양서 PDF                | `data/manuals/`에 저장소 포함(가상 문서). 접두 체계의 최신 개정본이다      |
+| 제품 카탈로그(E-Cat2025)  | 검색 인덱스에 넣지 않고 용어 근거로만 사용. 공개 저장소에 올리지 않음                                                                                                |
+| 가상 이력의 요약·제안     | 비워 둔다                                                                                                                                                            |
+| 접수 목록                 | `source=authored` 시드는 엔지니어 Tab의 접수 목록에 나타나지 않는다 |
+| 모델별 값                 | `대상 모델`은 `extra.target_models`에 보관하고 답변에 병기한다. 신고에서 S/W 버전과 모델은 받지 않는다. 병기 형식은 팀이 정한다 |
+| 고객에게 보이는 서비스 조치 결과 | 확정된 `engineer_action`과 `resolution`                                                                                                                              |
 
-### 8.3 스냅샷 (기본값)
-
-- `data/`의 CSV와 `scripts/build_index.py`를 저장소에 둔다. Chroma 디렉터리는 저장소에 올리지 않고 각자 `build_index`로 재생성한다.
-- 평가 직전에 `build_index(reset=True)`로 인덱스를 다시 만들어 시연 중 확정된 이력의 영향을 없앤다.
-
-## 9. 근거 부족 판정 (기본값)
-
-다음 중 하나라도 만족하면 근거가 있다.
-
-1. `lookup_error_code`가 정확히 1행을 반환했다.
-2. 매뉴얼 또는 이력의 상위 k 히트 중 하나라도 거리 임계값 τ 이하다.
-
-둘 다 아니면 `insufficient_evidence=true`다. Chroma의 거리는 작을수록 가깝다. τ는 Day 4에 실제 거리 로그를 보고 정하고, Day 6에 평가 질문으로 한 번 조정한 뒤 고정한다. 판정은 `retrieve`가 `Evidence.has_evidence`로 계산하고 LLM은 이 값을 바꾸지 못한다.
-
-## 10. 화면
-
-| Tab      | 구성                                                                                                                                                                         | 기능     |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| 공통     | 상단에 "모든 데이터는 가상" 배너                                                                                                                                             | F02      |
-| 고객     | 신고 폼(설비 → 에러코드 → 증상 메모 → 사진 → 제출), 접수번호 조회(상태, 가이드 문구, 조치 결과), 가이드가 있을 때 "해결됨/해결 안 됨" 버튼                                   | F07, F10 |
-| 엔지니어 | 접수 목록(새로고침 버튼, 상태·분기 표시), 세션(요약·대응 방안 카드, 인용 링크, 질문 입력, 후속 질문, 상태 변경), 이력 작성(초안, 자유서술, 구조화 결과 확인, 체크박스, 확정) | F08, F09 |
-| 선택(P3) | 독립 조회 Q&A                                                                                                                                                                | F12      |
-
-- 고객에게 보이는 조치 결과는 확정된 `engineer_action`과 `resolution`이다(기본값).
-- 고객 Tab과 엔지니어 Tab은 한 앱 안의 Tab이다. 접근을 막지 않고, 고객 Tab 코드가 고객 노출 필드만 렌더링한다.
-
-## 11. 상태 전이
-
-| 현재                     | 이벤트                          | 다음                     | 비고                                     |
-| ------------------------ | ------------------------------- | ------------------------ | ---------------------------------------- |
-| (없음)                   | 신고 제출                       | `접수`                   | `route()`로 `branch` 결정                |
-| `접수`, `branch=support` | 엔지니어가 세션 열기            | `분석 중`                | `brief` 실행                             |
-| `접수`, `branch=guide`   | 고객 "해결됨"                   | `완료`                   | 기본값                                   |
-| `접수`, `branch=guide`   | 고객 "해결 안 됨"               | `접수`, `branch=support` | 이후 세션을 열면 `분석 중`               |
-| `분석 중`                | 엔지니어가 "조치 중"으로 변경   | `조치 중`                |                                          |
-| `분석 중`, `조치 중`     | 이력 확정 & `resolution=해결`   | `완료`                   | `confirmed=true`                         |
-| `분석 중`, `조치 중`     | 이력 확정 & `resolution=미해결` | `조치 중`                | 완료 아님. 이력은 "실패 이력"으로 남는다 |
-
-## 12. 비기능 요구
-
-- **재현성**: LLM `temperature=0`, 평가는 고정 스냅샷, 데이터 CSV는 저장소에서 버전 관리한다.
-- **비용**: 요약·대응 방안은 접수 건당 한 번만 생성해 저장한다. 세션을 다시 열어도 재호출하지 않는다.
-- **오류 처리**: LLM 호출 실패 시 세션 화면에 오류와 재시도 버튼을 보이고 접수 건은 바뀌지 않는다. 신고 접수와 분기는 LLM이 없어도 동작해야 한다(규칙만 쓰므로).
-- **비공개**: `.env`와 제품 카탈로그(E-Cat2025)는 공개 저장소에 올리지 않는다.
-- **표현**: 화면과 발표 문구에서 "AI가 학습한다"가 아니라 "검색 근거가 늘어난다"로 설명한다.
-- **언어**: 한국어만 지원한다.
-
-## 13. 데이터 작업 규칙
-
-| 산출물                         | 규칙                                                                                                      |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| D1 에러코드 표                 | 3.1의 컬럼과 규칙. 설비당 8~10개. 설비 사이에 같은 코드와 비슷한 코드를 일부러 넣는다. `guide` 규칙은 3.6 |
-| D2 가상 이력                   | 3.5. 50건, 함정 케이스와 `미해결` 이력 포함                                                               |
-| D3 평가 질문                   | 8.1. 30~40문항. 정답 없는 질문(`none`)을 포함. 작성자는 D1, D2 작성에 참여하지 않는다                     |
-| D4 장비 목록, 용어·동의어 사전 | `equipment.csv`(장비 4종), `glossary.csv`(표기 통일). 질문 분석과 검색 전 표기 정규화에 쓴다              |
-
-- D1, D2는 데이터 담당 2명이 서로 검수한다. 등급 A/B 기재와 `guide`는 반드시 확인한다.
-
-## 14. 추적
-
-| features | spec                                   |
-| -------- | -------------------------------------- |
-| F01      | 3.1, 3.2, 6장 F01                      |
-| F02      | 10장, 6장 F02                          |
-| F03      | 4장, 5장 `indexing`, 6장 F03           |
-| F04      | 3.2, 3.5, 4장, 6장 F04                 |
-| F05      | 5장 `search`, 6장 F05, 7장             |
-| F06      | 3.3, 5장 `answer`, 6장 F06, 7장, 9장   |
-| F07      | 3.4, 10장, 6장 F07                     |
-| F08      | 10장, 11장, 6장 F08                    |
-| F09      | 5장 `history`, 6장 F09, 7장            |
-| F10      | 3.6, 5장 `routing`, 6장 F10, 11장      |
-| F11      | 8장, 6장 F11                           |
-| F12      | 6장 P3                                 |
-| E2E-1~6  | 6장의 해당 요구사항을 묶어서 통과 확인 |
-
-## 15. 기본값으로 정한 항목 (팀 확인 필요)
-
-| 항목                         | 기본값                                                                           |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| 접수 건 저장소               | SQLite(`mpilot.db`)                                                              |
-| 접수번호                     | `SC-YYYYMMDD-NNN`                                                                |
-| 사진                         | jpg/jpeg/png, 5MB 이하, `data/photos/{case_id}.{ext}`                            |
-| 요약·대응 방안 생성 시점     | 엔지니어가 세션을 처음 열 때 생성하고 저장                                       |
-| 증상 메모와 코드가 어긋날 때 | 둘 다 보여주고 코드를 우선                                                       |
-| 상태 값                      | 4단계, 저위험 건은 "접수"에 "고객 안내" 표시                                     |
-| 고객 "해결됨"                | 곧바로 `완료`                                                                    |
-| 근거 부족 판정               | 정확 조회 성공 또는 거리 임계값 τ 이하 히트. τ는 Day 4, Day 6에 조정             |
-| 검색 k                       | 매뉴얼 3, 이력 3                                                                 |
-| 인용 정확도 샘플             | 무작위 20개 단계를 사람이 확인                                                   |
-| 가이드 문구                  | `errorcodes.csv`의 `guide` 컬럼에 직접 작성, 3.6 규칙, 매뉴얼 문서에는 넣지 않음 |
-| 고객 Tab 통제                | 접근 차단이 아니라 고객 노출 필드만 렌더링                                       |
-| 제품 카탈로그(E-Cat2025)     | 검색 인덱스에 넣지 않고 용어 근거로만 사용                                       |
-| 1000자 분할 비교             | 선택 항목                                                                        |
-| 고객에게 보이는 조치 결과    | 확정된 `engineer_action`과 `resolution`                                          |
-| 가상 이력의 요약·제안        | 비워 둔다                                                                        |
-
-## 16. 남은 외부 확인 (intent.md 열린 질문)
-
-1. 기획안과 달라지는 항목과 P1 범위 확대(화면 셋)를 팀과 강사님에게 확인하고 일정과 함께 합의한다.
-2. 평가 질문 작성자가 "데이터를 쓰지 않은 사람" 조건을 충족하는지 확인한다.
-3. 강사님 확인 사항(기준 문서, 사용자 둘 구성의 범위 적합성)이 열려 있다.
+외부 확인 사항(P1 범위·일정 합의, 평가 질문 작성자, 사용자 구성)은 intent.md의 Open questions를, 보강 이력 작성자는 roles.md를 따른다.
