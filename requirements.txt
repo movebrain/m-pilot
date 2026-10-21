@@ -1,0 +1,13 @@
+# 버전은 첫 설치 후 pip freeze로 고정한다. 마지막 줄 -e .은 src/를 임포트 경로에 올린다(spec 3장).
+gradio
+langchain
+langchain-openai
+langchain-chroma
+chromadb
+pdfplumber
+pandas
+PyMySQL
+pydantic
+python-dotenv
+pytest
+-e .

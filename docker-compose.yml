@@ -1,0 +1,17 @@
+# 로컬 MySQL(앱 실행·시연). 소유: MySQL. 접속 정보는 .env를 따른다.
+services:
+  mysql:
+    image: mysql:8.0
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-mpilot}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-mpilot}
+      MYSQL_USER: ${MYSQL_USER:-mpilot}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-mpilot}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+volumes:
+  mysql-data:

@@ -33,3 +33,7 @@
 - name: 피드백
   color: A439D6
   description: 담당자 확인 > 수정 필요
+
+- name: 계약 변경
+  color: B60205
+  description: 모듈 간 계약(tests/test_contracts.py)이 바뀐 PR. 영향받는 파트 담당이 확인

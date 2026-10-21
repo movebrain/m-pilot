@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpilot"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["config", "errorcodes", "parsing", "indexing", "db", "search", "answer", "history", "routing", "evaluate"]
+packages = ["ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["real_db: 실제 MySQL이 필요한 SQL 동작 테스트(CI에서만 실행)"]
+addopts = "-m 'not real_db'"
