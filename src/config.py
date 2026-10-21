@@ -6,11 +6,9 @@ search·answer·history·indexing은 LLM·임베딩을 이 두 함수로만 얻�
 """
 import os
 from functools import cache
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from langchain_core.embeddings import Embeddings
-    from langchain_core.language_models import BaseChatModel
+from langchain_core.embeddings import Embeddings
+from langchain_core.language_models import BaseChatModel
 
 DEFAULT_CHAT_MODEL = "gpt-4o-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -22,7 +20,7 @@ def _load_env() -> None:
 
 
 @cache
-def get_llm() -> "BaseChatModel":
+def get_llm() -> BaseChatModel:
     """채팅 모델(temperature=0, spec 3장 재현성)."""
     _load_env()
     from langchain_openai import ChatOpenAI
@@ -30,7 +28,7 @@ def get_llm() -> "BaseChatModel":
 
 
 @cache
-def get_embeddings() -> "Embeddings":
+def get_embeddings() -> Embeddings:
     """임베딩 모델. Chroma manual·history에 같은 모델을 쓴다."""
     _load_env()
     from langchain_openai import OpenAIEmbeddings

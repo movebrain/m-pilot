@@ -5,7 +5,7 @@ LLM·Chroma를 모르고 answer를 임포트하지 않는다(proposal은 JSON으
 """
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -43,7 +43,7 @@ class ServiceCase(BaseModel):
     updated_at: datetime
 
 
-def _mock(case_id: str = "SC-20261021-001", **fields) -> ServiceCase:
+def _mock(case_id: str = "SC-20261021-001", **fields: Any) -> ServiceCase:
     now = datetime.now(timezone.utc)
     base = dict(case_id=case_id, errors=[("RTV", "R201")], created_at=now, updated_at=now)
     return ServiceCase(**(base | fields))
@@ -63,7 +63,7 @@ def list_cases() -> list[ServiceCase]:
     return [_mock()]
 
 
-def update_case(case_id: str, **fields) -> ServiceCase:
+def update_case(case_id: str, **fields: Any) -> ServiceCase:
     return _mock(case_id, **fields)
 
 
