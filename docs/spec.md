@@ -42,7 +42,7 @@
 │   └── schema.sql                 MySQL 스키마(`cases`, `case_errors`, `case_messages`)
 ├── tests/
 │   ├── conftest.py                다른 파트 모듈을 모의 데이터로 대체하는 픽스처(CI는 API 키 없이 돌림)
-│   ├── test_contracts.py          6장 시그니처가 바뀌지 않았는지 검사(CI)
+│   ├── test_contracts.py          6장 시그니처와 5.4 모델 필드가 바뀌지 않았는지 검사(CI)
 │   ├── test_<모듈>.py               7.2 인수 기준
 │   └── test_integration.py        7.4 통합 시나리오
 ├── data/
@@ -87,7 +87,7 @@
 | `tests/test_<모듈>.py` | 모듈별 인수 기준(7.2) | `db`의 `real_db` 테스트는 `test_db.py`에 두고 CI에서만 돌린다 | 각 파트 |
 | `tests/test_integration.py` | 통합 시나리오 1~4(7.4) |  | 서비스 이력 |
 | `tests/conftest.py` | 다른 파트 모듈, 메모리 `db`(`fake_db`), LLM·임베딩(`fake_llm`)을 모의 데이터로 대체하는 픽스처 | 실제 LLM·Chroma·MySQL을 부르지 않는다 | 서비스 이력 |
-| `tests/test_contracts.py` | 6장 함수의 인자 이름·순서와 반환 타입이 계약과 같은지 검사한다 | 동작은 검사하지 않는다(각 파트의 AC 테스트 몫) | 서비스 이력 |
+| `tests/test_contracts.py` | 6장 함수의 인자 이름·순서·타입과 반환 타입, 5.4 모델의 필드 이름·타입이 계약과 같은지 검사한다. 이 파일을 바꾼 PR에는 `계약 변경` 라벨을 붙인다 | 동작은 검사하지 않는다(각 파트의 AC 테스트 몫) | 서비스 이력 |
 | `data/errorcodes.csv` | 에러코드 표 정본(249행) | `merge_errorcodes.py`가 만든다 | 벡터 DB·데이터 |
 | `data/history_seed.csv` | 가상 이력(원본 변환 + 보강분) | `convert_history.py`가 만든다 | MySQL |
 | `data/eval_questions.csv` | 평가 질문 | 데이터를 만들지 않은 사람이 쓴다 | 서비스 이력 |
