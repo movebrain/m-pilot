@@ -1,24 +1,31 @@
-"""Gradio Blocks 조립과 "모든 데이터는 가상" 배너. 소유: 고객 접수.
+"""앱 조립·실행: 설정·모듈 초기화, 화면 생성.
 
-화면 로직과 규칙은 src/ui/와 모듈에 두고 여기서는 Tab만 조립한다.
+역할:
+    `python app.py`로 실행하는 진입점이다. 설정을 읽고 DB·검색·모델을 연결한 뒤 Gradio Blocks 화면을 만들어 띄운다.
+
+책임:
+    - 시작 순서: 설정 로드 → `service.set_config` → `rdb.connect` → 임베딩으로 `vectordb.connect` →
+      모델로 `generator.set_chat_model` → `service.prepare_search_index`(끝난 뒤에야 로그인 화면이 열린다)
+      → 화면 조립 → 실행.
+    - 화면 상태 3개(`role`, `case_id`, `screen`)를 `gr.State`로 만들어 모든 화면 함수에 같게 넘긴다.
+    - 모든 화면에 "모든 데이터는 가상" 배너를 보인다.
+    - 업무 규칙은 두지 않는다. 규칙은 `models`·`service`에 있다.
+
+의존: `ui/*`, `service`, `config`, `models`, `db.rdb`, `db.vectordb`, `rag.generator`(의존 규칙 §2.5).
+소유: UI·총괄 파트
 """
-import gradio as gr
 
-from ui import customer, engineer, history_editor
-
-BANNER = "모든 데이터는 가상입니다."
+from __future__ import annotations
 
 
-def build_app() -> gr.Blocks:
-    with gr.Blocks(title="M-Pilot") as demo:
-        gr.Markdown(f"**{BANNER}**")
-        with gr.Tab("고객"):
-            customer.build()
-        with gr.Tab("엔지니어"):
-            engineer.build()
-            history_editor.build()
-    return demo
+def main() -> None:
+    """앱을 조립해 실행한다.
 
+    Returns:
+        None: Gradio 서버를 띄우고, 종료될 때까지 돌려주지 않는다.
 
-if __name__ == "__main__":
-    build_app().launch()
+    Raises:
+        ValidationError: 설정이 틀렸을 때.
+        DependencyError: DB·임베딩·모델·검색 색인 준비에 실패했을 때. 앱은 시작하지 않는다.
+    """
+    ...
