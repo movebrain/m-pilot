@@ -36,4 +36,4 @@
 
 - name: 계약 변경
   color: B60205
-  description: 모듈 간 계약(tests/test_contracts.py)이 바뀐 PR. 영향받는 파트 담당이 확인
+  description: 모듈 간 계약(spec.md §2.3·§2.4, mpilot/ 시그니처)이 바뀐 PR. 영향받는 파트 담당이 확인
