@@ -19,7 +19,20 @@
 
 from __future__ import annotations
 
-from mpilot.models import Equipment, ErrorCode, SearchHit
+from typing import TYPE_CHECKING
+
+from mpilot.db import vectordb
+from mpilot.models import (
+    CitationKind,
+    DependencyError,
+    Equipment,
+    ErrorCode,
+    NotFoundError,
+    SearchHit,
+)
+
+if TYPE_CHECKING:
+    from langchain_core.documents import Document
 
 
 def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
@@ -75,7 +88,38 @@ def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
     Raises:
         DependencyError: 저장소 조회에 실패했을 때(허용 ID의 원문이 없는 경우 포함).
     """
-    ...
+    hits = []
+    for ref_id in error_code.customer_procedure_ref_ids:
+        try:
+            doc = vectordb.get_document(CitationKind.MANUAL, ref_id)
+        except NotFoundError as e:
+            # 허용 절차 원문이 없으면 조용히 건너뛰지 않고 오류로 알린다.
+            raise DependencyError(f"허용 절차 원문을 찾을 수 없다: {ref_id}") from e
+        hits.append(_to_hit(doc, None))
+    return hits
+
+
+def _to_hit(doc: Document, distance: float | None) -> SearchHit:
+    """저장소 문서 한 건을 `SearchHit`으로 바꾼다. 메타데이터가 계약과 다르면 `DependencyError`."""
+    meta = doc.metadata
+    try:
+        ref_id = doc.id
+        kind = CitationKind.HISTORY if ref_id.startswith("history:") else CitationKind.MANUAL
+        if kind is CitationKind.HISTORY:
+            locator = f"접수 {meta['case_id']} {meta['code']}"
+        else:
+            locator = f"{meta['manual_id']} {meta['page']}쪽 {meta['section']}"
+        return SearchHit(
+            ref_id=ref_id,
+            kind=kind,
+            equipment=Equipment(meta["equipment"]),
+            code=meta.get("code"),
+            text=doc.page_content,
+            locator=locator,
+            distance=distance,
+        )
+    except (AttributeError, KeyError, ValueError) as e:
+        raise DependencyError(f"검색 문서의 메타데이터가 계약과 다르다: {doc.id}") from e
 
 
 def has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool:
