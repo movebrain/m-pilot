@@ -100,7 +100,23 @@ def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
 
 
 def _to_hit(doc: Document, distance: float | None) -> SearchHit:
-    """저장소 문서 한 건을 `SearchHit`으로 바꾼다. 메타데이터가 계약과 다르면 `DependencyError`."""
+    """저장소 문서 한 건을 `SearchHit`으로 바꾼다.
+
+    문서 ID(`Document.id`)의 접두(`history:`)로 컬렉션 종류를 가리고, 메타데이터에서 설비·코드·출처 표기를 읽는다.
+    출처 표기(`locator`)는 매뉴얼이 `<매뉴얼 ID> <쪽>쪽 <절>`, 이력이 `접수 <case_id> <코드>`다.
+
+    Args:
+        doc: 저장소가 돌려준 문서. `id`와 메타데이터 `equipment`를 읽고, 매뉴얼은 `manual_id`·`page`·`section`,
+            이력은 `case_id`·`code`도 읽는다.
+        distance: 질의와의 벡터 거리. 직접 조회한 근거는 `None`.
+
+    Returns:
+        SearchHit: 변환된 근거. `code`는 코드 표 행과 이력에만 있고 매뉴얼 본문은 `None`이다.
+
+    Raises:
+        DependencyError: 문서 ID가 없거나 필요한 메타데이터가 빠졌거나 설비 값이 4종 밖일 때
+            (저장소가 계약과 다른 문서를 돌려준 경우).
+    """
     meta = doc.metadata
     try:
         ref_id = doc.id
