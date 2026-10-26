@@ -38,11 +38,11 @@
 
 팀 공식 AI 규칙은 아래 스킬([#23](https://github.com/movebrain/m-pilot/pull/23), `.claude/skills/`)이 나눠 맡는다. 이 저장소에서는 전역 커밋·PR 스킬 대신 이 스킬을 쓴다.
 
-| 상황 | 스킬 | 이 스킬이 정하는 것 | 대체한 AI_RULES 항목 |
-| --- | --- | --- | --- |
-| 브랜치 생성, 머지, 릴리스 | `branch-strategy` | `main` ← `develop` ← `<type>/<설명>`, 작업→develop은 squash, develop→main은 merge commit, main·develop 직접 push·force push 금지, 승인 1명 이상 | 1. 처리 권한 |
-| 커밋 | `conventional-commit` | type은 영어·제목과 본문은 한국어, 제목 50자, 본문에 변경 **의도**, Claude `Co-authored-by` 금지 | 3. 반영 기준(기록) |
-| PR 작성·생성 | `create-pr` | `## 변경 사항` 불릿 + `>` 의도, 끝에 `## 머지 커밋 메시지`, Claude 생성 문구 금지 | 3. 반영 기준(기록) |
+| 상황 | 스킬 | 이 스킬이 정하는 것 |
+| --- | --- | --- |
+| 브랜치 생성, 머지, 릴리스 | `branch-strategy` | `main` ← `develop` ← `<type>/<설명>`, 작업→develop은 squash, develop→main은 merge commit, main·develop 직접 push·force push 금지, 승인 1명 이상 |
+| 커밋 | `conventional-commit` | type은 영어·제목과 본문은 한국어, 제목 50자, 본문에 변경 **의도**, Claude `Co-authored-by` 금지 |
+| PR 작성·생성 | `create-pr` | `## 변경 사항` 불릿 + `>` 의도, 끝에 `## 머지 커밋 메시지`, Claude 생성 문구 금지 |
 
 스킬이 다루지 않아 이 파일에 남기는 공식 규칙:
 
