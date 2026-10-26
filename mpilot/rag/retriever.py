@@ -19,7 +19,21 @@
 
 from __future__ import annotations
 
-from mpilot.models import Equipment, ErrorCode, SearchHit
+from typing import TYPE_CHECKING
+
+from mpilot.db import vectordb
+from mpilot.models import (
+    CitationKind,
+    DependencyError,
+    Equipment,
+    ErrorCode,
+    MpilotError,
+    SearchHit,
+    ValidationError,
+)
+
+if TYPE_CHECKING:
+    from langchain_core.documents import Document
 
 
 def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
@@ -38,7 +52,7 @@ def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
         ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
         DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    ...
+    return _search_scoped(CitationKind.MANUAL, equipment, query, k)
 
 
 def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
@@ -56,7 +70,33 @@ def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
         ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
         DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    ...
+    hits = _search_scoped(CitationKind.HISTORY, equipment, query, k)
+    # 거리 오름차순이므로 같은 case_id는 처음 나온(가장 가까운) 것만 남는다.
+    unique: dict[str, SearchHit] = {}
+    for hit in hits:
+        unique.setdefault(hit.ref_id.removeprefix("history:"), hit)
+    return list(unique.values())
+
+
+def _search_scoped(
+    kind: CitationKind, equipment: Equipment, query: str, k: int
+) -> list[SearchHit]:
+    """설비 필터를 건 유사도 검색 공통부. 거리 오름차순 `SearchHit` 목록을 돌려준다."""
+    if not query.strip():
+        raise ValidationError("검색 질의가 비어 있다")
+    if k < 1:
+        raise ValidationError(f"k는 1 이상이어야 한다: {k}")
+    try:
+        store = vectordb.get_store(kind)
+        scored = store.similarity_search_with_score(
+            query, k=k, filter={"equipment": equipment.value}
+        )
+        hits = [_to_hit(doc, distance) for doc, distance in scored]
+        return sorted(hits, key=lambda hit: hit.distance)
+    except MpilotError:
+        raise
+    except Exception as e:
+        raise DependencyError(f"{kind.value} 검색에 실패했다") from e
 
 
 def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
@@ -76,6 +116,29 @@ def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
         DependencyError: 저장소 조회에 실패했을 때(허용 ID의 원문이 없는 경우 포함).
     """
     ...
+
+
+def _to_hit(doc: Document, distance: float | None) -> SearchHit:
+    """저장소 문서 한 건을 `SearchHit`으로 바꾼다. 메타데이터가 계약과 다르면 `DependencyError`."""
+    meta = doc.metadata
+    try:
+        ref_id = doc.id
+        kind = CitationKind.HISTORY if ref_id.startswith("history:") else CitationKind.MANUAL
+        if kind is CitationKind.HISTORY:
+            locator = f"접수 {meta['case_id']} {meta['code']}"
+        else:
+            locator = f"{meta['manual_id']} {meta['page']}쪽 {meta['section']}"
+        return SearchHit(
+            ref_id=ref_id,
+            kind=kind,
+            equipment=Equipment(meta["equipment"]),
+            code=meta.get("code"),
+            text=doc.page_content,
+            locator=locator,
+            distance=distance,
+        )
+    except (AttributeError, KeyError, ValueError) as e:
+        raise DependencyError(f"검색 문서의 메타데이터가 계약과 다르다: {doc.id}") from e
 
 
 def has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool:
