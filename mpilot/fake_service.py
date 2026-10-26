@@ -1,29 +1,7 @@
-"""UI 개발용 가짜 service: DB·Chroma·LLM 없이 `service`와 같은 함수를 메모리 자료로 흉내 낸다.
+"""UI 개발용 가짜 service. DB·RAG 없이 service.py와 같은 함수를 메모리 자료로 흉내 낸다.
 
-역할:
-    DB·RAG 파트가 구현되기 전에 화면 7개를 띄워 볼 수 있게 `service.py`의 공개 함수 13개를
-    같은 시그니처로 제공한다. 진짜 service로 바꿀 때 UI 코드를 고치지 않아도 되게 하는 것이 목적이다.
-
-책임:
-    - 에러코드 표는 `data/raw/error_code_table.csv`의 설비·코드·에러명·심각도·조치 구분을 그대로 쓴다.
-      원자료에 없는 열(원인·조치·출처·허용 절차 ID)은 `(목)` 표시를 단 가짜 값으로 채운다.
-    - 시드 이력은 `data/raw/*_history_dummy.csv` 200건을 `completed` + `Resolution`으로 올린다.
-    - 신규 신고는 spec §2.10 허용 조합(셀프 가이드, 엔지니어 처리, `held`, `generation_failed`)을
-      한 건 이상씩 미리 만들어 둔다.
-    - 경로 결정과 완료 건 차단은 `models`의 규칙 함수를 그대로 써서 진짜 service와 같은 분기를 낸다.
-    - 상태는 프로세스 메모리에만 둔다. 앱을 다시 시작하거나 `reset_fake_data`를 부르면 처음으로 돌아간다.
-
-화면 시험용 키워드(메모·질문·조치 결과에 넣으면 해당 분기를 낸다):
-    - `submit_case` 메모의 `[held]` → 보류(`held`), `[fail]` → 생성 실패(`generation_failed`).
-    - `send_chat_question` 질문의 `[insufficient]` → 근거 부족, `[na]` → 적용 대상 아님,
-      `[fail]` → `DependencyError`(대화를 저장하지 않는다).
-    - `confirm_resolution` 결과의 `[fail]` → 저장은 하고 검색 반영 실패(`False`)를 돌려준다.
-
-로그인:
-    `set_config`로 설정을 받았으면 그 데모 계정으로 확인한다. 받지 않았으면 ID `customer`·`engineer`에
-    ID와 같은 비밀번호를 받는다(가짜 계정이며 실제 비밀 정보가 아니다).
-
-의존: `config`, `models`(진짜 service가 쓰는 db·rag는 부르지 않는다).
+책임: 원자료 CSV로 에러코드·시드 이력을 만들고, 허용 조합별 예시 신고를 둔다.
+의존: config, models
 소유: UI·총괄 파트
 """
 
@@ -65,80 +43,75 @@ from mpilot.models import (
     raise_if_case_completed,
 )
 
-_RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
-_TIME_FORMAT = "%Y-%m-%d %H:%M"
-_MOCK = "(목)"
-_DEFAULT_ACCOUNTS = {"customer": Role.CUSTOMER, "engineer": Role.ENGINEER}
+_RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"  # 원자료 CSV 폴더
+_TIME_FORMAT = "%Y-%m-%d %H:%M"  # 이력 CSV의 시각 형식
+_MOCK = "(목)"  # 지어낸 값에 붙이는 표시
+_DEFAULT_ACCOUNTS = {"customer": Role.CUSTOMER, "engineer": Role.ENGINEER}  # 설정이 없을 때 쓰는 계정(비밀번호 = ID)
 
 
 @dataclass
 class _Store:
-    """가짜 service의 메모리 저장소."""
+    """메모리 저장소."""
 
-    error_codes: dict[tuple[Equipment, str], ErrorCode]
-    cases: dict[str, ServiceCase]
-    resolutions: dict[str, Resolution] = field(default_factory=dict)
-    chat_turns: dict[str, list[ChatTurn]] = field(default_factory=dict)
-    next_turn_id: int = 1
-
-
-_config: AppConfig | None = None
-_store: _Store | None = None
+    error_codes: dict[tuple[Equipment, str], ErrorCode]  # (설비, 코드) → 에러코드
+    cases: dict[str, ServiceCase]  # 접수번호 → 신고
+    resolutions: dict[str, Resolution] = field(default_factory=dict)  # 접수번호 → 조치 기록
+    chat_turns: dict[str, list[ChatTurn]] = field(default_factory=dict)  # 접수번호 → 대화 목록
+    next_turn_id: int = 1  # 다음 대화 턴 번호
 
 
-# ---------------------------------------------------------------------------
-# 공개 함수(service.py와 같은 시그니처)
-# ---------------------------------------------------------------------------
+_config: AppConfig | None = None  # set_config로 받은 설정
+_store: _Store | None = None  # 처음 쓸 때 만든다
 
 
 def set_config(config: AppConfig) -> None:
-    """앱 설정을 보관한다. 가짜 service는 데모 계정만 쓴다.
+    """앱 설정을 보관한다.
 
     Args:
-        config: `config.load_config`가 만든 앱 설정.
-
-    Returns:
-        None: 모듈 안에 설정을 보관한다.
+        config: 앱 설정. 데모 계정만 쓴다.
     """
     global _config
     _config = config
 
 
 def login(login_id: str, password: str) -> Role:
-    """데모 계정을 확인해 역할을 알려준다.
+    """데모 계정을 확인해 역할을 돌려준다.
 
     Args:
-        login_id: 입력한 로그인 ID.
-        password: 입력한 비밀번호.
+        login_id: 로그인 ID.
+        password: 비밀번호.
 
     Returns:
-        Role: 계정에 정해진 역할.
+        Role: 계정의 역할.
 
     Raises:
         ValidationError: 계정이 없거나 비밀번호가 틀렸을 때.
     """
+    # 설정이 있으면 .env의 데모 계정으로 확인
     if _config is not None:
         account = _config.demo_accounts.get(login_id)
         if account is not None and account.password.get_secret_value() == password:
             return account.role
+    # 설정이 없으면 기본 계정으로 확인
     elif login_id in _DEFAULT_ACCOUNTS and password == login_id:
         return _DEFAULT_ACCOUNTS[login_id]
     raise ValidationError("로그인 정보가 올바르지 않습니다.")
 
 
 def list_customer_cases(status: CaseStatus | None = None) -> list[CustomerCaseResult]:
-    """고객이 접수한 신고(`source=reported`)를 공개 필드로 최신순 조회한다.
+    """고객이 접수한 신고를 공개 필드로 최신순 조회한다.
 
     Args:
-        status: 지정하면 그 진행 상태의 신고만 돌려준다. `None`이면 모두.
+        status: 진행 상태 필터. None이면 모두.
 
     Returns:
-        list[CustomerCaseResult]: 공개 필드만 담은 신고 목록(최신순).
+        list[CustomerCaseResult]: 신고 목록(최신순).
 
     Raises:
         ValidationError: 허용되지 않은 상태 값일 때.
     """
     store = _get_store()
+    # 시드 이력은 빼고 고객이 접수한 건만
     cases = [c for c in _filter_by_status(store.cases.values(), status) if c.source == Source.REPORTED]
     return [_to_customer_result(store, c) for c in _latest_first(cases)]
 
@@ -150,26 +123,27 @@ def get_customer_case(case_id: str) -> CustomerCaseResult:
         case_id: 접수번호.
 
     Returns:
-        CustomerCaseResult: 공개 필드만 담은 신고 상세.
+        CustomerCaseResult: 신고 상세(공개 필드).
 
     Raises:
         NotFoundError: 접수번호가 없거나 시드 이력일 때.
     """
     store = _get_store()
     case = _get_case(store, case_id)
+    # 고객은 시드 이력을 볼 수 없음
     if case.source != Source.REPORTED:
         raise NotFoundError(f"접수번호 {case_id}을(를) 찾을 수 없습니다.")
     return _to_customer_result(store, case)
 
 
 def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
-    """설비별 에러코드 선택지를 조회한다.
+    """설비별 에러코드를 조회한다.
 
     Args:
-        equipment: 고객이 고른 설비.
+        equipment: 설비.
 
     Returns:
-        list[ErrorCode]: 그 설비의 에러코드 표 행(원자료 순서).
+        list[ErrorCode]: 그 설비의 에러코드(원자료 순서).
 
     Raises:
         ValidationError: 허용되지 않은 설비일 때.
@@ -179,21 +153,20 @@ def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
 
 
 def submit_case(data: CaseInput) -> str:
-    """신고를 접수하고 처리 경로를 정한 뒤 접수번호를 반환한다.
-
-    경로 판정은 `models`의 규칙 함수를 쓰고, 가이드 생성은 메모 키워드(`[held]`, `[fail]`)로 흉내 낸다.
+    """신고를 접수하고 접수번호를 돌려준다.
 
     Args:
-        data: 고객이 제출한 설비·에러코드·증상 메모.
+        data: 설비·에러코드·증상 메모.
 
     Returns:
-        str: 새로 발급한 접수번호(`SC-<UUID 앞 8자리>`).
+        str: 접수번호(SC-<UUID 앞 8자리>).
 
     Raises:
         ValidationError: 미등록 코드일 때.
     """
     store = _get_store()
     error_code = store.error_codes.get((data.equipment, data.code))
+    # 표에 없는 코드는 접수하지 않음
     if error_code is None:
         raise ValidationError(f"{data.equipment} {data.code}은(는) 등록되지 않은 코드입니다.")
     case_id = f"SC-{uuid.uuid4().hex[:8]}"
@@ -202,10 +175,10 @@ def submit_case(data: CaseInput) -> str:
 
 
 def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
-    """시드 이력과 신규 신고를 모두 최신순으로 조회한다.
+    """시드 이력과 신규 신고를 모두 최신순 조회한다.
 
     Args:
-        status: 지정하면 그 진행 상태의 신고만 돌려준다. `None`이면 모두.
+        status: 진행 상태 필터. None이면 모두.
 
     Returns:
         list[CaseDetail]: 신고·에러코드·조치 기록 목록(최신순).
@@ -219,13 +192,13 @@ def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
 
 
 def get_engineer_case(case_id: str) -> CaseDetail:
-    """신고·에러코드·현장 조치를 조회한다.
+    """신고·에러코드·조치 기록을 조회한다.
 
     Args:
         case_id: 접수번호.
 
     Returns:
-        CaseDetail: 신고 건, 신고한 에러코드 행, 조치 기록(있으면).
+        CaseDetail: 신고 상세.
 
     Raises:
         NotFoundError: 접수번호가 없을 때.
@@ -235,67 +208,68 @@ def get_engineer_case(case_id: str) -> CaseDetail:
 
 
 def list_chat_turns(case_id: str) -> list[ChatTurn]:
-    """신고의 대화 이력을 오래된 순으로 조회한다.
+    """신고의 대화를 오래된 순으로 조회한다.
 
     Args:
         case_id: 접수번호.
 
     Returns:
-        list[ChatTurn]: 오래된 순 대화 목록. 대화가 없으면 빈 목록.
+        list[ChatTurn]: 대화 목록. 없으면 빈 목록.
 
     Raises:
         NotFoundError: 접수번호가 없을 때.
     """
     store = _get_store()
-    _get_case(store, case_id)
+    _get_case(store, case_id)  # 없는 접수번호면 여기서 예외
     return list(store.chat_turns.get(case_id, []))
 
 
 def send_chat_question(case_id: str, question: str) -> None:
-    """가짜 답변을 만들어 대화를 저장한다. 첫 질문이면 신고가 `in_progress`가 된다.
+    """가짜 답변을 만들어 대화를 저장한다.
+
+    질문에 [insufficient]·[na]를 넣으면 보류 답변, [fail]을 넣으면 장애가 난다.
 
     Args:
         case_id: 접수번호.
-        question: 엔지니어의 질문. 앞뒤 공백 제거 후 1~2,000자.
-
-    Returns:
-        None: 결과는 저장된 대화로 남는다.
+        question: 질문(공백 제거 후 1~2,000자).
 
     Raises:
-        ValidationError: 질문이 비었거나 2,000자를 넘을 때.
+        ValidationError: 질문 길이가 범위를 벗어날 때.
         NotFoundError: 접수번호가 없을 때.
-        InvalidStateError: 이미 완료된 건일 때('이미 완료').
-        DependencyError: 질문에 `[fail]`이 있을 때(모델 장애 흉내).
+        InvalidStateError: 이미 완료된 건일 때.
+        DependencyError: 질문에 [fail]이 있을 때.
     """
     store = _get_store()
     case = _get_case(store, case_id)
-    raise_if_case_completed(case)
+    raise_if_case_completed(case)  # 완료 건은 질문 불가
     question = question.strip()
     if not 1 <= len(question) <= 2000:
         raise ValidationError("질문은 1~2,000자로 입력해 주세요.")
+    # 모델 장애 흉내. 대화는 저장하지 않음
     if "[fail]" in question:
         raise DependencyError(f"{_MOCK} 답변 생성에 실패했습니다.")
     _add_chat_turn(store, case, question, _fake_engineer_answer(store, case, question), datetime.now())
 
 
 def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bool]:
-    """조치 결과를 확정해 신고를 완료한다.
+    """조치 결과를 저장하고 신고를 완료한다.
+
+    결과에 [fail]을 넣으면 검색 반영 실패(False)를 돌려준다.
 
     Args:
         case_id: 접수번호.
-        record: 엔지니어가 쓴 원인·실제 조치·결과.
+        record: 원인·조치·결과.
 
     Returns:
-        tuple[CaseDetail, bool]: 완료된 신고와 조치 기록, 검색 반영 성공 여부.
-            결과에 `[fail]`이 있으면 반영 실패(`False`)를 흉내 낸다.
+        tuple[CaseDetail, bool]: 완료된 신고, 검색 반영 성공 여부.
 
     Raises:
         NotFoundError: 접수번호가 없을 때.
-        InvalidStateError: 이미 완료된 건일 때('이미 완료').
+        InvalidStateError: 이미 완료된 건일 때.
     """
     store = _get_store()
     case = _get_case(store, case_id)
-    raise_if_case_completed(case)
+    raise_if_case_completed(case)  # 완료 건은 다시 등록 불가
     store.resolutions[case_id] = record
     store.cases[case_id] = case.model_copy(
         update={"status": CaseStatus.COMPLETED, "completed_at": datetime.now()}
@@ -304,24 +278,26 @@ def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bo
 
 
 def get_citation_text(citation: Citation) -> str:
-    """인용 출처의 원문을 돌려준다. 매뉴얼 본문은 가짜 문장이다.
+    """인용 출처의 원문을 돌려준다.
 
     Args:
-        citation: 답변 단계가 가리키는 근거.
+        citation: 인용.
 
     Returns:
-        str: 그 문서의 원문.
+        str: 원문. 매뉴얼 본문은 가짜 문장.
 
     Raises:
         NotFoundError: 그 ID의 문서가 없을 때.
     """
     store = _get_store()
-    prefix, _, rest = citation.ref_id.partition(":")
+    prefix, _, rest = citation.ref_id.partition(":")  # "error:AGV:A361" → "error", "AGV:A361"
+    # 에러코드 표 행
     if prefix == "error":
         equipment, _, code = rest.partition(":")
         error_code = store.error_codes.get((equipment, code))
         if error_code is not None:
             return _error_code_text(error_code)
+    # 확정 이력
     elif prefix == "history":
         resolution = store.resolutions.get(rest)
         if resolution is not None:
@@ -330,37 +306,25 @@ def get_citation_text(citation: Citation) -> str:
                 f"[{case.case_id}] {case.equipment} {case.code}\n증상: {case.memo or '-'}\n"
                 f"원인: {resolution.cause}\n조치: {resolution.action}\n결과: {resolution.result}"
             )
+    # 매뉴얼 본문(아직 파싱 전이라 가짜 문장)
     elif prefix == "manual" and rest:
         return f"{_MOCK} 매뉴얼 원문({citation.locator}). 실제 원문은 DB 파트 구현 뒤에 보입니다."
     raise NotFoundError(f"{citation.ref_id}의 원문을 찾을 수 없습니다.")
 
 
 def prepare_search_index() -> None:
-    """가짜 자료를 준비한다. 색인은 만들지 않는다.
-
-    Returns:
-        None: 메모리 자료가 준비된다.
-    """
+    """가짜 자료를 미리 만든다. 색인은 만들지 않는다."""
     _get_store()
 
 
 def reset_fake_data() -> None:
-    """메모리 자료를 버린다. 다음 호출 때 원자료에서 다시 만든다(테스트용).
-
-    Returns:
-        None
-    """
+    """메모리 자료를 버린다. 테스트에서 쓴다."""
     global _store
     _store = None
 
 
-# ---------------------------------------------------------------------------
-# 자료 만들기
-# ---------------------------------------------------------------------------
-
-
 def _get_store() -> _Store:
-    """처음 부를 때 원자료를 읽어 저장소를 만든다."""
+    """저장소를 돌려준다. 처음이면 원자료로 만든다."""
     global _store
     if _store is None:
         _store = _build_store()
@@ -368,7 +332,7 @@ def _get_store() -> _Store:
 
 
 def _build_store() -> _Store:
-    """에러코드 표·시드 이력·예시 신고로 저장소를 만든다."""
+    """에러코드·시드 이력·예시 신고로 저장소를 만든다."""
     store = _Store(error_codes=_load_error_codes(), cases={})
     _load_seed_history(store)
     _add_sample_reported_cases(store)
@@ -376,29 +340,27 @@ def _build_store() -> _Store:
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
-    """BOM이 있는 UTF-8 CSV를 읽는다."""
+    """BOM이 붙은 UTF-8 CSV를 읽는다."""
     with path.open(encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
 
 def _load_error_codes() -> dict[tuple[Equipment, str], ErrorCode]:
-    """에러코드 표를 읽는다. 원자료에 없는 열은 `(목)` 값으로 채운다.
-
-    고객사 조치 코드에는 가짜 허용 절차 ID를 하나 붙여 셀프 가이드 경로를 시험할 수 있게 한다.
-    """
+    """에러코드 표 CSV를 읽는다."""
     codes: dict[tuple[Equipment, str], ErrorCode] = {}
     for row in _read_csv(_RAW_DIR / "error_code_table.csv"):
         equipment = Equipment(row["equipment"])
         action_owner = ActionOwner(row["action_owner"])
-        manual_id = f"mock-{equipment.name.lower()}"
+        manual_id = f"mock-{equipment.name.lower()}"  # 예: mock-agv
+        # 고객사 조치 코드에만 가짜 허용 절차 ID를 붙여 셀프 가이드 경로를 열어 둠
         refs = [f"manual:{manual_id}:1:1"] if action_owner == ActionOwner.CUSTOMER else []
         codes[(equipment, row["code"])] = ErrorCode(
             equipment=equipment,
             code=row["code"],
             name=row["name"],
-            severity=Severity(row["severity"]),
-            action_owner=action_owner,
-            cause=f"{_MOCK} 원인 미정",
+            severity=Severity(row["severity"]),  # 원자료 값 그대로
+            action_owner=action_owner,  # 원자료 값 그대로
+            cause=f"{_MOCK} 원인 미정",  # 이하 원자료에 없는 열
             action=f"{_MOCK} 조치 미정",
             manual_id=manual_id,
             page=1,
@@ -410,17 +372,17 @@ def _load_error_codes() -> dict[tuple[Equipment, str], ErrorCode]:
 
 
 def _load_seed_history(store: _Store) -> None:
-    """설비별 이력 더미 CSV를 완료된 시드 신고와 조치 기록으로 올린다."""
+    """설비별 이력 CSV 200건을 완료된 시드 신고로 올린다."""
     for path in sorted(_RAW_DIR.glob("*_history_dummy.csv")):
         for row in _read_csv(path):
-            case_id = row["이력ID"]
+            case_id = row["이력ID"]  # 원본 ID 보존
             store.cases[case_id] = ServiceCase(
                 case_id=case_id,
                 equipment=Equipment(row["모델명"]),
                 code=row["에러 코드"],
                 memo=row["현장 증상"].strip() or None,
                 source=Source.SEED,
-                status=CaseStatus.COMPLETED,
+                status=CaseStatus.COMPLETED,  # 시드는 모두 완료·support 고정
                 route=Route.SUPPORT,
                 guide_failure=None,
                 guidance_answer=None,
@@ -433,10 +395,11 @@ def _load_seed_history(store: _Store) -> None:
 
 
 def _add_sample_reported_cases(store: _Store) -> None:
-    """허용 조합(spec §2.10)마다 고객 신고를 한 건 이상 만든다."""
-    customer = _first_code(store, lambda e: is_self_guide_candidate(e))
-    engineer = _first_code(store, lambda e: not is_self_guide_candidate(e))
+    """허용 조합마다 예시 신고를 한 건씩 만든다."""
+    customer = _first_code(store, lambda e: is_self_guide_candidate(e))  # 셀프 가이드 후보 코드
+    engineer = _first_code(store, lambda e: not is_self_guide_candidate(e))  # 엔지니어 처리 코드
     now = datetime.now().replace(second=0, microsecond=0)
+    # (접수번호, 코드, 메모, 몇 시간 전 접수)
     samples = [
         ("SC-mock0001", customer, f"{_MOCK} 셀프 가이드 예시", 6),
         ("SC-mock0002", engineer, f"{_MOCK} 엔지니어 처리 예시", 5),
@@ -448,10 +411,12 @@ def _add_sample_reported_cases(store: _Store) -> None:
     for case_id, error_code, memo, hours_ago in samples:
         store.cases[case_id] = _new_reported_case(case_id, error_code, memo, now - timedelta(hours=hours_ago))
 
+    # 0003: 질문 하나를 넣어 in_progress로 만듦
     in_progress = store.cases["SC-mock0003"]
     question = f"{_MOCK} 같은 증상의 과거 조치가 있나요?"
     _add_chat_turn(store, in_progress, question, _fake_engineer_answer(store, in_progress, question), now)
 
+    # 0006: 조치 결과를 넣어 완료로 만듦
     done = store.cases["SC-mock0006"]
     store.resolutions[done.case_id] = Resolution(
         cause=f"{_MOCK} 내부 원인(고객 비공개)",
@@ -469,9 +434,12 @@ def _first_code(store: _Store, predicate) -> ErrorCode:
 
 
 def _new_reported_case(case_id: str, error_code: ErrorCode, memo: str | None, created_at: datetime) -> ServiceCase:
-    """경로 결정(spec §2.10)을 흉내 내 신규 신고를 만든다."""
-    route, guide_failure, answer = Route.SUPPORT, None, None
-    # 허용 절차가 없는 코드의 guide_failure 값은 spec에서 아직 정해지지 않아 NULL로 둔다.
+    """경로를 정해 신규 신고를 만든다.
+
+    메모에 [held]·[fail]을 넣으면 가이드 보류·생성 실패로 접수된다.
+    """
+    route, guide_failure, answer = Route.SUPPORT, None, None  # 기본은 엔지니어 처리
+    # 허용 절차가 없는 코드의 guide_failure 값은 spec에서 아직 정해지지 않아 NULL로 둠
     if is_self_guide_candidate(error_code) and has_customer_procedure(error_code):
         memo_text = memo or ""
         if "[held]" in memo_text:
@@ -480,7 +448,7 @@ def _new_reported_case(case_id: str, error_code: ErrorCode, memo: str | None, cr
             guide_failure = GuideFailure.GENERATION_FAILED
         else:
             route, answer = Route.SELF_GUIDE, _fake_customer_guidance(error_code)
-    completed = route == Route.SELF_GUIDE
+    completed = route == Route.SELF_GUIDE  # 셀프 가이드는 접수 즉시 완료
     return ServiceCase(
         case_id=case_id,
         equipment=error_code.equipment,
@@ -514,10 +482,12 @@ def _fake_customer_guidance(error_code: ErrorCode) -> Answer:
 
 def _fake_engineer_answer(store: _Store, case: ServiceCase, question: str) -> Answer:
     """질문 키워드에 따라 가짜 엔지니어 답변을 만든다."""
+    # 보류 답변은 단계 없이 안내 문구만
     if "[insufficient]" in question:
         return Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=f"{_MOCK} 근거가 부족해 답할 수 없습니다.")
     if "[na]" in question:
         return Answer(verdict=Verdict.NOT_APPLICABLE, steps=[], notice=f"{_MOCK} 지원 대상 설비가 아닙니다.")
+    # 에러코드 표 인용
     citations = [
         Citation(
             kind=CitationKind.MANUAL,
@@ -525,6 +495,7 @@ def _fake_engineer_answer(store: _Store, case: ServiceCase, question: str) -> An
             locator=f"{_MOCK} 에러코드 표 {case.code}",
         )
     ]
+    # 같은 설비·코드의 시드 이력이 있으면 그것도 인용
     similar = next(
         (
             c
@@ -549,7 +520,7 @@ def _fake_engineer_answer(store: _Store, case: ServiceCase, question: str) -> An
 
 
 def _add_chat_turn(store: _Store, case: ServiceCase, question: str, answer: Answer, created_at: datetime) -> None:
-    """대화를 저장하고, 첫 질문이면 신고를 `in_progress`로 바꾼다."""
+    """대화 한 턴을 저장한다."""
     store.chat_turns.setdefault(case.case_id, []).append(
         ChatTurn(
             turn_id=store.next_turn_id,
@@ -560,17 +531,13 @@ def _add_chat_turn(store: _Store, case: ServiceCase, question: str, answer: Answ
         )
     )
     store.next_turn_id += 1
+    # 첫 질문이면 received → in_progress
     if case.status == CaseStatus.RECEIVED:
         store.cases[case.case_id] = case.model_copy(update={"status": CaseStatus.IN_PROGRESS})
 
 
-# ---------------------------------------------------------------------------
-# 조회 보조
-# ---------------------------------------------------------------------------
-
-
 def _parse_enum(enum_type, value, label: str):
-    """열거형 값으로 바꾸고, 허용되지 않은 값이면 `ValidationError`를 던진다."""
+    """값을 열거형으로 바꾼다. 안 되면 ValidationError."""
     try:
         return enum_type(value)
     except ValueError:
@@ -591,7 +558,7 @@ def _latest_first(cases: list[ServiceCase]) -> list[ServiceCase]:
 
 
 def _get_case(store: _Store, case_id: str) -> ServiceCase:
-    """접수번호로 신고를 찾고, 없으면 `NotFoundError`를 던진다."""
+    """접수번호로 신고를 찾는다. 없으면 NotFoundError."""
     case = store.cases.get(case_id)
     if case is None:
         raise NotFoundError(f"접수번호 {case_id}을(를) 찾을 수 없습니다.")
@@ -608,7 +575,7 @@ def _to_detail(store: _Store, case: ServiceCase) -> CaseDetail:
 
 
 def _to_customer_result(store: _Store, case: ServiceCase) -> CustomerCaseResult:
-    """신고를 고객 공개 필드로 바꾼다. 내부 원인과 `guide_failure`는 담지 않는다."""
+    """신고를 고객 공개 필드로 바꾼다."""
     resolution = store.resolutions.get(case.case_id)
     return CustomerCaseResult(
         case_id=case.case_id,
@@ -619,7 +586,7 @@ def _to_customer_result(store: _Store, case: ServiceCase) -> CustomerCaseResult:
         status=case.status,
         created_at=case.created_at,
         guidance_answer=case.guidance_answer,
-        action=resolution.action if resolution else None,
+        action=resolution.action if resolution else None,  # 조치·결과만 공개, 원인은 뺌
         result=resolution.result if resolution else None,
     )
 
