@@ -1,0 +1,266 @@
+"""화면과 DB·RAG를 잇는 유즈케이스(접수·질문·완료 등).
+
+역할:
+    UI가 부르는 업무 흐름을 한 곳에 모은다. 화면은 이 모듈의 함수만 부르고, 이 모듈이
+    `db`(parser·rdb·vectordb)와 `rag.pipeline`을 엮는다. 파트 사이를 잇는 유일한 곳이다.
+
+책임:
+    - 신고 접수: 접수번호(`SC-<UUID 앞 8자리>`)를 만들고, `models.is_self_guide_candidate`·`has_customer_procedure`로
+      후보를 가린 뒤 후보이면 `pipeline.run_customer_guidance`를 제한 시간(`llm_timeout_seconds`) 안에 호출한다.
+      결과에 따라 `answered`면 `save_self_guide_case`, 보류면 `save_support_case(..., held)`,
+      장애·검증 실패면 `save_support_case(..., generation_failed)`로 저장한다(spec §2.10 경로 결정).
+    - 엔지니어 질문: 완료 건을 막고(`models.raise_if_case_completed`) 대화 이력과 함께
+      `pipeline.run_engineer_answer`를 호출한 뒤 `rdb.save_chat_turn`으로 저장한다. 저장은 이 모듈의 일이다.
+    - 조치 확정: `rdb.save_confirmed_resolution` 뒤 `vectordb.index_history`로 검색 근거에 반영한다.
+      반영이 실패해도 저장은 유지하고 실패 여부만 `bool`로 알린다(앱 재시작의 전체 재생성으로 복구).
+    - 고객 화면에는 공개 필드(`CustomerCaseResult`)만 돌려준다. 내부 원인·`guide_failure`·내부 분석은 내보내지 않는다.
+    - 시작할 때 검색 색인을 원자료로 새로 만든다(`prepare_search_index`).
+    - 화면에 보여 줄 오류 문구는 정하지 않는다. 예외 종류만 구분해 던지고 문구는 `ui/common`이 맡는다.
+
+화면–서비스 연결(spec §2.3.3):
+    로그인 → `login` / 고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
+    고객 신고 상세 → `get_customer_case`, `get_citation_text` / 엔지니어 대시보드 → `list_engineer_cases` /
+    장애 분석 대화 → `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` /
+    이력 저장 → `get_engineer_case`, `confirm_resolution`
+
+의존: `db.parser`, `db.rdb`, `db.vectordb`, `rag.pipeline`, `config`, `models`(의존 규칙 §2.5).
+소유: UI·총괄 파트
+"""
+
+from __future__ import annotations
+
+from mpilot.config import AppConfig
+from mpilot.models import (
+    CaseDetail,
+    CaseInput,
+    CaseStatus,
+    ChatTurn,
+    Citation,
+    CustomerCaseResult,
+    Equipment,
+    ErrorCode,
+    Resolution,
+    Role,
+)
+
+
+def set_config(config: AppConfig) -> None:
+    """앱 설정을 보관한다.
+
+    Args:
+        config: `config.load_config`가 만든 앱 설정. 데모 계정, 경로, 검색 설정, 모델 제한 시간을 여기서 읽는다.
+
+    Returns:
+        None: 모듈 안에 설정을 보관한다. 다른 함수는 이 설정을 쓴다.
+    """
+    ...
+
+
+def login(login_id: str, password: str) -> Role:
+    """데모 계정을 확인해 역할을 알려준다.
+
+    Args:
+        login_id: 입력한 로그인 ID.
+        password: 입력한 비밀번호.
+
+    Returns:
+        Role: 계정에 정해진 역할(`customer` 또는 `engineer`). 화면은 이 값으로 첫 화면을 고른다.
+
+    Raises:
+        ValidationError: 계정이 없거나 비밀번호가 틀렸을 때.
+    """
+    ...
+
+
+def list_customer_cases(status: CaseStatus | None = None) -> list[CustomerCaseResult]:
+    """고객 본인의 신고를 공개 필드로 조회한다.
+
+    직접 접수한 신고(`source=reported`)만 최신순으로 돌려준다. 시드 이력은 포함하지 않는다.
+
+    Args:
+        status: 지정하면 그 진행 상태의 신고만 돌려준다. `None`이면 모두.
+
+    Returns:
+        list[CustomerCaseResult]: 공개 필드만 담은 신고 목록(최신순).
+
+    Raises:
+        ValidationError: 허용되지 않은 상태 값일 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    ...
+
+
+def get_customer_case(case_id: str) -> CustomerCaseResult:
+    """고객 공개 신고 상세를 조회한다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        CustomerCaseResult: 진행 상태와 셀프 가이드(단계·출처) 또는 완료된 조치 결과(`action`, `result`).
+            내부 원인은 담지 않는다.
+
+    Raises:
+        NotFoundError: 접수번호가 없거나 고객이 접근할 수 없는 건(시드 이력)일 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    ...
+
+
+def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
+    """설비별 에러코드 선택지를 조회한다.
+
+    Args:
+        equipment: 고객이 고른 설비.
+
+    Returns:
+        list[ErrorCode]: 그 설비의 에러코드 표 행. 신고 작성 화면의 코드 선택지가 된다.
+
+    Raises:
+        ValidationError: 허용되지 않은 설비일 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    ...
+
+
+def submit_case(data: CaseInput) -> str:
+    """신고를 접수하고 처리 경로를 확정한 뒤 접수번호를 반환한다.
+
+    심각도 `상`이거나 고객이 조치할 수 없는 코드, 허용 절차가 없는 코드는 바로 엔지니어에게 접수한다.
+    셀프 가이드 후보는 가이드를 만들어 보고, 만들 수 없으면 추측하지 않고 엔지니어에게 접수한다.
+
+    Args:
+        data: 고객이 제출한 설비·에러코드·증상 메모.
+
+    Returns:
+        str: 새로 발급한 접수번호(`SC-<UUID 앞 8자리>`).
+
+    Raises:
+        ValidationError: 미등록 코드이거나 메모가 2,000자를 넘을 때.
+        DependencyError: DB 저장에 실패했을 때. 가이드 생성 실패는 예외가 아니라 엔지니어 접수로 처리한다.
+    """
+    ...
+
+
+def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
+    """엔지니어용 전체 신고 목록을 조회한다.
+
+    시드 이력과 신규 신고를 모두 포함해 최신순으로 돌려준다.
+
+    Args:
+        status: 지정하면 그 진행 상태의 신고만 돌려준다. `None`이면 모두.
+
+    Returns:
+        list[CaseDetail]: 신고·에러코드·조치 기록 목록(최신순).
+
+    Raises:
+        ValidationError: 허용되지 않은 상태 값일 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    ...
+
+
+def get_engineer_case(case_id: str) -> CaseDetail:
+    """신고·에러코드·현장 조치를 조회한다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        CaseDetail: 신고 건, 신고한 에러코드 행, 조치 기록(있으면).
+
+    Raises:
+        NotFoundError: 접수번호가 없을 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    ...
+
+
+def list_chat_turns(case_id: str) -> list[ChatTurn]:
+    """신고의 대화 이력을 조회한다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        list[ChatTurn]: 오래된 순 대화 목록. 대화가 없으면 빈 목록.
+
+    Raises:
+        NotFoundError: 접수번호가 없을 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    ...
+
+
+def send_chat_question(case_id: str, question: str) -> None:
+    """엔지니어 질문에 답하고 대화를 저장한다.
+
+    저장된 대화와 함께 답변을 만들고, 보류 판정(근거 부족·적용 대상 아님)도 대화로 저장한다.
+    첫 질문이면 신고가 `in_progress`가 된다. 답변이 `DependencyError`로 실패하면 저장하지 않는다.
+
+    Args:
+        case_id: 접수번호.
+        question: 엔지니어의 질문. 앞뒤 공백 제거 후 1~2,000자.
+
+    Returns:
+        None: 결과는 저장된 대화로 남으며, 화면은 `list_chat_turns`로 다시 읽는다.
+
+    Raises:
+        ValidationError: 질문이 비었거나 길이 범위를 벗어났을 때.
+        NotFoundError: 접수번호가 없을 때.
+        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        DependencyError: 모델·검색·DB 장애나 제한 시간 초과일 때.
+    """
+    ...
+
+
+def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bool]:
+    """조치 결과를 확정하고 검색 근거에 반영하며, 반환의 `bool`은 검색 반영 성공 여부다.
+
+    Args:
+        case_id: 접수번호.
+        record: 엔지니어가 쓴 원인·실제 조치·결과. 각 필드는 앞뒤 공백 제거 후 1~5,000자.
+
+    Returns:
+        tuple[CaseDetail, bool]: 완료된 신고와 조치 기록, 그리고 검색 반영 성공 여부.
+            반영이 실패해도 조치 결과 저장은 유지되며 `False`로 알린다.
+
+    Raises:
+        ValidationError: 필드가 비었거나 길이 범위를 벗어났을 때.
+        NotFoundError: 접수번호가 없을 때.
+        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        DependencyError: 조치 결과 저장(DB)에 실패했을 때.
+    """
+    ...
+
+
+def get_citation_text(citation: Citation) -> str:
+    """인용 출처의 원문을 조회한다.
+
+    Args:
+        citation: 답변 단계가 가리키는 근거(`kind`, `ref_id`, `locator`).
+
+    Returns:
+        str: 그 문서의 원문. 화면이 출처를 펼칠 때 보여 준다.
+
+    Raises:
+        NotFoundError: 그 ID의 원문이 없을 때.
+        DependencyError: 검색 저장소 조회에 실패했을 때.
+    """
+    ...
+
+
+def prepare_search_index() -> None:
+    """검색 색인을 원자료로 새로 만든다.
+
+    매뉴얼 PDF를 청킹하고 설비 4종의 에러코드 표와 확정 이력(`rdb.fetch_resolved_cases`)을 읽어
+    `vectordb.rebuild_search_index`로 두 컬렉션을 다시 만든다. 앱 시작 때 로그인 화면을 열기 전에 끝나야 한다.
+
+    Returns:
+        None: 색인이 준비된다.
+
+    Raises:
+        ValidationError: 문서 ID 구성이나 허용 절차 ID 검증에 실패했을 때.
+        DependencyError: PDF·DB·임베딩·저장소 장애일 때. 이 경우 앱 시작을 중단한다.
+    """
+    ...
