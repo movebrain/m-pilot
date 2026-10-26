@@ -7,7 +7,7 @@
 책임:
     - 예외 4종(입력·없음·상태·의존), 열거형 10종, 업무 객체를 정의한다.
       업무 객체는 모두 불변(frozen)이며 필드 검증은 pydantic이 맡는다.
-    - 경로 결정과 완료 건 차단 같은 순수 규칙 함수의 시그니처를 둔다.
+    - 경로 결정과 완료 건 차단 같은 순수 규칙 함수를 둔다.
       같은 입력에는 항상 같은 결과를 내야 한다.
     - DB·Chroma·LLM에 접속하지 않고, 다른 mpilot 모듈을 import하지 않는다(의존 규칙 §2.5).
 
@@ -465,7 +465,9 @@ def is_self_guide_candidate(error_code: ErrorCode) -> bool:
     Returns:
         bool: 셀프 가이드 후보이면 `True`, 엔지니어 처리(`support`)이면 `False`.
     """
-    ...
+    if error_code.severity == Severity.HIGH:
+        return False
+    return error_code.action_owner == ActionOwner.CUSTOMER
 
 
 def has_customer_procedure(error_code: ErrorCode) -> bool:
@@ -477,7 +479,7 @@ def has_customer_procedure(error_code: ErrorCode) -> bool:
     Returns:
         bool: 허용 절차 ID가 하나 이상 있으면 `True`, 비어 있으면 `False`.
     """
-    ...
+    return bool(error_code.customer_procedure_ref_ids)
 
 
 def raise_if_case_completed(case: ServiceCase) -> None:
@@ -494,4 +496,5 @@ def raise_if_case_completed(case: ServiceCase) -> None:
     Raises:
         InvalidStateError: `case.status`가 `completed`일 때('이미 완료').
     """
-    ...
+    if case.status == CaseStatus.COMPLETED:
+        raise InvalidStateError("이미 완료")

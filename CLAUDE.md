@@ -20,7 +20,7 @@
 
 ## 2. 코드 지도
 
-모든 `.py` 맨 위 docstring에 **역할·책임·의존·소유 파트**가 있다. 파일을 고치기 전에 그것부터 읽는다. 함수 본문은 아직 `...`이고 시그니처·docstring이 계약이다.
+모든 `.py` 맨 위 docstring에 **역할·책임·의존·소유 파트**가 있다. 파일을 고치기 전에 그것부터 읽는다. 공통 함수 4개(`load_config`, `models`의 규칙 함수 3개)를 뺀 함수 본문은 아직 `...`이고 시그니처·docstring이 계약이다.
 
 | 파트 | 파일 |
 | --- | --- |
@@ -89,4 +89,4 @@ python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ## 8. 아직 어긋나 있는 곳 (PR #26 리뷰 포인트, 정리되면 지운다)
 
 - 위 spec 절 번호는 이 PR의 개정본 기준이다. 이 PR이 머지되기 전까지 `develop`의 spec은 개정 전 `src/` 구조다.
-- `.env.example`은 `MYSQL_*` 변수이고 `AppConfig`는 `db_url` 하나를 읽는다. `docker-compose.yml`은 개정 전 구성이다.
+- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `EVIDENCE_THRESHOLD`는 사람이 정할 때까지 비워 두며, 비어 있으면 앱이 시작되지 않는다.

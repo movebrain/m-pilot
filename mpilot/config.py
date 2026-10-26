@@ -16,11 +16,18 @@
 
 from __future__ import annotations
 
+import io
+import os
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy.engine import URL
 
-from mpilot.models import Role, SearchSettings
+from mpilot.models import DependencyError, Role, SearchSettings, ValidationError
+
+_ROOT = Path(__file__).resolve().parent.parent
 
 
 class DemoAccount(BaseModel):
@@ -82,5 +89,62 @@ def load_config(env_path: Path | None = None) -> AppConfig:
     Raises:
         ValidationError: 필수 값이 없거나 형식이 틀릴 때(예: 데모 계정이 2개가 아님).
         DependencyError: `.env` 파일을 읽을 수 없을 때.
+
+    환경 변수가 `.env` 파일보다 우선한다. `env_path`를 주지 않았는데 `.env`가 없으면
+    환경 변수만 쓴다. 키 이름은 `.env.example`을 따른다.
     """
-    ...
+    path = env_path or _ROOT / ".env"
+    file_values: dict[str, str | None] = {}
+    if env_path is not None or path.exists():
+        try:
+            file_values = dotenv_values(stream=io.StringIO(path.read_text(encoding="utf-8")))
+        except OSError as e:
+            raise DependencyError(f".env 파일을 읽을 수 없습니다: {path}") from e
+    env = {k: v for k, v in {**file_values, **os.environ}.items() if v}
+
+    def need(key: str) -> str:
+        if key not in env:
+            raise ValidationError(f"필수 설정 {key}이(가) 없습니다.")
+        return env[key]
+
+    try:
+        db_url = URL.create(
+            "mysql+pymysql",
+            username=need("MYSQL_USER"),
+            password=need("MYSQL_PASSWORD"),
+            host=need("MYSQL_HOST"),
+            port=int(env.get("MYSQL_PORT", "3306")),
+            database=need("MYSQL_DATABASE"),
+        ).render_as_string(hide_password=False)
+        accounts = [
+            DemoAccount(
+                login_id=need(f"DEMO_{name}_ID"),
+                password=SecretStr(need(f"DEMO_{name}_PASSWORD")),
+                role=role,
+            )
+            for name, role in (("CUSTOMER", Role.CUSTOMER), ("ENGINEER", Role.ENGINEER))
+        ]
+        if accounts[0].login_id == accounts[1].login_id:
+            raise ValidationError("데모 계정은 서로 다른 로그인 ID 2개여야 합니다.")
+        return AppConfig(
+            db_url=SecretStr(db_url),
+            openai_api_key=SecretStr(need("OPENAI_API_KEY")),
+            chat_model_name=need("OPENAI_CHAT_MODEL"),
+            embedding_model_name=need("OPENAI_EMBEDDING_MODEL"),
+            manuals_dir=_ROOT / "data" / "manuals",
+            codes_path=_ROOT / "data" / "errorcodes.csv",
+            history_seed_path=_ROOT / "data" / "history_seed.csv",
+            search=SearchSettings(
+                manual_k=int(env.get("MANUAL_K", "3")),
+                history_k=int(env.get("HISTORY_K", "3")),
+                evidence_threshold=float(need("EVIDENCE_THRESHOLD")),
+            ),
+            llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS", "60")),
+            demo_accounts={a.login_id: a for a in accounts},
+        )
+    except ValueError as e:
+        # pydantic 오류 문구는 입력값(비밀번호 등)을 담을 수 있어 필드 위치만 알린다.
+        if isinstance(e, PydanticValidationError):
+            fields = ", ".join(".".join(map(str, err["loc"])) for err in e.errors())
+            raise ValidationError(f"설정 값이 올바르지 않습니다: {fields}") from None
+        raise ValidationError(f"설정 값의 형식이 올바르지 않습니다: {e}") from None
