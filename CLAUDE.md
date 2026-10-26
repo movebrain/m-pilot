@@ -17,7 +17,6 @@
 | 경로 결정, 상태 전이, 허용 조합, 이력 취급 | spec §2.10 |
 | DB 테이블, `Answer`, 검색 문서 ID | spec §3.3, §3.4 |
 | 하지 않는 것 | spec §4 |
-| 역할·병렬 개발 | [docs/roles.md](docs/roles.md) (파일 경로는 개정 전 `src/` 기준이라 쓰지 않는다) |
 
 ## 2. 코드 지도
 
@@ -89,6 +88,5 @@ python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 
 ## 8. 아직 어긋나 있는 곳 (PR #26 리뷰 포인트, 정리되면 지운다)
 
-- 위 spec 절 번호는 로컬 개정본 기준이다. `origin/develop`의 spec은 아직 `src/` 구조라 개정본이 먼저 올라와야 한다.
-- spec §3.4는 원자료를 `resources/`, 변환본을 `data/`에 두라 하나 이 PR은 `data/raw/`·`data/manuals/`에 둔다.
+- 위 spec 절 번호는 이 PR의 개정본 기준이다. 이 PR이 머지되기 전까지 `develop`의 spec은 개정 전 `src/` 구조다.
 - `.env.example`은 `MYSQL_*` 변수이고 `AppConfig`는 `db_url` 하나를 읽는다. `docker-compose.yml`은 개정 전 구성이다.
