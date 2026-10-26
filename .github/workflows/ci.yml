@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      # 시연용 DB와 분리된 테스트 DB. 러너가 헬스체크 통과를 기다리고 job이 끝나면 정리한다.
+      # shortcut: 서비스 컨테이너는 실행 인자를 못 줘 서버 콜레이션이 MySQL 기본값(utf8mb4_0900_ai_ci)이다.
+      #   docker-compose.yml(utf8mb4_unicode_ci)과 다르므로 콜레이션에 의존하는 테스트가 생기면 스키마에 명시한다.
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: mpilot
+          MYSQL_DATABASE: mpilot_test
+          MYSQL_USER: mpilot
+          MYSQL_PASSWORD: mpilot
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      # .env.example과 같은 변수 이름
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: "3306"
+      MYSQL_USER: mpilot
+      MYSQL_PASSWORD: mpilot
+      MYSQL_DATABASE: mpilot_test
+      MYSQL_TEST_DATABASE: mpilot_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      # shortcut: 수집된 테스트가 없을 때(종료 코드 5)만 통과시킨다. 첫 테스트가 올라오면 `|| [ $? -eq 5 ]`를 지운다.
+      - name: 테스트 실행
+        run: python -m pytest || [ $? -eq 5 ]
