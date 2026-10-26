@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
-from mpilot.models import Equipment, ErrorCode, SearchHit
+import math
+
+from mpilot.models import Equipment, ErrorCode, SearchHit, ValidationError
 
 
 def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
@@ -82,7 +84,14 @@ def has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool:
     """검색 결과가 근거로 충분한지 판단한다.
 
     판단 기준은 각 근거의 `distance`와 `threshold`의 비교다. 비교 방식과 결합 규칙은
-    보류 정확도·정상 답변율 평가 결과를 보고 정한다.
+    보류 정확도·정상 답변율 평가 결과를 보고 정한다. 아래는 바뀔 수 있는 초기안이다(#49에서 확정).
+
+    - 경계: `distance <= threshold`인 근거가 하나라도 있으면 충분하다. 같으면 충분하다.
+    - `distance`가 `None`인 근거는 비교에서 제외한다.
+    - `hits`가 비었거나 비교 가능한 근거가 모두 `threshold`보다 멀면 부족하다.
+    - `threshold`는 유한한 0 이상의 실수여야 한다. 음수·NaN·무한대는 거부한다.
+    - 거리 척도(L2·cosine)에 의존하지 않고 값의 대소만 비교한다.
+    - 엔지니어 검색 결과 전용이다. 고객 직접 조회(`distance=None`)에는 쓰지 않는다.
 
     Args:
         hits: 검색으로 얻은 근거 목록.
@@ -94,4 +103,6 @@ def has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool:
     Raises:
         ValidationError: `threshold`가 허용 범위를 벗어났을 때.
     """
-    ...
+    if not math.isfinite(threshold) or threshold < 0:
+        raise ValidationError(f"threshold는 유한한 0 이상이어야 합니다: {threshold}")
+    return any(hit.distance is not None and hit.distance <= threshold for hit in hits)
