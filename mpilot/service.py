@@ -186,8 +186,7 @@ def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
         ValidationError: 허용되지 않은 상태 값일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.fetch_cases(status))
-    ...
+    return _sorted_newest(rdb.fetch_cases(status))
 
 
 def get_engineer_case(case_id: str) -> CaseDetail:
