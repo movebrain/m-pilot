@@ -187,14 +187,11 @@ def test_first_question_moves_case_to_in_progress():
     assert fake_service.get_engineer_case(case_id).service_case.status == CaseStatus.IN_PROGRESS
 
 
-@pytest.mark.parametrize(
-    ("keyword", "verdict"), [("[insufficient]", Verdict.INSUFFICIENT_EVIDENCE), ("[na]", Verdict.NOT_APPLICABLE)]
-)
-def test_held_answers_have_no_steps(keyword, verdict):
+def test_held_answers_have_no_steps():
     case_id = open_case_id()
-    fake_service.send_chat_question(case_id, keyword)
+    fake_service.send_chat_question(case_id, "[insufficient]")
     answer = fake_service.list_chat_turns(case_id)[-1].answer
-    assert (answer.verdict, answer.steps) == (verdict, [])
+    assert (answer.verdict, answer.steps) == (Verdict.INSUFFICIENT_EVIDENCE, [])
     assert answer.notice
 
 

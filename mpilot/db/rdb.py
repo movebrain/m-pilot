@@ -225,7 +225,7 @@ def fetch_chat_turns(case_id: str) -> list[ChatTurn]:
 def save_chat_turn(case_id: str, question: str, answer: Answer) -> ChatTurn:
     """질문·답변을 저장하고 첫 질문이면 조치 중으로 바꾼다.
 
-    보류 판정(`insufficient_evidence`, `not_applicable`)의 답변도 저장한다. 상태가 `received`이면
+    보류 판정(`insufficient_evidence`)의 답변도 저장한다. 상태가 `received`이면
     `in_progress`로 바꾸고, 이미 `in_progress`이면 상태는 그대로 둔다. 완료된 건은 저장하지 않는다.
 
     Args:

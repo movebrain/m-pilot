@@ -11,7 +11,7 @@
     - 검증을 통과하지 못한 답은 보여 주지 않는다. 이 모듈은 통과 여부만 알려 주고, 실패를 `DependencyError`로
       올리는 일은 `pipeline`이 맡는다(spec §2.6).
     - `passes_guidance_check`는 `answer.verdict`가 `answered`일 때만 의미가 있다. `pipeline`은 `answered`가
-      아니면(근거 부족·적용 대상 아님) 이 함수를 부르지 않고 그 `Answer`를 그대로 돌려준다(spec §2.10의
+      아니면(근거 부족) 이 함수를 부르지 않고 그 `Answer`를 그대로 돌려준다(spec §2.10의
       `held`). `answered`인데 이 함수가 `False`면 `pipeline`이 `DependencyError`로 올려 `generation_failed`로
       접수한다.
     - 모델은 `set_chat_model`로 받는다(temperature=0). 모듈을 import할 때 API에 접속하지 않는다.
@@ -168,7 +168,7 @@ def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: Err
         bool: 모두 통과하면 `True`. 하나라도 어긋나면 `False`다.
 
             주의: 이 함수는 `answer.verdict`가 `answered`인 `Answer`에만 쓴다고 가정한다. `answered`가
-            아닌 `Answer`(근거 부족·적용 대상 아님)를 넣으면 `_is_answered` 검사 때문에 역시 `False`가
+            아닌 `Answer`(근거 부족)를 넣으면 `_is_answered` 검사 때문에 역시 `False`가
             나오지만, 그 경우는 `generation_failed`가 아니라 `held`다(spec §2.10). `verdict`가
             `answered`가 아닌지는 호출 전에 `pipeline`이 먼저 가려 `held`로 처리하고, 이 함수는 그 뒤
             `answered`인 `Answer`에만 호출해 그 결과를 `generation_failed` 여부로 쓴다.

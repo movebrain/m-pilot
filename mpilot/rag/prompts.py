@@ -49,10 +49,8 @@ _COMMON_RULES = """\
 
 [판정(verdict) 규칙]
 - answered: 근거로 답할 수 있을 때. 단계(steps)를 1개 이상 씁니다.
-- insufficient_evidence: 근거가 부족해서 답할 수 없을 때. 단계(steps)는 반드시 빈 목록으로 두고, 안내 문구(notice)에
+- insufficient_evidence: 근거가 부족하거나 질문이 이 설비·에러코드와 맞지 않아 답할 수 없을 때. 단계(steps)는 반드시 빈 목록으로 두고, 안내 문구(notice)에
   이유를 짧게 적습니다.
-- not_applicable: 질문이나 신고가 이 설비·에러코드와 맞지 않을 때. 단계(steps)는 반드시 빈 목록으로 두고,
-  안내 문구(notice)에 이유를 짧게 적습니다.
 - 근거가 없는데 그럴듯하게 답을 채우지 않습니다. 그럴 때는 insufficient_evidence를 고릅니다.
 """
 

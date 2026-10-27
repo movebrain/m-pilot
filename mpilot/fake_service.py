@@ -227,7 +227,7 @@ def list_chat_turns(case_id: str) -> list[ChatTurn]:
 def send_chat_question(case_id: str, question: str) -> None:
     """가짜 답변을 만들어 대화를 저장한다.
 
-    질문에 [insufficient]·[na]를 넣으면 보류 답변, [fail]을 넣으면 장애가 난다.
+    질문에 [insufficient]를 넣으면 보류 답변, [fail]을 넣으면 장애가 난다.
 
     Args:
         case_id: 접수번호.
@@ -485,8 +485,6 @@ def _fake_engineer_answer(store: _Store, case: ServiceCase, question: str) -> An
     # 보류 답변은 단계 없이 안내 문구만
     if "[insufficient]" in question:
         return Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=f"{_MOCK} 근거가 부족해 답할 수 없습니다.")
-    if "[na]" in question:
-        return Answer(verdict=Verdict.NOT_APPLICABLE, steps=[], notice=f"{_MOCK} 지원 대상 설비가 아닙니다.")
     # 에러코드 표 인용
     citations = [
         Citation(
