@@ -1,6 +1,6 @@
-"""parser 공유 타입 테스트: RawTable, ChunkDraft(#43).
+"""parser 중간 타입 테스트: RawTable, ChunkDraft, TextLine, PageText, Section, Footer(#43).
 
-두 타입은 표 경로(이재서)와 텍스트 경로(손재호)가 주고받는 형식이라, 필드와 불변·값 제약이 바뀌면 바로 알 수 있게 한다.
+표 경로(이재서)와 텍스트 경로(손재호)가 주고받는 형식이라, 필드와 불변·값 제약이 바뀌면 바로 알 수 있게 한다.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import pydantic
 import pytest
 
-from mpilot.db.parser import ChunkDraft, RawTable
+from mpilot.db.parser import ChunkDraft, Footer, PageText, RawTable, Section, TextLine
 
 
 def raw_table(**overrides) -> RawTable:
@@ -65,3 +65,45 @@ def test_types_are_frozen():
     draft = ChunkDraft(page=1, top=0.0, kind="text", section="9.4", text="본문")
     with pytest.raises(pydantic.ValidationError):
         draft.section = "9.5"
+
+
+# ---------------------------------------------------------------------------
+# 텍스트 경로 타입: TextLine, PageText, Section, Footer
+# ---------------------------------------------------------------------------
+
+
+def test_page_text_keeps_source_and_lines():
+    page = PageText(
+        manual_id="HMX-AGV-TSM-001",
+        version="1.1",
+        page=20,
+        lines=[TextLine(top=60.3, text="8. 운전"), TextLine(top=99.7, text="8.1 운전 모드 전환")],
+    )
+    assert (page.manual_id, page.version, page.page) == ("HMX-AGV-TSM-001", "1.1", 20)
+    assert [line.text for line in page.lines] == ["8. 운전", "8.1 운전 모드 전환"]
+
+
+def test_section_allows_missing_title():
+    # 첫 절 제목보다 앞에 있는 본문은 절을 알 수 없다.
+    assert Section(page=1, top=61.4, title=None, text="본문").title is None
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: PageText(manual_id="HMX-AGV-TSM-001", version="1.1", page=0, lines=[]),  # 쪽은 1부터
+        lambda: Section(page=0, top=0.0, title=None, text="x"),
+        lambda: Footer(manual_id="HMX-AGV-TSM-001", version="1.1", page=0, total_pages=44),
+        lambda: Footer(manual_id="HMX-AGV-TSM-001", version="1.1", page=1, total_pages=0),
+    ],
+)
+def test_text_types_reject_invalid_values(make):
+    with pytest.raises(pydantic.ValidationError):
+        make()
+
+
+def test_text_types_are_frozen():
+    with pytest.raises(pydantic.ValidationError):
+        TextLine(top=0.0, text="x").text = "y"
+    with pytest.raises(pydantic.ValidationError):
+        Section(page=1, top=0.0, title="8.1", text="x").title = "8.2"
