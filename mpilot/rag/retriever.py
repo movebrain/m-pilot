@@ -28,6 +28,7 @@ from mpilot.models import (
     Equipment,
     ErrorCode,
     MpilotError,
+    NotFoundError,
     SearchHit,
     ValidationError,
 )
@@ -130,7 +131,15 @@ def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
     Raises:
         DependencyError: 저장소 조회에 실패했을 때(허용 ID의 원문이 없는 경우 포함).
     """
-    ...
+    hits = []
+    for ref_id in error_code.customer_procedure_ref_ids:
+        try:
+            doc = vectordb.get_document(CitationKind.MANUAL, ref_id)
+        except NotFoundError as e:
+            # 허용 절차 원문이 없으면 조용히 건너뛰지 않고 오류로 알린다.
+            raise DependencyError(f"허용 절차 원문을 찾을 수 없다: {ref_id}") from e
+        hits.append(_to_hit(doc, None))
+    return hits
 
 
 def _to_hit(doc: Document, distance: float | None) -> SearchHit:
