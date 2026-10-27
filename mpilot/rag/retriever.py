@@ -8,7 +8,7 @@
     - 모든 검색에 설비 필터를 건다. 다른 설비의 같은 이름 에러를 근거로 돌려주지 않는다.
     - 엔지니어 대화는 `manual`과 `history`를 검색한다. 고객 안내는 `customer_procedure_ref_ids`의 ID로
       `manual` 원문을 직접 조회하며 유사도 임계값을 적용하지 않는다. `history`는 고객 안내에 쓰지 않는다.
-    - `history` 결과는 `case_id`로 중복을 제거한다.
+    - `history`의 `case_id` 중복은 색인이 막는다(`history:<case_id>` ID로 upsert). 검색에서 다시 거르지 않는다.
     - 검색 결과가 근거로 충분한지 판단한다(임계값은 사람이 평가 결과를 보고 정한다).
     - 답변을 만들거나 DB에 쓰지 않는다.
 
@@ -65,18 +65,13 @@ def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
         k: 가져올 상위 건수.
 
     Returns:
-        list[SearchHit]: `history` 컬렉션의 상위 `k`건. `case_id`로 중복이 제거되고 거리가 가까운 순이다.
+        list[SearchHit]: `history` 컬렉션의 상위 `k`건. 거리가 가까운 순이다.
 
     Raises:
         ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
         DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    hits = _search_scoped(CitationKind.HISTORY, equipment, query, k)
-    # 거리 오름차순이므로 같은 case_id는 처음 나온(가장 가까운) 것만 남는다.
-    unique: dict[str, SearchHit] = {}
-    for hit in hits:
-        unique.setdefault(hit.ref_id.removeprefix("history:"), hit)
-    return list(unique.values())
+    return _search_scoped(CitationKind.HISTORY, equipment, query, k)
 
 
 def _search_scoped(

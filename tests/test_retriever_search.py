@@ -145,21 +145,7 @@ def test_history_sorted_by_distance(install_store):
     assert [h.distance for h in hits] == [0.05, 0.30]
 
 
-def test_history_keeps_closest_of_duplicate_case_id(install_store):
-    store = FakeStore(
-        [
-            (history(Equipment.SRM, "C-2", "S115"), 0.50),
-            (history(Equipment.SRM, "C-2", "S115"), 0.10),
-            (history(Equipment.SRM, "C-4", "S115"), 0.30),
-        ]
-    )
-    install_store(hist=store)
-    hits = retriever.search_history(Equipment.SRM, NAME, 3)
-    assert [(h.ref_id, h.distance) for h in hits] == [("history:C-2", 0.10), ("history:C-4", 0.30)]
-    assert store.calls[0]["k"] == 3  # k건만 가져오고 더 가져오지 않는다
-
-
-def test_history_without_duplicates_returns_exactly_k(install_store):
+def test_history_returns_exactly_k(install_store):
     install_store(hist=history_store())
     assert len(retriever.search_history(Equipment.SRM, NAME, 2)) == 2
 
