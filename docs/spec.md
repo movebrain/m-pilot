@@ -70,14 +70,13 @@
 
 | 대분류 | 소분류            | 이벤트                                                                                                                                                                                      |
 | ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| UI     | 로그인            | 사용자가 데모 계정으로 로그인하면 역할에 맞는 첫 화면이 열리고, 로그아웃하면 로그인 화면으로 돌아간다.                                                                                      |
 | UI     | 고객 신고 목록    | 고객이 자신이 접수한 신고를 최신순·상태별로 보고, 신고를 누르면 상세로, ‘신고하기’를 누르면 작성 화면으로 이동한다.                                                                         |
 | UI     | 고객 신고 상세    | 고객이 신고를 열면 진행 상태를 보고, 셀프 가이드 건은 단계별 안내와 출처를, 엔지니어 처리 건은 완료 뒤 조치 결과를 본다(내부 분석은 보이지 않는다).                                         |
 | UI     | 고객 신고 작성    | 고객이 설비·에러코드를 고르고 제출하면 접수번호가 발급되고, 심각도가 높거나 고객이 조치할 수 없는 고장은 엔지니어에게 접수되며 나머지는 셀프 가이드를 받는다(만들 수 없으면 엔지니어 접수). |
 | UI     | 엔지니어 대시보드 | 엔지니어가 기존 서비스 이력과 신규 신고를 상태별로 보고, 기술지원 건을 누르면 대화창으로 이동한다(셀프 가이드 건은 ‘고객 안내’로만 표시).                                                   |
 | UI     | 장애 분석 대화    | 엔지니어가 신고 건에서 질문하면 출처가 붙은 답을 받고 첫 질문에 ‘조치 중’이 되며, 근거 부족·대상 아님·AI 오류 때는 안내만 본다.                                                             |
 | UI     | 이력 저장         | 엔지니어가 원인·실제 조치·결과를 입력해 완료하면 신고가 ‘조치 완료’가 되어 다음 질문의 근거가 되고, 이미 완료된 건은 ‘이미 완료’로 안내된다.                                                |
-| UI     | 앱 공통 (APP)     | 앱을 시작하면 검색 자료 준비가 끝난 뒤 로그인 화면이 열리고, 모든 화면에 ‘모든 데이터는 가상’이 보이며 오류는 고정 문구로만 안내된다.                                                       |
+| UI     | 앱 공통 (APP)     | 고객 앱(7860)·엔지니어 앱(7861)을 시작하면 검색 자료 준비가 끝난 뒤 역할의 첫 화면(고객 신고 목록·엔지니어 대시보드)이 열리고, 모든 화면에 ‘모든 데이터는 가상’이 보이며 오류는 고정 문구로만 안내된다.                                                       |
 
 ---
 
@@ -98,7 +97,9 @@
 
 ```text
 .
-├── app.py                             # [UI] 앱 조립·실행: 설정·모듈 초기화, 화면 생성
+├── app.py                             # [UI] 앱 조립·실행 공통부: 설정·모듈 초기화, 역할별 화면 생성
+├── app_customer.py                    # [UI] 고객 앱 진입점(7860)
+├── app_engineer.py                    # [UI] 엔지니어 앱 진입점(7861)
 ├── mpilot/
 │   ├── config.py                      # [공통] 앱 설정 로드·검증
 │   ├── models.py                      # [공통] 업무 데이터 정의와 순수 업무 규칙
@@ -114,7 +115,6 @@
 │   │   └── pipeline.py                # 고객 안내·엔지니어 답변의 단계 조립
 │   └── ui/                            # [UI]
 │       ├── common.py                  # 화면 공통 표시 처리(표기 변환·오류 문구·가상 데이터 배너)
-│       ├── login.py                   # 로그인
 │       ├── customer_dashboard.py      # 고객 신고 목록
 │       ├── customer_report_form.py    # 고객 신고 작성
 │       ├── customer_report_detail.py  # 고객 신고 상세
@@ -185,7 +185,6 @@
 
 | 모듈                      | 함수 시그니처                                                                                      | 책임                                                                             | 예외                                                               |
 | ------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| ui/login                  | `build_login_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`                  | 로그인 입력(ID·비밀번호)을 받아 로그인하고 실패를 안내한다                       | —                                                                  |
 | ui/customer_dashboard     | `build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`     | 고객 본인의 신고 목록을 최신순·상태별로 보여 준다                                | —                                                                  |
 | ui/customer_report_form   | `build_customer_report_form_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`   | 설비·에러코드·증상 메모를 입력받아 신고를 제출한다                               | —                                                                  |
 | ui/customer_report_detail | `build_customer_report_detail_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None` | 신고의 진행 상태와 셀프 가이드 또는 조치 결과를 보여 주고 출처 원문을 펼친다     | —                                                                  |
@@ -193,7 +192,6 @@
 | ui/engineer_chat          | `build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`          | 신고 정보와 대화를 보여 주고 질문 전송·출처 원문 확인을 처리한다                 | —                                                                  |
 | ui/engineer_resolution    | `build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`    | 원인·실제 조치·결과를 입력받아 조치 완료로 등록한다                              | —                                                                  |
 | service                   | `set_config(config: AppConfig) -> None`                                                            | 앱 설정을 보관한다                                                               | —                                                                  |
-| service                   | `login(login_id: str, password: str) -> Role`                                                      | 데모 계정을 확인해 역할을 알려준다                                               | ValidationError                                                    |
 | service                   | `list_customer_cases(status: CaseStatus \| None = None) -> list[CustomerCaseResult]`               | 고객 본인의 신고를 공개 필드로 조회한다                                          | ValidationError, DependencyError                                   |
 | service                   | `get_customer_case(case_id: str) -> CustomerCaseResult`                                            | 고객 공개 신고 상세를 조회한다                                                   | NotFoundError, DependencyError                                     |
 | service                   | `list_error_codes(equipment: Equipment) -> list[ErrorCode]`                                        | 설비별 에러코드 선택지를 조회한다                                                | ValidationError, DependencyError                                   |
@@ -205,13 +203,12 @@
 | service                   | `confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bool]`                  | 조치 결과를 확정하고 검색 근거에 반영하며, 반환의 `bool`은 검색 반영 성공 여부다 | ValidationError, NotFoundError, InvalidStateError, DependencyError |
 | service                   | `get_citation_text(citation: Citation) -> str`                                                     | 인용 출처의 원문을 조회한다                                                      | NotFoundError, DependencyError                                     |
 | service                   | `prepare_search_index() -> None`                                                                   | 검색 색인을 원자료로 새로 만든다                                                 | ValidationError, DependencyError                                   |
-| app                       | `main() -> None`                                                                                   | 앱을 조립해 실행한다                                                             | ValidationError, DependencyError                                   |
+| app                       | `main(role: Role, port: int, argv: Sequence[str] \| None = None) -> None`                          | 역할의 앱을 조립해 실행한다(`--fake`면 초기화 없이 가짜 데이터로 화면만 띄운다) | SystemExit(초기화 실패 시 고정 문구 출력 후 종료)                  |
 
 **화면–서비스 연결**
 
 | 화면              | 사용하는 서비스 함수                                                              |
 | ----------------- | --------------------------------------------------------------------------------- |
-| 로그인            | `login`                                                                           |
 | 고객 신고 목록    | `list_customer_cases`                                                             |
 | 고객 신고 작성    | `list_error_codes`, `submit_case`                                                 |
 | 고객 신고 상세    | `get_customer_case`, `get_citation_text`                                          |
@@ -224,7 +221,6 @@
 ```mermaid
 stateDiagram-v2
   direction LR
-  state "로그인" as login
   state "고객 영역" as cust {
     state "고객 신고 목록" as cust_list
     state "고객 신고 작성" as cust_form
@@ -235,20 +231,17 @@ stateDiagram-v2
     state "장애 분석 대화" as eng_chat
     state "이력 저장" as eng_resolve
   }
-  [*] --> login
-  login --> cust_list: 고객 로그인
-  login --> eng_list: 엔지니어 로그인
+  [*] --> cust_list: 고객 앱 시작
+  [*] --> eng_list: 엔지니어 앱 시작
   cust_list --> cust_detail: 행 선택
   cust_list --> cust_form: 신고하기
   cust_form --> cust_detail: 제출 성공
   cust_form --> cust_list: 뒤로
   cust_detail --> cust_list: 뒤로 · 접근 불가
-  cust_list --> login: 로그아웃
   eng_list --> eng_chat: 기술지원 건 선택
   eng_chat --> eng_resolve: 조치 결과 작성
   eng_chat --> eng_list: 뒤로
   eng_resolve --> eng_chat: 뒤로
-  eng_list --> login: 로그아웃
 ```
 
 ### 2.4 공통 계약
@@ -322,6 +315,7 @@ stateDiagram-v2
 **의존 방향**
 
 ```text
+app_customer.py, app_engineer.py ──→ app
 app.py ──→ ui/*, service, config, models, db/rdb, db/vectordb, rag/generator
 service ──→ db/parser, db/rdb, db/vectordb, rag/pipeline, config, models
 rag/pipeline ──→ rag/retriever, rag/generator, models
@@ -582,7 +576,7 @@ erDiagram
 
 ## 4. 범위와 제약
 
-- **포함**: 앱 시작마다 Chroma 색인 새로 생성, 데모 로그인, 고객 신고 이력·작성·상세, RAG 셀프 가이드, 엔지니어 전체 이력·RAG 채팅, 현장 조치 결과 저장과 검색 반영, 앱 실행·시연·자동 테스트(로컬 Docker·CI)의 MySQL 지원.
+- **포함**: 앱 시작마다 Chroma 색인 새로 생성, 역할별 앱(고객·엔지니어) 분리, 고객 신고 이력·작성·상세, RAG 셀프 가이드, 엔지니어 전체 이력·RAG 채팅, 현장 조치 결과 저장과 검색 반영, 앱 실행·시연·자동 테스트(로컬 Docker·CI)의 MySQL 지원.
 - **자료**: 가상 매뉴얼 4종(Mini Loader·SRM·AGV·RTV), 설비별 완료 이력 50건(총 200건). 화면에 “모든 데이터는 가상”을 표시한다.
 - **범위 밖**: 실제 인증·권한, 다중 고객사(회사명·회사 단위 접근 권한 포함), 복합 신고, 미해결·다회 조치, 완료 후 채팅·수정·재개, 임시 저장, 고객 확인 단계, 새 답변·새 신고 표시(N/NEW), 반복 에러 강조, LLM 위험도 분류, 사진 AI 판독, 로그 첨부, 실시간 푸시, 독립 자유 질문 화면, 가이드 생성 중 중단 복구, 건별 검색 반영 상태 추적, 중복 제출·동시 수정 방지(멱등 키·낙관적 잠금. 제출 중 버튼 비활성화만 둔다), 사진 첨부·열람(후속 개선 참고), 목록 페이지 이동, 긴급 강조, ‘대응 시작’ 버튼, 목록의 기간·원본 필터와 상태별 건수, 시연 중 DB 재초기화 시 이력 보존.
 - **후속 개선**: 상세 진입 시 AI 요약, 조치 결과 AI 초안, 작성 글의 이력 형식 구조화, 사진 첨부·열람(고객 신고·엔지니어 대화창).

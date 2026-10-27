@@ -29,6 +29,7 @@ from mpilot.models import (
     DependencyError,
     InvalidStateError,
     NotFoundError,
+    Role,
     Route,
     ValidationError,
     Verdict,
@@ -51,6 +52,40 @@ SCREEN_CUSTOMER_DETAIL = "cust_detail"
 SCREEN_ENGINEER_LIST = "eng_list"
 SCREEN_ENGINEER_CHAT = "eng_chat"
 SCREEN_ENGINEER_RESOLVE = "eng_resolve"
+
+ROLE_SCREENS: dict[Role, tuple[str, ...]] = {
+    Role.CUSTOMER: (SCREEN_CUSTOMER_LIST, SCREEN_CUSTOMER_FORM, SCREEN_CUSTOMER_DETAIL),
+    Role.ENGINEER: (SCREEN_ENGINEER_LIST, SCREEN_ENGINEER_CHAT, SCREEN_ENGINEER_RESOLVE),
+}
+"""앱(역할)별로 조립하는 화면 목록. 맨 앞이 그 앱의 첫 화면이다(CHG-01)."""
+
+
+def first_screen(role: Role | str) -> str:
+    """역할별 앱이 처음 보여 줄 화면 이름을 돌려준다.
+
+    Args:
+        role: `Role` 값 또는 같은 문자열(`"customer"`, `"engineer"`).
+
+    Returns:
+        str: 고객은 고객 신고 목록, 엔지니어는 엔지니어 대시보드의 화면 이름.
+
+    Raises:
+        ValueError: 허용되지 않은 역할 값일 때.
+    """
+    return ROLE_SCREENS[Role(role)][0]
+
+
+def is_screen_visible(current: str | None, own: str) -> bool:
+    """`screen` 공유 상태 값으로 한 화면을 보일지 정한다. 화면 전환 구조의 판정 규칙이다.
+
+    Args:
+        current: `screen` 공유 상태의 지금 값.
+        own: 판정할 화면의 이름(`SCREEN_*`).
+
+    Returns:
+        bool: 지금 값이 그 화면이면 `True`. 한 번에 한 화면만 `True`가 된다.
+    """
+    return current == own
 
 # ---------------------------------------------------------------------------
 # 표기 변환

@@ -18,7 +18,7 @@
     - 화면에 보여 줄 오류 문구는 정하지 않는다. 예외 종류만 구분해 던지고 문구는 `ui/common`이 맡는다.
 
 화면–서비스 연결(spec §2.3.3):
-    로그인 → `login` / 고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
+    고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
     고객 신고 상세 → `get_customer_case`, `get_citation_text` / 엔지니어 대시보드 → `list_engineer_cases` /
     장애 분석 대화 → `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` /
     이력 저장 → `get_engineer_case`, `confirm_resolution`
@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime, timezone
 
 from mpilot.config import AppConfig
+from mpilot.db import parser, rdb, vectordb
 from mpilot.models import (
     ActionOwner,
     Answer,
@@ -41,14 +42,15 @@ from mpilot.models import (
     CaseInput,
     CaseStatus,
     ChatTurn,
+    Chunk,
     Citation,
     CitationKind,
     CustomerCaseResult,
+    DependencyError,
     Equipment,
     ErrorCode,
     NotFoundError,
     Resolution,
-    Role,
     Route,
     ServiceCase,
     Severity,
@@ -214,32 +216,35 @@ def _sorted_newest(details: list[CaseDetail]) -> list[CaseDetail]:
     return sorted(details, key=lambda d: d.service_case.created_at, reverse=True)
 
 
+# `set_config`가 보관한 앱 설정. 앱 시작 전에는 `None`이다.
+_config: AppConfig | None = None
+
+
 def set_config(config: AppConfig) -> None:
     """앱 설정을 보관한다.
 
     Args:
-        config: `config.load_config`가 만든 앱 설정. 데모 계정, 경로, 검색 설정, 모델 제한 시간을 여기서 읽는다.
+        config: `config.load_config`가 만든 앱 설정. 경로, 검색 설정, 모델 제한 시간을 여기서 읽는다.
 
     Returns:
         None: 모듈 안에 설정을 보관한다. 다른 함수는 이 설정을 쓴다.
     """
-    ...
+    global _config
+    _config = config
 
 
-def login(login_id: str, password: str) -> Role:
-    """데모 계정을 확인해 역할을 알려준다.
-
-    Args:
-        login_id: 입력한 로그인 ID.
-        password: 입력한 비밀번호.
+def _require_config() -> AppConfig:
+    """보관한 앱 설정을 돌려준다.
 
     Returns:
-        Role: 계정에 정해진 역할(`customer` 또는 `engineer`). 화면은 이 값으로 첫 화면을 고른다.
+        AppConfig: `set_config`로 보관한 설정.
 
     Raises:
-        ValidationError: 계정이 없거나 비밀번호가 틀렸을 때.
+        DependencyError: `set_config` 전에 불렀을 때.
     """
-    ...
+    if _config is None:
+        raise DependencyError("set_config 전에 호출됨")
+    return _config
 
 
 def list_customer_cases(status: CaseStatus | None = None) -> list[CustomerCaseResult]:
@@ -492,7 +497,7 @@ def prepare_search_index() -> None:
     """검색 색인을 원자료로 새로 만든다.
 
     매뉴얼 PDF를 청킹하고 설비 4종의 에러코드 표와 확정 이력(`rdb.fetch_resolved_cases`)을 읽어
-    `vectordb.rebuild_search_index`로 두 컬렉션을 다시 만든다. 앱 시작 때 로그인 화면을 열기 전에 끝나야 한다.
+    `vectordb.rebuild_search_index`로 두 컬렉션을 다시 만든다. 앱 시작 때 첫 화면을 열기 전에 끝나야 한다.
 
     Returns:
         None: 색인이 준비된다.
@@ -501,4 +506,36 @@ def prepare_search_index() -> None:
         ValidationError: 문서 ID 구성이나 허용 절차 ID 검증에 실패했을 때.
         DependencyError: PDF·DB·임베딩·저장소 장애일 때. 이 경우 앱 시작을 중단한다.
     """
-    ...
+    config = _require_config()
+    chunks = parser.parse_manuals(config.manuals_dir)
+    codes = [row for equipment in Equipment for row in rdb.fetch_error_codes(equipment)]
+    _check_customer_procedure_ids(codes, {_chunk_ref_id(chunk) for chunk in chunks})
+    histories = rdb.fetch_resolved_cases()
+    vectordb.rebuild_search_index(chunks, codes, histories)
+
+
+def _chunk_ref_id(chunk: Chunk) -> str:
+    """매뉴얼 청크의 검색 문서 ID(`manual:<manual_id>:<쪽>:<chunk_no>`, spec §3.4)를 만든다."""
+    return f"manual:{chunk.manual_id}:{chunk.page}:{chunk.chunk_no}"
+
+
+def _check_customer_procedure_ids(codes: list[ErrorCode], chunk_ids: set[str]) -> None:
+    """에러코드 표의 허용 절차 ID가 모두 매뉴얼 청크에 있는지 확인한다.
+
+    Args:
+        codes: 설비 4종의 에러코드 표 행.
+        chunk_ids: 매뉴얼 청크의 문서 ID 모음.
+
+    Returns:
+        None: 모두 있으면 아무 일도 하지 않는다.
+
+    Raises:
+        ValidationError: 청크에 없는 허용 절차 ID가 하나라도 있을 때. 어느 코드인지만 알리고 고치지 않는다.
+    """
+    missing = [
+        f"{row.equipment}:{row.code}"
+        for row in codes
+        if any(ref_id not in chunk_ids for ref_id in row.customer_procedure_ref_ids)
+    ]
+    if missing:
+        raise ValidationError(f"매뉴얼에 없는 허용 절차 ID: {', '.join(missing)}")

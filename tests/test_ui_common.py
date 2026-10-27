@@ -15,6 +15,7 @@ from mpilot.models import (
     DependencyError,
     InvalidStateError,
     NotFoundError,
+    Role,
     Route,
     ValidationError,
     Verdict,
@@ -92,3 +93,25 @@ def test_error_message_hides_raw_text(exc_type):
 
 def test_error_message_unknown_exception():
     assert common.error_message(RuntimeError("boom")) == common.UNKNOWN_ERROR_MESSAGE
+
+
+@pytest.mark.parametrize(
+    ("role", "screen"),
+    [(Role.CUSTOMER, common.SCREEN_CUSTOMER_LIST), (Role.ENGINEER, common.SCREEN_ENGINEER_LIST), ("customer", common.SCREEN_CUSTOMER_LIST)],
+)
+def test_first_screen(role, screen):
+    assert common.first_screen(role) == screen
+
+
+def test_role_screens_do_not_overlap():
+    customer = set(common.ROLE_SCREENS[Role.CUSTOMER])
+    engineer = set(common.ROLE_SCREENS[Role.ENGINEER])
+    assert len(customer) == len(engineer) == 3
+    assert not customer & engineer
+
+
+@pytest.mark.parametrize("current", [*common.ROLE_SCREENS[Role.CUSTOMER], *common.ROLE_SCREENS[Role.ENGINEER]])
+def test_only_one_screen_visible(current):
+    all_screens = [*common.ROLE_SCREENS[Role.CUSTOMER], *common.ROLE_SCREENS[Role.ENGINEER]]
+    visible = [s for s in all_screens if common.is_screen_visible(current, s)]
+    assert visible == [current]

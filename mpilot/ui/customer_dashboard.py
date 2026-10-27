@@ -39,7 +39,7 @@ def build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: g
     Returns:
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
-    with gr.Column(visible=screen.value == SCREEN) as column:
+    with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
         gr.Markdown("## 고객 신고 목록")
         picked = gr.Dropdown(choices=_case_choices(), label="신고 선택")
         with gr.Row():
@@ -48,9 +48,8 @@ def build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: g
 
     def on_screen_change(current: str):
         # 이 화면이 다시 보일 때마다 목록을 새로 읽는다(새 신고 반영).
-        visible = current == SCREEN
-        if not visible:
-            return gr.Column(visible=False), gr.Dropdown()
+        if not common.is_screen_visible(current, SCREEN):
+            return gr.Column(visible=False), gr.skip()
         return gr.Column(visible=True), gr.Dropdown(choices=_case_choices(), value=None)
 
     def on_open(selected: str | None):

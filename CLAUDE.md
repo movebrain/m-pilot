@@ -27,7 +27,7 @@
 | 공통 | `mpilot/config.py`(`AppConfig`, `.env` 로드), `mpilot/models.py`(예외·열거형·업무 객체·순수 업무 규칙) |
 | DB | `mpilot/db/`(`parser`, `schemas`, `rdb`, `vectordb`), `scripts/init_db.py`, `docker-compose.yml` |
 | RAG | `mpilot/rag/`(`retriever`, `generator`, `pipeline`), `prompts/`, `scripts/evaluate.py` |
-| UI·총괄 | `app.py`, `mpilot/service.py`, `mpilot/ui/`(화면 7개와 `common.py`) |
+| UI·총괄 | `app.py`(공통부), `app_customer.py`, `app_engineer.py`, `mpilot/service.py`, `mpilot/ui/`(화면 6개와 `common.py`) |
 | 자료 | `data/manuals/`(사양서 PDF 4종), `data/raw/`(에러코드 표 CSV, 장애 이력 더미 4종), `data/chroma/`·`data/photos/`(로컬 전용) |
 
 - 소유 파트가 아닌 파일은 고치지 않는다. 고쳤다면 담당자에게 알린다. 필요한 기능은 spec §2.3의 함수를 호출한다.
@@ -81,7 +81,8 @@
 ```
 docker compose up -d           # 로컬 MySQL
 python -m scripts.init_db      # 시연 전 한 번. 모든 테이블을 지우고 다시 적재
-python app.py                  # Gradio 앱
+python app_customer.py         # 고객 앱(7860). --fake면 DB·RAG 없이 가짜 데이터
+python app_engineer.py         # 엔지니어 앱(7861). --fake 동일
 python -m pytest               # 테스트(그냥 pytest는 쓰지 않는다)
 python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ```
