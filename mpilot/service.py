@@ -29,10 +29,6 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
-
-from mpilot import fake_backend as _fake  # TODO: 모든 함수가 진짜 호출로 바뀌면 지운다
 from mpilot.config import AppConfig
 from mpilot.db import parser, rdb, vectordb
 from mpilot.models import (
@@ -46,16 +42,10 @@ from mpilot.models import (
     DependencyError,
     Equipment,
     ErrorCode,
-    NotFoundError,
     Resolution,
-    Route,
     Source,
     ValidationError,
-    has_customer_procedure,
-    is_self_guide_candidate,
-    raise_if_case_completed,
 )
-
 
 
 def _to_customer_result(detail: CaseDetail) -> CustomerCaseResult:
@@ -141,10 +131,7 @@ def get_customer_case(case_id: str) -> CustomerCaseResult:
         DependencyError: DB 조회에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (rdb.fetch_case_detail)
-    detail = _fake.CASES.get(case_id)
-    if detail is None or detail.service_case.source != Source.REPORTED:
-        raise NotFoundError(case_id)
-    return _to_customer_result(detail)
+    ...
 
 
 def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -161,7 +148,7 @@ def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
         DependencyError: DB 조회에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (rdb.fetch_error_codes)
-    return [row for row in _fake.ERROR_CODES if row.equipment == equipment]
+    ...
 
 
 def submit_case(data: CaseInput) -> str:
@@ -181,26 +168,7 @@ def submit_case(data: CaseInput) -> str:
         DependencyError: DB 저장에 실패했을 때. 가이드 생성 실패는 예외가 아니라 엔지니어 접수로 처리한다.
     """
     # TODO: 실제 호출로 교체 (pipeline.run_customer_guidance, rdb.save_self_guide_case / save_support_case)
-    error_code = _fake.find_code(data.equipment, data.code)
-    case_id = f"SC-{uuid.uuid4().hex[:8]}"
-    now = datetime.now(timezone.utc)
-    if is_self_guide_candidate(error_code) and has_customer_procedure(error_code):
-        ref_id = error_code.customer_procedure_ref_ids[0]
-        guidance = _fake.answered(
-            f"{error_code.action} ({error_code.required_safety_rules[0] if error_code.required_safety_rules else '안전 수칙 확인'})",
-            ref_id, f"p.{error_code.page} · {error_code.section}",
-        )
-        detail = _fake.make_case(
-            case_id, data.equipment, data.code, source=Source.REPORTED, status=CaseStatus.COMPLETED,
-            route=Route.SELF_GUIDE, created_at=now, memo=data.memo, guidance_answer=guidance, completed_at=now,
-        )
-    else:
-        detail = _fake.make_case(
-            case_id, data.equipment, data.code, source=Source.REPORTED, status=CaseStatus.RECEIVED,
-            route=Route.SUPPORT, created_at=now, memo=data.memo,
-        )
-    _fake.CASES[case_id] = detail
-    return case_id
+    ...
 
 
 def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
@@ -219,8 +187,7 @@ def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
         DependencyError: DB 조회에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (rdb.fetch_cases(status))
-    details = [d for d in _fake.CASES.values() if status is None or d.service_case.status == status]
-    return _sorted_newest(details)
+    ...
 
 
 def get_engineer_case(case_id: str) -> CaseDetail:
@@ -237,10 +204,7 @@ def get_engineer_case(case_id: str) -> CaseDetail:
         DependencyError: DB 조회에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (rdb.fetch_case_detail)
-    detail = _fake.CASES.get(case_id)
-    if detail is None:
-        raise NotFoundError(case_id)
-    return detail
+    ...
 
 
 def list_chat_turns(case_id: str) -> list[ChatTurn]:
@@ -257,8 +221,7 @@ def list_chat_turns(case_id: str) -> list[ChatTurn]:
         DependencyError: DB 조회에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (rdb.fetch_chat_turns)
-    get_engineer_case(case_id)  # 없는 접수번호면 NotFoundError
-    return list(_fake.TURNS.get(case_id, []))
+    ...
 
 
 def send_chat_question(case_id: str, question: str) -> None:
@@ -281,24 +244,7 @@ def send_chat_question(case_id: str, question: str) -> None:
         DependencyError: 모델·검색·DB 장애나 제한 시간 초과일 때.
     """
     # TODO: 실제 호출로 교체 (pipeline.run_engineer_answer, rdb.save_chat_turn)
-    question = question.strip()
-    if not 1 <= len(question) <= 2000:
-        raise ValidationError("질문 길이")
-    detail = get_engineer_case(case_id)
-    raise_if_case_completed(detail.service_case)
-    turns = _fake.TURNS.setdefault(case_id, [])
-    answer = _fake.answered(
-        f"[가짜 답변] '{question}'에 대한 점검 순서: {detail.error_code.action}",
-        f"error:{detail.error_code.equipment}:{detail.error_code.code}",
-        f"p.{detail.error_code.page} · {detail.error_code.section}",
-    )
-    turns.append(
-        ChatTurn(turn_id=len(turns) + 1, case_id=case_id, question=question, answer=answer,
-                 created_at=datetime.now(timezone.utc))
-    )
-    if detail.service_case.status == CaseStatus.RECEIVED:  # 첫 질문이면 조치 중으로
-        new_case = detail.service_case.model_copy(update={"status": CaseStatus.IN_PROGRESS})
-        _fake.CASES[case_id] = detail.model_copy(update={"service_case": new_case})
+    ...
 
 
 def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bool]:
@@ -319,14 +265,7 @@ def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bo
         DependencyError: 조치 결과 저장(DB)에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (rdb.save_confirmed_resolution, vectordb.index_history)
-    detail = get_engineer_case(case_id)
-    raise_if_case_completed(detail.service_case)
-    new_case = detail.service_case.model_copy(
-        update={"status": CaseStatus.COMPLETED, "completed_at": datetime.now(timezone.utc)}
-    )
-    completed = detail.model_copy(update={"service_case": new_case, "resolution": record})
-    _fake.CASES[case_id] = completed
-    return completed, True
+    ...
 
 
 def get_citation_text(citation: Citation) -> str:
@@ -343,10 +282,7 @@ def get_citation_text(citation: Citation) -> str:
         DependencyError: 검색 저장소 조회에 실패했을 때.
     """
     # TODO: 실제 호출로 교체 (vectordb.get_document)
-    text = _fake.CITATION_TEXTS.get(citation.ref_id)
-    if text is None:
-        return f"[가상 원문] {citation.ref_id} 원문은 실제 연결 뒤에 보입니다."
-    return text
+    ...
 
 
 def prepare_search_index() -> None:
