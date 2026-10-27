@@ -43,6 +43,8 @@ def test_chunk_draft_accepts_three_kinds():
         lambda: raw_table(page=0),  # 쪽은 1부터
         lambda: raw_table(index=0),  # 쪽 안 순서도 1부터
         lambda: raw_table(bbox=(1.0, 2.0, 3.0)),  # bbox는 4개 값
+        lambda: raw_table(bbox=(100.0, 200.0, 50.0, 250.0)),  # x0 > x1
+        lambda: raw_table(bbox=(10.0, 300.0, 50.0, 250.0)),  # top > bottom
         lambda: ChunkDraft(page=0, top=0.0, kind="text", section=None, text="x"),
         lambda: ChunkDraft(page=1, top=0.0, kind="image", section=None, text="x"),  # 정해진 종류만
     ],
@@ -50,6 +52,11 @@ def test_chunk_draft_accepts_three_kinds():
 def test_types_reject_invalid_values(make):
     with pytest.raises(pydantic.ValidationError):
         make()
+
+
+def test_raw_table_bbox_allows_equal_coordinates():
+    # 폭이나 높이가 0인 영역(x0 == x1, top == bottom)은 뒤집힌 것이 아니라서 허용한다.
+    assert raw_table(bbox=(10.0, 20.0, 10.0, 20.0)).bbox == (10.0, 20.0, 10.0, 20.0)
 
 
 def test_types_are_frozen():

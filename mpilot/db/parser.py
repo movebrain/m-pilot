@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from mpilot.models import Chunk
 
@@ -61,6 +61,7 @@ class RawTable(BaseModel):
         page: 표가 있는 쪽. 매뉴얼 우측 하단 꼬리글에 인쇄된 쪽 번호이며(`1 / 35`의 1), 표지는 번호가 없어 대상이 아니다.
         index: 그 쪽 안에서 위에서부터의 순서. 1부터 센다.
         bbox: 표 영역 `(x0, top, x1, bottom)`. 단위는 pt이고 원점은 쪽 왼쪽 위다.
+            `x0 <= x1`, `top <= bottom`이어야 하며 어긋나면 만들 때 오류가 난다.
         caption: 표 캡션(예: `표 9-4. 에러 코드 일람`). 앞 쪽에서 이어진 표는 앞 표의 캡션을 이어받는다.
             캡션이 없으면 None.
         rows: 행·열 셀 값. None은 병합되었거나 비어 있는 셀이다. 첫 행은 머리글이다.
@@ -75,6 +76,25 @@ class RawTable(BaseModel):
     caption: str | None
     rows: list[list[str | None]]
     continued: bool
+
+    @field_validator("bbox")
+    @classmethod
+    def _check_bbox_order(cls, bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        """표 영역의 좌표가 뒤집히지 않았는지 검사한다.
+
+        Args:
+            bbox: `(x0, top, x1, bottom)`.
+
+        Returns:
+            tuple[float, float, float, float]: 검사를 통과한 같은 값.
+
+        Raises:
+            ValueError: `x0 > x1`이거나 `top > bottom`일 때(pydantic이 검증 오류로 바꾼다).
+        """
+        x0, top, x1, bottom = bbox
+        if x0 > x1 or top > bottom:
+            raise ValueError("bbox는 x0 <= x1, top <= bottom이어야 합니다")
+        return bbox
 
 
 class ChunkDraft(BaseModel):
