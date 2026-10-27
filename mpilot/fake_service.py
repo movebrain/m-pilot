@@ -1,7 +1,8 @@
 """UI 개발용 가짜 service. DB·RAG 없이 service.py와 같은 함수를 메모리 자료로 흉내 낸다.
 
 책임: 원자료 CSV로 에러코드·시드 이력을 만들고, 허용 조합별 예시 신고를 둔다.
-의존: config, models
+    `install()`은 `service`의 공개 함수를 이 모듈의 같은 이름 함수로 바꿔 끼운다(`app.py --fake`만 부른다).
+의존: config, models, service(바꿔 끼울 대상)
 소유: UI·총괄 파트
 """
 
@@ -31,7 +32,6 @@ from mpilot.models import (
     GuideFailure,
     NotFoundError,
     Resolution,
-    Role,
     Route,
     ServiceCase,
     Severity,
@@ -46,7 +46,6 @@ from mpilot.models import (
 _RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"  # 원자료 CSV 폴더
 _TIME_FORMAT = "%Y-%m-%d %H:%M"  # 이력 CSV의 시각 형식
 _MOCK = "(목)"  # 지어낸 값에 붙이는 표시
-_DEFAULT_ACCOUNTS = {"customer": Role.CUSTOMER, "engineer": Role.ENGINEER}  # 설정이 없을 때 쓰는 계정(비밀번호 = ID)
 
 
 @dataclass
@@ -68,34 +67,10 @@ def set_config(config: AppConfig) -> None:
     """앱 설정을 보관한다.
 
     Args:
-        config: 앱 설정. 데모 계정만 쓴다.
+        config: 앱 설정. 가짜 구현은 보관만 하고 쓰지 않는다(`service`와 시그니처를 맞추기 위해 둔다).
     """
     global _config
     _config = config
-
-
-def login(login_id: str, password: str) -> Role:
-    """데모 계정을 확인해 역할을 돌려준다.
-
-    Args:
-        login_id: 로그인 ID.
-        password: 비밀번호.
-
-    Returns:
-        Role: 계정의 역할.
-
-    Raises:
-        ValidationError: 계정이 없거나 비밀번호가 틀렸을 때.
-    """
-    # 설정이 있으면 .env의 데모 계정으로 확인
-    if _config is not None:
-        account = _config.demo_accounts.get(login_id)
-        if account is not None and account.password.get_secret_value() == password:
-            return account.role
-    # 설정이 없으면 기본 계정으로 확인
-    elif login_id in _DEFAULT_ACCOUNTS and password == login_id:
-        return _DEFAULT_ACCOUNTS[login_id]
-    raise ValidationError("로그인 정보가 올바르지 않습니다.")
 
 
 def list_customer_cases(status: CaseStatus | None = None) -> list[CustomerCaseResult]:
@@ -598,3 +573,34 @@ def _error_code_text(error_code: ErrorCode) -> str:
         f"심각도: {error_code.severity} / 조치 구분: {error_code.action_owner}\n"
         f"원인: {error_code.cause}\n조치: {error_code.action}"
     )
+
+
+def install() -> None:
+    """`service`의 공개 함수를 이 모듈의 같은 이름 함수로 바꿔 끼운다. `app.py --fake`에서 한 번 부른다.
+
+    화면은 `service.<함수>`를 부를 때마다 이름으로 찾으므로, 바꿔 끼운 뒤에는 모든 화면이 가짜 자료로 동작한다.
+
+    Returns:
+        None: 이후 `service`의 공개 함수 호출이 메모리 자료로 처리된다.
+    """
+    from mpilot import service
+
+    for name in public_function_names(service):
+        setattr(service, name, globals()[name])
+
+
+def public_function_names(module) -> list[str]:
+    """모듈에 정의된 공개 함수(이름이 `_`로 시작하지 않는 함수) 이름을 돌려준다.
+
+    Args:
+        module: 살펴볼 모듈(`service`).
+
+    Returns:
+        list[str]: 그 모듈에서 정의한 공개 함수 이름 목록. 다른 모듈에서 가져온 함수는 뺀다.
+    """
+    import inspect
+
+    return [
+        name for name, fn in inspect.getmembers(module, inspect.isfunction)
+        if fn.__module__ == module.__name__ and not name.startswith("_")
+    ]

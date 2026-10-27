@@ -18,7 +18,6 @@ from mpilot.models import (
     InvalidStateError,
     NotFoundError,
     Resolution,
-    Role,
     Route,
     Source,
     ValidationError,
@@ -59,10 +58,22 @@ def resolution(result: str = "정상 동작 확인") -> Resolution:
 
 
 def test_public_functions_match_service_signatures():
-    names = [n for n, f in inspect.getmembers(service, inspect.isfunction) if f.__module__ == service.__name__]
-    assert len(names) == 13
+    # service의 공개 함수(spec §2.3.3)가 모두 같은 시그니처로 있어야 install로 바꿔 끼울 수 있다.
+    names = fake_service.public_function_names(service)
+    assert len(names) == 12  # CHG-01로 login이 빠졌다
     for name in names:
         assert inspect.signature(getattr(fake_service, name)) == inspect.signature(getattr(service, name))
+
+
+def test_install_swaps_service_functions(monkeypatch):
+    names = fake_service.public_function_names(service)
+    for name in names:  # 테스트가 끝나면 원래 함수로 되돌린다
+        monkeypatch.setattr(service, name, getattr(service, name))
+
+    fake_service.install()
+
+    for name in names:
+        assert getattr(service, name) is getattr(fake_service, name)
 
 
 # 원자료 ------------------------------------------------------------------------
@@ -98,16 +109,6 @@ def test_sample_cases_cover_allowed_combinations():
     assert (Route.SUPPORT, GuideFailure.HELD, CaseStatus.RECEIVED) in combos
     assert (Route.SUPPORT, GuideFailure.GENERATION_FAILED, CaseStatus.RECEIVED) in combos
     assert (Route.SUPPORT, None, CaseStatus.COMPLETED) in combos
-
-
-# 로그인 ------------------------------------------------------------------------
-
-
-def test_login_default_accounts():
-    assert fake_service.login("customer", "customer") == Role.CUSTOMER
-    assert fake_service.login("engineer", "engineer") == Role.ENGINEER
-    with pytest.raises(ValidationError):
-        fake_service.login("customer", "wrong")
 
 
 # 고객 화면 ---------------------------------------------------------------------
