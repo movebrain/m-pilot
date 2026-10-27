@@ -41,6 +41,7 @@ from mpilot.models import (
     CaseDetail,
     CaseInput,
     CaseStatus,
+    ChatRequest,
     ChatTurn,
     Chunk,
     Citation,
@@ -49,14 +50,19 @@ from mpilot.models import (
     Equipment,
     ErrorCode,
     GuideFailure,
+    MpilotError,
     Resolution,
     Source,
     ValidationError,
     Verdict,
     has_customer_procedure,
     is_self_guide_candidate,
+    raise_if_case_completed,
 )
 from mpilot.rag import pipeline
+
+MAX_QUESTION_LENGTH = 2000
+"""엔지니어 질문의 최대 글자 수(앞뒤 공백 제거 후, `ChatRequest.question`과 같다)."""
 
 
 def _to_customer_result(detail: CaseDetail) -> CustomerCaseResult:
@@ -280,8 +286,7 @@ def get_engineer_case(case_id: str) -> CaseDetail:
         NotFoundError: 접수번호가 없을 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.fetch_case_detail)
-    ...
+    return rdb.fetch_case_detail(case_id)
 
 
 def list_chat_turns(case_id: str) -> list[ChatTurn]:
@@ -297,8 +302,8 @@ def list_chat_turns(case_id: str) -> list[ChatTurn]:
         NotFoundError: 접수번호가 없을 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.fetch_chat_turns)
-    ...
+    rdb.fetch_case_detail(case_id)  # 없는 접수번호면 NotFoundError(fetch_chat_turns는 빈 목록을 돌려준다)
+    return rdb.fetch_chat_turns(case_id)
 
 
 def send_chat_question(case_id: str, question: str) -> None:
@@ -320,8 +325,47 @@ def send_chat_question(case_id: str, question: str) -> None:
         InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
         DependencyError: 모델·검색·DB 장애나 제한 시간 초과일 때.
     """
-    # TODO: 실제 호출로 교체 (pipeline.run_engineer_answer, rdb.save_chat_turn)
-    ...
+    detail = rdb.fetch_case_detail(case_id)
+    raise_if_case_completed(detail.service_case)  # 완료 건·셀프 가이드 건은 모델을 부르기 전에 막는다
+    question = question.strip()
+    if not 1 <= len(question) <= MAX_QUESTION_LENGTH:
+        raise ValidationError("질문 길이")
+    request = ChatRequest(question=question, turns=rdb.fetch_chat_turns(case_id))
+    context = CaseContext(error_code=detail.error_code, memo=detail.service_case.memo)
+    answer = _run_engineer_answer_within_limit(context, request)
+    rdb.save_chat_turn(case_id, question, answer)  # 첫 질문이면 rdb가 in_progress로 바꾼다
+
+
+def _run_engineer_answer_within_limit(context: CaseContext, request: ChatRequest) -> Answer:
+    """엔지니어 답변을 제한 시간(`llm_timeout_seconds`) 안에 만든다.
+
+    고객 안내(`_run_guidance_within_limit`)와 달리 실패를 삼키지 않는다. 엔지니어 질문은 저장하지 않고
+    `DependencyError`로 알려 화면이 다시 시도하게 한다.
+
+    Args:
+        context: 신고한 에러코드와 증상 메모.
+        request: 현재 질문과 저장된 대화.
+
+    Returns:
+        Answer: 출처가 붙은 답변 또는 근거 부족 판정.
+
+    Raises:
+        ValidationError: 질문이나 검색 설정이 허용 범위를 벗어났을 때.
+        DependencyError: 모델·검색 장애, 검증 실패, 제한 시간 초과, `set_config` 전에 불렀을 때.
+    """
+    config = _require_config()
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(pipeline.run_engineer_answer, context, request, config.search)
+        return future.result(timeout=config.llm_timeout_seconds)
+    except FutureTimeoutError:
+        raise DependencyError("엔지니어 답변 시간 초과") from None  # 늦게 끝난 결과는 쓰지 않는다
+    except MpilotError:
+        raise
+    except Exception as e:  # 모델 클라이언트 등의 예상 밖 오류도 화면에는 장애로 알린다
+        raise DependencyError("엔지니어 답변 실패") from e
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bool]:
