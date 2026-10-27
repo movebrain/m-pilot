@@ -20,6 +20,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from mpilot.models import Chunk
 
@@ -39,3 +42,57 @@ def parse_manuals(directory: Path) -> list[Chunk]:
         DependencyError: PDF를 읽거나 파싱하는 데 실패했을 때.
     """
     ...
+
+
+# ---------------------------------------------------------------------------
+# parser 안에서 주고받는 중간 자료
+#
+# `RawTable`은 표 추출(담당: 이재서)이 만들고, `extract_page_texts`(담당: 손재호)가 표 영역을 빼는 데 쓴다.
+# `ChunkDraft`는 텍스트·표·OCR 초안의 공통 형식이며 `number_chunks`(담당: 손재호)가 받아 번호를 매긴다.
+# 표·OCR 초안은 절을 알 수 없어 `section=None`으로 두고, 바로 앞 텍스트 초안의 절을 이어받는 일은
+# `number_chunks`가 맡는다.
+# ---------------------------------------------------------------------------
+
+
+class RawTable(BaseModel):
+    """PDF 한 쪽에서 찾은 표 하나.
+
+    Attributes:
+        page: 표가 있는 쪽. PDF 안의 쪽 순서이며 표지가 1이다(꼬리글의 인쇄 쪽 번호보다 1 크다).
+        index: 그 쪽 안에서 위에서부터의 순서. 1부터 센다.
+        bbox: 표 영역 `(x0, top, x1, bottom)`. 단위는 pt이고 원점은 쪽 왼쪽 위다.
+        caption: 표 캡션(예: `표 9-4. 에러 코드 일람`). 앞 쪽에서 이어진 표는 앞 표의 캡션을 이어받는다.
+            캡션이 없으면 None.
+        rows: 행·열 셀 값. None은 병합되었거나 비어 있는 셀이다. 첫 행은 머리글이다.
+        continued: 앞 쪽 마지막 표가 이 쪽으로 이어진 것이면 True.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    page: int = Field(ge=1)
+    index: int = Field(ge=1)
+    bbox: tuple[float, float, float, float]
+    caption: str | None
+    rows: list[list[str | None]]
+    continued: bool
+
+
+class ChunkDraft(BaseModel):
+    """번호를 매기기 전의 청크 초안.
+
+    Attributes:
+        page: 출처 쪽. PDF 안의 쪽 순서이며 표지가 1이다(꼬리글의 인쇄 쪽 번호보다 1 크다).
+        top: 쪽 안에서의 세로 위치(pt). 같은 쪽 초안을 위에서부터 정렬하는 데 쓴다.
+            같은 쪽·같은 위치면 목록 순서를 유지한다.
+        kind: 초안 종류. 본문 `text`, 표 `table`, 이미지 전사 `ocr`.
+        section: 출처 절. 알 수 없으면 None.
+        text: 초안 본문.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    page: int = Field(ge=1)
+    top: float
+    kind: Literal["text", "table", "ocr"]
+    section: str | None
+    text: str
