@@ -341,8 +341,12 @@ def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bo
         InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
         DependencyError: 조치 결과 저장(DB)에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.save_confirmed_resolution, vectordb.index_history)
-    ...
+    detail = rdb.save_confirmed_resolution(case_id, record)  # 완료·셀프 가이드 건은 rdb가 InvalidStateError
+    try:
+        vectordb.index_history(detail)
+    except Exception:  # 반영 실패는 저장을 되돌리지 않는다. 앱 재시작의 전체 재생성으로 복구된다
+        return detail, False
+    return detail, True
 
 
 def get_citation_text(citation: Citation) -> str:
