@@ -10,6 +10,10 @@
       출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가가 맡는다.
     - 검증을 통과하지 못한 답은 보여 주지 않는다. 이 모듈은 통과 여부만 알려 주고, 실패를 `DependencyError`로
       올리는 일은 `pipeline`이 맡는다(spec §2.6).
+    - `passes_guidance_check`는 `answer.verdict`가 `answered`일 때만 의미가 있다. `pipeline`은 `answered`가
+      아니면(근거 부족·적용 대상 아님) 이 함수를 부르지 않고 그 `Answer`를 그대로 돌려준다(spec §2.10의
+      `held`). `answered`인데 이 함수가 `False`면 `pipeline`이 `DependencyError`로 올려 `generation_failed`로
+      접수한다.
     - 모델은 `set_chat_model`로 받는다(temperature=0). 모듈을 import할 때 API에 접속하지 않는다.
     - 검색·DB에는 접근하지 않는다.
 
@@ -21,6 +25,8 @@
 # 타입 표시를 "글자 그대로" 나중에 읽게 한다. 아직 만들어지지 않은 타입 이름도 적을 수 있다.
 from __future__ import annotations
 
+# 꺾쇠·따옴표 같은 특수 글자를 안전한 글자로 바꾸는 도구를 가져온다.
+import html
 # 오류가 났을 때 기록(로그)을 남기는 도구를 가져온다.
 import logging
 # 글자 패턴을 찾고 바꾸는 도구(정규식)를 가져온다.
@@ -80,6 +86,7 @@ def set_chat_model(chat_model: BaseChatModel) -> None:
     _chat_model = chat_model
 
 
+    #고객 안내 답변 만들기 (생성)
 def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer:
     """고객 안내 답변을 생성한다.
 
@@ -120,7 +127,7 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
     # 고객용 역할 지시 + 위에서 만든 질문글을 AI에게 보내고, 받은 답을 그대로 돌려준다.
     return _invoke([SystemMessage(content=prompts.CUSTOMER_SYSTEM), HumanMessage(content=human)])
 
-
+#엔지니어 안내 답변 만들기 (생성)
 # 엔지니어 답변을 만드는 함수의 시작. 받는 재료가 많아서 줄을 나눠 적었다.
 def generate_engineer_answer(
     context: CaseContext, hits: list[SearchHit], request: ChatRequest
@@ -164,7 +171,7 @@ def generate_engineer_answer(
     # 엔지니어용 역할 지시 + 위에서 만든 질문글을 AI에게 보내고, 받은 답을 그대로 돌려준다.
     return _invoke([SystemMessage(content=prompts.ENGINEER_SYSTEM), HumanMessage(content=human)])
 
-
+    #답변 검사 (보여 줘도 되는지 판단)
 def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool:
     """고객 안내의 인용과 안전 문구를 검사한다.
 
@@ -177,8 +184,13 @@ def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: Err
         error_code: 신고한 에러코드. 필수 안전 문구 목록을 읽는다.
 
     Returns:
-        bool: 모두 통과하면 `True`. 하나라도 어긋나면 `False`이며, 이때는 가이드를 만들지 못한 것으로 보아
-            엔지니어 처리(`generation_failed`)로 접수한다.
+        bool: 모두 통과하면 `True`. 하나라도 어긋나면 `False`다.
+
+            주의: 이 함수는 `answer.verdict`가 `answered`인 `Answer`에만 쓴다고 가정한다. `answered`가
+            아닌 `Answer`(근거 부족·적용 대상 아님)를 넣으면 `_is_answered` 검사 때문에 역시 `False`가
+            나오지만, 그 경우는 `generation_failed`가 아니라 `held`다(spec §2.10). `verdict`가
+            `answered`가 아닌지는 호출 전에 `pipeline`이 먼저 가려 `held`로 처리하고, 이 함수는 그 뒤
+            `answered`인 `Answer`에만 호출해 그 결과를 `generation_failed` 여부로 쓴다.
     """
     # 고객 안내는 절차를 알려 주는 것이 목적이므로 answered 이외의 판정은 가이드로 쓸 수 없다.
     # "답했음" 상태가 아니거나, 단계가 하나도 없으면 안내로 쓸 수 없다.
@@ -284,11 +296,12 @@ def _contains_all_safety_rules(answer: Answer, rules: list[str]) -> bool:
     return all(_collapse_whitespace(rule) in haystack for rule in rules if rule.strip())
 
 
+
+
 def _enum_value(member: object) -> object:
     """열거형이면 값을, 문자열이면 그대로 돌려준다(멤버 이름에 의존하지 않기 위함)."""
     # .value가 있으면 그 값을, 없으면 받은 것을 그대로 돌려준다.
     return getattr(member, "value", member)
-
 
 def _is_answered(answer: Answer) -> bool:
     # 답변 상태가 "answered"(답했음)인지 True/False로 알려 준다.
@@ -302,14 +315,15 @@ def _collapse_whitespace(text: str) -> str:
 
 
 def _format_memo_for_prompt (memo: str | None) -> str:
-    """고객이 쓴 메모를 프롬프트에 넣기 좋게 다듬는다. 길이를 자르고 <memo> 태그를 벗어나는 글자를 없앤다."""
+    """고객이 쓴 메모를 프롬프트에 넣기 좋게 다듬는다. 길이를 자르고 꺾쇠를 무해한 글자로 바꾼다."""
     # 메모가 없거나 공백뿐이라면
     if not memo or not memo.strip():
         # "(없음)"을 돌려준다.
         return prompts.NO_MEMO
-    # <memo> 또는 </memo> 글자를 지운다. (고객이 태그를 닫고 빠져나가는 것을 막는다)
-    cleaned = re.sub(r"</?\s*memo\s*>", "", memo, flags=re.IGNORECASE).strip()
-    # 500글자까지만 자른다. 다 지워져서 비었다면 "(없음)"을 돌려준다.
+    # "<" 와 ">" 를 아예 다른 글자로 바꿔서 빠져나가는 메모 방지
+    cleaned = memo.replace("<", "&lt;").replace(">", "&gt;").strip()
+    # 글자 수가 너무 많으면 앞에서부터 2000글자만 쓴다.
+    #다 지워져서 비었다면 "(없음)"을 돌려준다.
     return cleaned[:_MAX_MEMO_CHARS] or prompts.NO_MEMO
 
 
@@ -318,17 +332,24 @@ def _bullet_lines(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def _escape_tag_text(text: str) -> str:
+    """`<evidence>` 태그의 속성값·본문에 안전하게 넣도록 꺾쇠·따옴표 같은 글자를 바꾼다."""
+    # &, <, >, ", ' 를 모두 안전한 글자로 바꾼다. (속성값·본문 양쪽에 다 써도 안전하다)
+    return html.escape(text, quote=True)
+
+
 def _format_evidence(hits: list[SearchHit]) -> str:
     """근거를 모델이 그대로 옮겨 쓸 수 있도록 인용 식별자와 원문을 나란히 적는다."""
     # 근거가 하나도 없다면
     if not hits:
         # "(없음)"을 돌려준다.
         return prompts.NO_EVIDENCE
-    # 근거를 하나씩 "이름표 + 원문" 모양의 글로 바꿔서 목록으로 만든다.
+    # 근거를 안전한 <evidence> 태그와 방패(_escape_tag_text)로 감싸서 만든다!
     blocks = [
-        # 이름표(종류, 번호, 위치)를 괄호 안에 적고, 줄을 바꿔서 원문을 붙인다.
-        f"(kind={hit.kind.value} | ref_id={hit.ref_id} | locator={hit.locator})\n{hit.text}"
-        # 받은 근거들을 하나씩 돌면서 만든다.
+        f'<evidence kind="{_escape_tag_text(str(hit.kind.value))}" '
+        f'ref_id="{_escape_tag_text(str(hit.ref_id))}" '
+        f'locator="{_escape_tag_text(str(hit.locator))}">\n'
+        f"{_escape_tag_text(hit.text)}\n</evidence>"
         for hit in hits
     ]
     # 근거와 근거 사이에 빈 줄을 하나 두고 이어 붙인다.
