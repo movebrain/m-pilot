@@ -215,8 +215,8 @@ def test_생성기가_보류를_돌려주면_검증_없이_그대로_돌려준�
 
 @pytest.mark.parametrize("hold", [
     Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[STEP], notice="보류"),
-    Answer.model_construct(verdict=Verdict.NOT_APPLICABLE, steps=[], notice=None),
-    Answer.model_construct(verdict=Verdict.NOT_APPLICABLE, steps=[], notice="  "),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=None),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="  "),
 ])
 def test_보류_판정이_보류_모양이_아니면_DependencyError(fakes, hold):
     fakes.generated = hold
@@ -273,8 +273,8 @@ def test_안내_생성기가_보류를_돌려주면_검증_없이_그대로_돌�
 
 @pytest.mark.parametrize("hold", [
     Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[STEP], notice="보류"),
-    Answer.model_construct(verdict=Verdict.NOT_APPLICABLE, steps=[], notice=None),
-    Answer.model_construct(verdict=Verdict.NOT_APPLICABLE, steps=[], notice="  "),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=None),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="  "),
 ])
 def test_안내_보류_판정이_보류_모양이_아니면_DependencyError(fakes, hold):
     fakes.guidance = hold

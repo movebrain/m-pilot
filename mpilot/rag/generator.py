@@ -236,9 +236,16 @@ def _citations_valid(answer: Answer, hits: list[SearchHit], equipment: Equipment
                 if hit.kind == citation.kind and hit.ref_id == citation.ref_id:
                     found = hit
             # 화면에는 인용의 locator가 출처로 보이므로 근거의 locator와 같아야 한다.
-            if found is None or found.equipment != equipment or found.locator != citation.locator:
+            if found is None or found.equipment != equipment or not _same_locator(found.locator, citation.locator):
                 return False
     return True
+
+
+def _same_locator(source: str, cited: str) -> bool:
+    """인용의 locator가 근거의 locator와 같은지 본다. 공백 차이와 프롬프트의 이스케이프 형태는 같은 것으로 본다."""
+    # 모델은 프롬프트에 이스케이프되어 들어간 locator를 보고 베끼므로 원본·이스케이프 둘 다 받아 준다.
+    cited = _collapse_whitespace(cited)
+    return cited in (_collapse_whitespace(source), _collapse_whitespace(_escape_tag_text(source)))
 
 
 def _contains_all_safety_rules(answer: Answer, rules: list[str]) -> bool:
