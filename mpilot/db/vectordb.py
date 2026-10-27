@@ -136,7 +136,7 @@ def _make_doc_id(prefix: str, *parts: object) -> str:
     return _ID_SEP.join([prefix, *texts])
 
 
-def _error_document(code: ErrorCode) -> tuple[str, Document]:
+def _build_error_document(code: ErrorCode) -> tuple[str, Document]:
     """에러코드 표 한 행을 `manual` 컬렉션 문서로 만든다(ID `error:<equipment>:<code>`).
 
     Args:
@@ -174,7 +174,7 @@ def _error_document(code: ErrorCode) -> tuple[str, Document]:
     return doc_id, Document(page_content=text, metadata=metadata, id=doc_id)
 
 
-def _manual_document(chunk: Chunk) -> tuple[str, Document]:
+def _build_manual_document(chunk: Chunk) -> tuple[str, Document]:
     """매뉴얼 청크 하나를 `manual` 컬렉션 문서로 만든다(ID `manual:<manual_id>:<page>:<chunk_no>`).
 
     본문은 청크 원문 그대로다. 인용 원문 확인 때 같은 글자를 보여 줘야 하므로 바꾸지 않는다.
@@ -203,7 +203,7 @@ def _manual_document(chunk: Chunk) -> tuple[str, Document]:
     return doc_id, Document(page_content=chunk.text, metadata=metadata, id=doc_id)
 
 
-def _history_document(case: CaseDetail) -> tuple[str, Document]:
+def _build_history_document(case: CaseDetail) -> tuple[str, Document]:
     """확정 현장 조치 한 건을 `history` 컬렉션 문서로 만든다(ID `history:<case_id>`).
 
     본문은 설비·코드·증상 메모와 확정된 원인·조치·결과다(spec §3.4). 셀프 가이드·대화는 넣지 않는다.
@@ -285,7 +285,7 @@ def index_history(case: CaseDetail) -> None:
         ValidationError: `resolution`이 없거나 셀프 가이드 건일 때.
         DependencyError: 임베딩 생성이나 저장소 쓰기에 실패했을 때.
     """
-    doc_id, doc = _history_document(case)
+    doc_id, doc = _build_history_document(case)
     _write_documents(get_store(CitationKind.HISTORY), {doc_id: doc}, "이력")
 
 
@@ -315,7 +315,7 @@ def rebuild_search_index(
     """
     # 1) 문서를 모두 먼저 만들고 검증한다. 검증에 실패하면 기존 색인을 지우지 않고 멈춘다.
     manual_docs: dict[str, Document] = {}
-    for doc_id, doc in [_error_document(c) for c in codes] + [_manual_document(c) for c in chunks]:
+    for doc_id, doc in [_build_error_document(c) for c in codes] + [_build_manual_document(c) for c in chunks]:
         if doc_id in manual_docs:
             # 같은 ID는 같은 원문이어야 한다(spec §3.4). 겹치면 파싱·코드 표 오류다.
             raise ValidationError(f"manual 문서 ID가 겹칩니다: {doc_id}")
@@ -335,7 +335,7 @@ def rebuild_search_index(
         raise ValidationError("허용 절차 ID가 올바르지 않습니다: " + "; ".join(sorted(problems)))
 
     # history는 case_id로 중복을 없앤다. 같은 case_id면 나중 것이 남는다(DB 정본과 같은 내용).
-    history_docs: dict[str, Document] = dict(_history_document(c) for c in histories)
+    history_docs: dict[str, Document] = dict(_build_history_document(c) for c in histories)
 
     # 2) 두 컬렉션을 비우고(삭제 후 다시 만들기) 새로 채운다. 원자 교체는 없다.
     manual_store = get_store(CitationKind.MANUAL)
