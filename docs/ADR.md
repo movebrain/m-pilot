@@ -13,4 +13,3 @@
 - 내용: 신고 작성 화면의 사진 업로드 영역 삭제. 고객 신고 상세의 사진 영역, 엔지니어 대화창의 '사진 첨부' 링크 삭제. PhotoUpload, photo_path 필드(CaseInput·ServiceCase·CustomerCaseResult), storage/photos 저장·삭제 함수, 사진 형식·용량 검증(jpg/png, 5MB) 삭제
 - 영향받는 spec 절: §?.? (신고 입력), §?.? (데이터 모델), §?.? (화면: 고객 신고 작성·상세, 엔지니어 대화창), §4 제약 (파일 형식·용량)
 - 대체: 증상은 증상 메모(텍스트)로만 전달
-

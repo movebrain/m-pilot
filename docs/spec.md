@@ -396,10 +396,10 @@ scripts ──→ config, db/rdb, models
 
 #### 이력 취급
 
-| 구분                           | 보존                                                                                   | 검색 근거(`history` 인덱스)                          | 뜻                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- |
-| 셀프 가이드(`guidance_answer`) | 내용·단계·출처를 `service_cases.guidance_answer`에 저장한다. 조회 이력으로만 보여 준다 | 쓰지 않는다.                                         | 안내 제공의 종료이지 실제 해결 확인이 아니다 |
-| 현장 조치(`resolutions`)       | 원인·조치·결과를 저장한다. 이후 수정하지 않는다                                        | 확정 직후 반영하고 이후 같은 증상의 검색 근거가 된다 | 엔지니어가 확정한 현장 조치                  |
+| 구분                           | 보존                                                                                     | 검색 근거(`history` 인덱스)                          | 뜻                                           |
+| ------------------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- |
+| 셀프 가이드(`guidance_answer`) | 내용·단계·출처를 `service_cases.self_guide_answer`에 저장한다. 조회 이력으로만 보여 준다 | 쓰지 않는다.                                         | 안내 제공의 종료이지 실제 해결 확인이 아니다 |
+| 현장 조치(`resolutions`)       | 원인·조치·결과를 저장한다. 이후 수정하지 않는다                                          | 확정 직후 반영하고 이후 같은 증상의 검색 근거가 된다 | 엔지니어가 확정한 현장 조치                  |
 
 ---
 
@@ -407,15 +407,15 @@ scripts ──→ config, db/rdb, models
 
 ### 3.1 읽는 법과 용어
 
-| 용어        | 뜻                                                                                                                           |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 신고 건     | 고객이 접수한 장애 신고 한 건(`service_cases` 한 행). 시드 이력도 같은 형식이다                                              |
-| 셀프 가이드 | 접수 때 한 번 만들어 고객에게 보여 주는 조치 안내(`service_cases.guidance_answer`). 경로 `self_guide`, 화면 라벨 ‘고객 안내’ |
-| 기술지원    | 엔지니어가 처리하는 경로 `support`                                                                                           |
-| 확정        | 엔지니어가 조치 결과를 등록해 신고를 ‘조치 완료’로 정하는 일. 등록과 완료 처리는 한 동작이다                                 |
-| 보류        | 조치 단계 없이 ‘근거 부족’ 또는 ‘적용 대상 아님’ 안내만 내는 답변 판정                                                       |
-| 시드        | 초기 검색 자료로 적재하는 가상 서비스 이력 200건                                                                             |
-| 원자료      | `data/manuals/`, `data/raw/`의 원본 파일                                                                                     |
+| 용어        | 뜻                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 신고 건     | 고객이 접수한 장애 신고 한 건(`service_cases` 한 행). 시드 이력도 같은 형식이다                                                |
+| 셀프 가이드 | 접수 때 한 번 만들어 고객에게 보여 주는 조치 안내(`service_cases.self_guide_answer`). 경로 `self_guide`, 화면 라벨 ‘고객 안내’ |
+| 기술지원    | 엔지니어가 처리하는 경로 `support`                                                                                             |
+| 확정        | 엔지니어가 조치 결과를 등록해 신고를 ‘조치 완료’로 정하는 일. 등록과 완료 처리는 한 동작이다                                   |
+| 보류        | 조치 단계 없이 ‘근거 부족’ 또는 ‘적용 대상 아님’ 안내만 내는 답변 판정                                                         |
+| 시드        | 초기 검색 자료로 적재하는 가상 서비스 이력 200건                                                                               |
+| 원자료      | `data/manuals/`, `data/raw/`의 원본 파일                                                                                       |
 
 ### 3.3 데이터 모델
 
@@ -434,6 +434,10 @@ erDiagram
     text case_id PK
     text equipment FK
     text code FK
+    text customer_memo
+    text self_guide_answer
+    datetime created_at
+    datetime completed_at
   }
   resolutions {
     text case_id PK, FK
@@ -441,11 +445,14 @@ erDiagram
   chat_turns {
     integer turn_id PK
     text case_id FK
+    datetime created_at
   }
 ```
 
 - `service_cases`는 `(equipment, code)` 복합 외래키로 `error_codes`를 참조한다. 신고 한 건에는 설비·에러코드가 하나뿐이다.
 - `resolutions.case_id`는 `service_cases`의 PK이자 FK다. 현장 조치로 완료된 신고(`support`)에만 행이 있고, 셀프 가이드 건에는 없다.
+- 시각 컬럼(`service_cases.created_at`·`completed_at`, `chat_turns.created_at`)은 DATETIME이다. DATETIME에는 UTC 기준, 시간대 없는 값으로 저장하고, 꺼낼 때 UTC 시간대를 붙여 datetime으로 돌려준다.
+- DB 컬럼 `customer_memo`·`self_guide_answer`는 모델 필드 `memo`·`guidance_answer`(`CaseInput`·`ServiceCase`·`CustomerCaseResult`, §2.4.2)에 대응하며 `rdb`가 변환한다. 이 절 밖에서 `memo`·`guidance_answer`는 모델 필드를 가리킨다.
 
 #### error_codes
 
@@ -466,19 +473,19 @@ erDiagram
 
 #### service_cases
 
-| 컬럼              | 타입        | NULL     | 제약                           | 설명                                                                                   |
-| ----------------- | ----------- | -------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `case_id`         | VARCHAR(64) | NOT NULL | [DB] PK                        | 접수번호. 신규는 `SC-<UUID 앞 8자리>`(PK 충돌은 재시도 없이 오류), 시드는 원본 ID 보존 |
-| `equipment`       | VARCHAR(32) | NOT NULL | [DB] FK → `error_codes`        | 설비                                                                                   |
-| `code`            | VARCHAR(32) | NOT NULL | [DB] FK → `error_codes`        | 에러코드. 유사 코드로 대체하지 않는다                                                  |
-| `memo`            | TEXT        | NULL     | [앱] ≤ 2,000자                 | 증상 메모(선택)                                                                        |
-| `source`          | VARCHAR(16) | NOT NULL | [앱] `Source`                  | 시드 / 신고                                                                            |
-| `status`          | VARCHAR(16) | NOT NULL | [앱] `CaseStatus`              | 처리 상태                                                                              |
-| `route`           | VARCHAR(16) | NOT NULL | [앱] `Route`                   | 처리 경로                                                                              |
-| `guide_failure`   | VARCHAR(32) | NULL     | [앱] `GuideFailure`            | 셀프 가이드 후보였으나 엔지니어 접수된 사유. 그 밖에는 NULL                            |
-| `guidance_answer` | TEXT        | NULL     | [앱] `Answer`, 판정 `answered` | 셀프 가이드 내용·단계·출처(JSON 문자열). `route='self_guide'`에서만 값이 있다          |
-| `created_at`      | VARCHAR(32) | NOT NULL |                                | 신고 시각                                                                              |
-| `completed_at`    | VARCHAR(32) | NULL     | [앱] ≥ `created_at`            | 완료 시각                                                                              |
+| 컬럼                | 타입        | NULL     | 제약                           | 설명                                                                                   |
+| ------------------- | ----------- | -------- | ------------------------------ | -------------------------------------------------------------------------------------- |
+| `case_id`           | VARCHAR(64) | NOT NULL | [DB] PK                        | 접수번호. 신규는 `SC-<UUID 앞 8자리>`(PK 충돌은 재시도 없이 오류), 시드는 원본 ID 보존 |
+| `equipment`         | VARCHAR(32) | NOT NULL | [DB] FK → `error_codes`        | 설비                                                                                   |
+| `code`              | VARCHAR(32) | NOT NULL | [DB] FK → `error_codes`        | 에러코드. 유사 코드로 대체하지 않는다                                                  |
+| `customer_memo`     | TEXT        | NULL     | [앱] ≤ 2,000자                 | 증상 메모(선택)                                                                        |
+| `source`            | VARCHAR(16) | NOT NULL | [앱] `Source`                  | 시드 / 신고                                                                            |
+| `status`            | VARCHAR(16) | NOT NULL | [앱] `CaseStatus`              | 처리 상태                                                                              |
+| `route`             | VARCHAR(16) | NOT NULL | [앱] `Route`                   | 처리 경로                                                                              |
+| `guide_failure`     | VARCHAR(32) | NULL     | [앱] `GuideFailure`            | 셀프 가이드 후보였으나 엔지니어 접수된 사유. 그 밖에는 NULL                            |
+| `self_guide_answer` | TEXT        | NULL     | [앱] `Answer`, 판정 `answered` | 셀프 가이드 내용·단계·출처(JSON 문자열). `route='self_guide'`에서만 값이 있다          |
+| `created_at`        | DATETIME    | NOT NULL |                                | 신고 시각(UTC)                                                                         |
+| `completed_at`      | DATETIME    | NULL     | [앱] ≥ `created_at`            | 완료 시각(UTC)                                                                         |
 
 #### resolutions
 
@@ -497,7 +504,7 @@ erDiagram
 | `case_id`    | VARCHAR(64) | NOT NULL | [DB] FK → `service_cases`        | 접수번호                   |
 | `question`   | TEXT        | NOT NULL | [앱] 앞뒤 공백 제거 후 1~2,000자 | 질문                       |
 | `answer`     | TEXT        | NOT NULL | [앱] `Answer`                    | 답변. 보류 판정도 저장한다 |
-| `created_at` | VARCHAR(32) | NOT NULL |                                  | 저장 시각                  |
+| `created_at` | DATETIME    | NOT NULL |                                  | 저장 시각(UTC)             |
 
 #### Answer 구조
 
@@ -547,13 +554,13 @@ erDiagram
 | --------------------------- | ------------------------------------------------------------ |
 | `case_id`                   | `service_cases.case_id`(원본 ID 보존)                        |
 | `equipment`, `code`         | `service_cases.equipment`, `code`(`error_codes`에 있어야 함) |
-| `memo`                      | `service_cases.memo`                                         |
+| `memo`                      | `service_cases.customer_memo`                                |
 | `cause`, `action`, `result` | `resolutions.cause`, `action`, `result`                      |
 | `created_at`                | `service_cases.created_at`                                   |
 | `completed_at`              | `service_cases.completed_at`                                 |
 
 - 시간은 ISO 8601(시간대 포함)이고 UTC로 바꿔 적재한다. 완료 시각은 신고 시각보다 빠를 수 없다.
-- 고정값: `source=seed`, `route=support`, `guide_failure=NULL`, `guidance_answer=NULL`, `status=completed`.
+- 고정값: `source=seed`, `route=support`, `guide_failure=NULL`, `self_guide_answer=NULL`, `status=completed`.
 - 설비당 50건·총 200건, 코드·필수값 오류면 적재를 중단한다. `init_db`는 실행할 때마다 DB를 비우고 다시 만든다(모든 테이블을 지운 뒤 만든다). 시연 중 다시 실행하면 새로 확정한 이력이 사라지므로 시연 전에 한 번만 실행한다. 색인은 앱을 다시 시작할 때 DB에서 새로 만든다.
 
 #### 검색 문서(Chroma)

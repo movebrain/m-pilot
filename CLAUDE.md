@@ -90,4 +90,4 @@ python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ## 8. 아직 어긋나 있는 곳 (PR #26 리뷰 포인트, 정리되면 지운다)
 
 - 위 spec 절 번호는 이 PR의 개정본 기준이다. 이 PR이 머지되기 전까지 `develop`의 spec은 개정 전 `src/` 구조다.
-- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `EVIDENCE_THRESHOLD`는 사람이 정할 때까지 비워 두며, 비어 있으면 앱이 시작되지 않는다.
+- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `.env.example`의 `EVIDENCE_THRESHOLD=0.5`는 평가(#49) 전에 임의로 둔 임시 값이며 사람이 정한다. 비어 있거나 음수·NaN·무한대면 앱이 시작되지 않는다.
