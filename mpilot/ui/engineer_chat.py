@@ -19,21 +19,36 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import gradio as gr
 
-if TYPE_CHECKING:
-    import gradio as gr
+from mpilot.ui import common
+
+SCREEN = common.SCREEN_ENGINEER_CHAT
 
 
 def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None:
     """신고 정보와 대화를 보여 주고 질문 전송·출처 원문 확인을 처리한다.
 
     Args:
-        role: 로그인한 역할(`Role` 값)을 담은 공유 상태. 엔지니어 역할이 아니면 이 화면을 보이지 않는다.
+        role: 앱이 고정한 역할(`engineer`)을 담은 공유 상태. 엔지니어 앱에서만 이 화면을 조립한다.
         case_id: 선택된 신고의 접수번호를 담은 공유 상태. 대화할 신고의 접수번호. 이 화면은 읽기만 한다.
         screen: 지금 보여 줄 화면을 가리키는 공유 상태. 화면 전환 그림의 상태 이름과 대응한다. 조치 결과 작성은 이력 저장, 뒤로는 엔지니어 대시보드로 바꾼다.
 
     Returns:
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
-    ...
+    with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
+        gr.Markdown("## 장애 분석 대화")
+        title = gr.Markdown()
+        with gr.Row():
+            back_btn = gr.Button("뒤로")
+            resolve_btn = gr.Button("조치 결과 작성", variant="primary")
+
+    def on_screen_change(current: str, selected: str | None):
+        if not common.is_screen_visible(current, SCREEN):
+            return gr.Column(visible=False), gr.skip()
+        return gr.Column(visible=True), f"접수번호: {selected or '-'}"
+
+    screen.change(on_screen_change, inputs=[screen, case_id], outputs=[column, title])
+    back_btn.click(lambda: common.SCREEN_ENGINEER_LIST, outputs=screen)
+    resolve_btn.click(lambda: common.SCREEN_ENGINEER_RESOLVE, outputs=screen)

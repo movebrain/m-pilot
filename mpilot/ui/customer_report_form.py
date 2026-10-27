@@ -18,21 +18,31 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import gradio as gr
 
-if TYPE_CHECKING:
-    import gradio as gr
+from mpilot.ui import common
+
+SCREEN = common.SCREEN_CUSTOMER_FORM
 
 
 def build_customer_report_form_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None:
     """설비·에러코드·증상 메모를 입력받아 신고를 제출한다.
 
     Args:
-        role: 로그인한 역할(`Role` 값)을 담은 공유 상태. 고객 역할이 아니면 이 화면을 보이지 않는다.
+        role: 앱이 고정한 역할(`customer`)을 담은 공유 상태. 고객 앱에서만 이 화면을 조립한다.
         case_id: 선택된 신고의 접수번호를 담은 공유 상태. 제출에 성공하면 새 접수번호로 채운다.
         screen: 지금 보여 줄 화면을 가리키는 공유 상태. 화면 전환 그림의 상태 이름과 대응한다. 제출 성공은 고객 신고 상세, 뒤로는 고객 신고 목록으로 바꾼다.
 
     Returns:
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
-    ...
+    with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
+        gr.Markdown("## 고객 신고 작성")
+        back_btn = gr.Button("뒤로")
+
+    screen.change(
+        lambda current: gr.Column(visible=common.is_screen_visible(current, SCREEN)),
+        inputs=screen,
+        outputs=column,
+    )
+    back_btn.click(lambda: common.SCREEN_CUSTOMER_LIST, outputs=screen)
