@@ -105,7 +105,6 @@ ROUTE_LABELS: dict[Route, str] = {
 VERDICT_LABELS: dict[Verdict, str] = {
     Verdict.ANSWERED: "답변",
     Verdict.INSUFFICIENT_EVIDENCE: "근거 부족",
-    Verdict.NOT_APPLICABLE: "적용 대상 아님",
 }
 
 CITATION_KIND_LABELS: dict[CitationKind, str] = {
@@ -116,7 +115,6 @@ CITATION_KIND_LABELS: dict[CitationKind, str] = {
 # 보류 판정인데 notice가 비어 있을 때 대신 보여 줄 문구.
 _DEFAULT_NOTICES: dict[Verdict, str] = {
     Verdict.INSUFFICIENT_EVIDENCE: "매뉴얼과 서비스 이력에서 답할 근거를 찾지 못했습니다. 조치는 추측하지 않습니다.",
-    Verdict.NOT_APPLICABLE: "지원 대상 설비(Mini Loader, SRM, AGV, RTV) 밖의 질문이라 답할 수 없습니다.",
 }
 
 _KST = timezone(timedelta(hours=9))
