@@ -22,9 +22,10 @@
 
 from __future__ import annotations
 
-from mpilot.models import Answer, CaseContext, ChatRequest, SearchSettings, ValidationError, Verdict
+from mpilot.models import Answer, CaseContext, ChatRequest, DependencyError, SearchSettings, ValidationError, Verdict
+from mpilot.rag import generator, retriever
 
-#범위 밖 설비 키워드와 4종 설비 별칭(값은 예시, 팀 확정 필요)
+# 범위 밖 설비 키워드와 4종 설비 별칭(값은 예시, 팀 확정 필요)
 OUT_OF_SCOPE_EQUIPMENT_KEYWORDS: tuple[str, ...] = ("컨베이어", "지게차", "엘리베이터")
 
 # 4종 설비 별칭(소문자로 비교한다). 값은 예시이며 팀 확정이 필요하다.
@@ -159,4 +160,16 @@ def run_engineer_answer(
     if _is_out_of_scope(question, equipment):
         return _make_hold_answer(Verdict.NOT_APPLICABLE, "대상 설비 밖의 질문이라 답할 수 없습니다.")
 
-    raise NotImplementedError("PR2에서 구현: 근거 확보 → 생성 → 검증")
+    manual_hits = retriever.search_manual(equipment, question, settings.manual_k)
+    history_hits = retriever.search_history(equipment, question, settings.history_k)
+    hits = manual_hits + history_hits
+    if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
+        return _make_hold_answer(
+            Verdict.INSUFFICIENT_EVIDENCE, "근거가 부족해 조치를 제시할 수 없습니다."
+        )
+
+    answer = generator.generate_engineer_answer(context, hits, request)
+    is_answered = answer.verdict == Verdict.ANSWERED
+    if is_answered and not generator.passes_answer_check(answer, hits, equipment):
+        raise DependencyError("답변의 인용 검증에 실패했습니다.")
+    return answer
