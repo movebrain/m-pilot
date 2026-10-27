@@ -181,6 +181,17 @@ def test_store_failure_becomes_dependency_error(install_store, search):
 
 
 @pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
+def test_none_distance_becomes_dependency_error(install_store, search):
+    install_store(
+        manual=FakeStore([(manual_body(Equipment.SRM, 1), None), (manual_body(Equipment.SRM, 2), 0.2)]),
+        hist=FakeStore([(history(Equipment.SRM, "C-1", "S115"), None), (history(Equipment.SRM, "C-2", "S115"), 0.2)]),
+    )
+    with pytest.raises(DependencyError) as info:
+        search(Equipment.SRM, NAME, 3)
+    assert isinstance(info.value.__cause__, TypeError)
+
+
+@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
 def test_get_store_dependency_error_propagates(monkeypatch, search):
     error = DependencyError("connect 전에 호출했다")
 

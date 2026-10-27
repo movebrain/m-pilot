@@ -27,7 +27,6 @@ from mpilot.models import (
     DependencyError,
     Equipment,
     ErrorCode,
-    MpilotError,
     NotFoundError,
     SearchHit,
     ValidationError,
@@ -53,7 +52,7 @@ def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
         ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
         DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    return _search_scoped(CitationKind.MANUAL, equipment, query, k)
+    return _search_by_equipment(CitationKind.MANUAL, equipment, query, k)
 
 
 def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
@@ -71,10 +70,10 @@ def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
         ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
         DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    return _search_scoped(CitationKind.HISTORY, equipment, query, k)
+    return _search_by_equipment(CitationKind.HISTORY, equipment, query, k)
 
 
-def _search_scoped(
+def _search_by_equipment(
     kind: CitationKind, equipment: Equipment, query: str, k: int
 ) -> list[SearchHit]:
     """설비 필터를 건 유사도 검색의 공통부. `search_manual`과 `search_history`가 쓴다.
@@ -89,25 +88,23 @@ def _search_scoped(
         list[SearchHit]: 필터에 맞는 문서를 `distance` 오름차순으로 정렬한 근거. 없으면 빈 목록이다.
 
     Raises:
-        ValidationError: 질의가 비었거나 공백뿐이거나 `k`가 1보다 작을 때.
-        DependencyError: 저장소 검색이나 문서 변환에 실패했을 때. 저장소가 낸 `MpilotError`
-            (예: `connect` 전 호출의 `DependencyError`)는 변환 없이 그대로 올린다.
+        ValidationError: 질의가 비었거나 공백뿐이거나 `k`가 1보다 작을 때. `get_store`가 낸 것은 그대로 올린다.
+        DependencyError: 저장소 검색에 실패했거나 문서 메타데이터가 계약과 다를 때. `get_store`가 낸 것
+            (예: `connect` 전 호출)은 변환 없이 그대로 올린다.
     """
     if not query.strip():
         raise ValidationError("검색 질의가 비어 있다")
     if k < 1:
         raise ValidationError(f"k는 1 이상이어야 한다: {k}")
+    store = vectordb.get_store(kind)  # get_store의 오류는 계약된 예외라 변환하지 않는다
     try:
-        store = vectordb.get_store(kind)
         scored = store.similarity_search_with_score(
             query, k=k, filter={"equipment": equipment.value}
         )
-        hits = [_to_hit(doc, distance) for doc, distance in scored]
-        return sorted(hits, key=lambda hit: hit.distance)
-    except MpilotError:
-        raise
+        scored = sorted(scored, key=lambda pair: pair[1])  # 거리가 None이면 여기서 TypeError
     except Exception as e:
         raise DependencyError(f"{kind.value} 검색에 실패했다") from e
+    return [_to_hit(doc, distance) for doc, distance in scored]
 
 
 def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
