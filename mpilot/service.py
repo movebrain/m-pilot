@@ -304,7 +304,7 @@ def list_chat_turns(case_id: str) -> list[ChatTurn]:
 def send_chat_question(case_id: str, question: str) -> None:
     """엔지니어 질문에 답하고 대화를 저장한다.
 
-    저장된 대화와 함께 답변을 만들고, 보류 판정(근거 부족·적용 대상 아님)도 대화로 저장한다.
+    저장된 대화와 함께 답변을 만들고, 보류 판정(근거 부족)도 대화로 저장한다.
     첫 질문이면 신고가 `in_progress`가 된다. 답변이 `DependencyError`로 실패하면 저장하지 않는다.
 
     Args:
