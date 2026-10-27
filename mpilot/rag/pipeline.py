@@ -130,7 +130,19 @@ def run_customer_guidance(context: CaseContext) -> Answer:
         DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패일 때
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
-    raise NotImplementedError("PR3에서 구현: 허용 절차 조회 → 생성 → 검증")
+    error_code = context.error_code
+    hits = retriever.fetch_customer_procedures(error_code)
+    if not hits:
+        return _make_hold_answer(
+            Verdict.INSUFFICIENT_EVIDENCE,
+            "고객이 직접 조치할 수 있는 절차가 없어 엔지니어가 접수합니다.",
+        )
+
+    answer = generator.generate_customer_guidance(context, hits)
+    is_answered = answer.verdict == Verdict.ANSWERED
+    if is_answered and not generator.passes_guidance_check(answer, hits, error_code):
+        raise DependencyError("고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.")  
+    return answer
 
 
 def run_engineer_answer(

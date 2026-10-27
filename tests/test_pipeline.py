@@ -1,4 +1,4 @@
-"""pipeline 테스트: 입력 검증, 범위 확인, 근거 확보·생성·검증 연결, 보류 답변 모양."""
+"""pipeline 테스트: 입력 검증, 범위 확인, 근거 확보·생성·검증 연결, 고객 안내, 보류 답변 모양."""
 
 from types import SimpleNamespace
 
@@ -34,6 +34,10 @@ def ask(question: str, settings: SearchSettings | None = None, equipment: str = 
     )
 
 
+def ask_customer(equipment: str = "SRM"):
+    return pipeline.run_customer_guidance(make_context(equipment))
+
+
 @pytest.fixture(autouse=True)
 def fakes(monkeypatch):
     """retriever와 generator를 가짜로 바꿔, pipeline이 부품을 잇는 방식만 시험한다.
@@ -41,6 +45,7 @@ def fakes(monkeypatch):
     시험에서 `fakes.enough = False`처럼 값을 바꿔 상황을 만든다.
     """
     fake = SimpleNamespace(
+        # 엔지니어 답변
         enough=True,  # 근거가 충분한가
         check_ok=True,  # 인용 검증을 통과하는가
         search_error=None,  # 검색 장애로 던질 예외
@@ -49,6 +54,15 @@ def fakes(monkeypatch):
         searches=[],  # 검색 호출 기록
         generate_calls=0,
         check_calls=0,
+        # 고객 안내
+        procedures=["procedure-hit"],  # 허용 절차 (비우면 절차 없음)
+        guidance_check_ok=True,  # 인용·안전 문구 검증을 통과하는가
+        fetch_error=None,  # 절차 조회 장애로 던질 예외
+        guidance_error=None,  # 안내 생성 장애로 던질 예외
+        guidance=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
+        fetched=[],  # 절차 조회 기록(에러코드)
+        guidance_calls=0,
+        guidance_check_calls=0,
     )
 
     def search_manual(equipment, query, k):
@@ -71,11 +85,30 @@ def fakes(monkeypatch):
         fake.check_calls += 1
         return fake.check_ok
 
+    def fetch_customer_procedures(error_code):
+        if fake.fetch_error:
+            raise fake.fetch_error
+        fake.fetched.append(error_code.code)
+        return fake.procedures
+
+    def generate_customer_guidance(context, hits):
+        fake.guidance_calls += 1
+        if fake.guidance_error:
+            raise fake.guidance_error
+        return fake.guidance
+
+    def passes_guidance_check(answer, hits, error_code):
+        fake.guidance_check_calls += 1
+        return fake.guidance_check_ok
+
     monkeypatch.setattr(pipeline.retriever, "search_manual", search_manual)
     monkeypatch.setattr(pipeline.retriever, "search_history", search_history)
     monkeypatch.setattr(pipeline.retriever, "has_enough_evidence", lambda hits, threshold: fake.enough)
+    monkeypatch.setattr(pipeline.retriever, "fetch_customer_procedures", fetch_customer_procedures)
     monkeypatch.setattr(pipeline.generator, "generate_engineer_answer", generate_engineer_answer)
     monkeypatch.setattr(pipeline.generator, "passes_answer_check", passes_answer_check)
+    monkeypatch.setattr(pipeline.generator, "generate_customer_guidance", generate_customer_guidance)
+    monkeypatch.setattr(pipeline.generator, "passes_guidance_check", passes_guidance_check)
     return fake
 
 
@@ -132,7 +165,7 @@ def test_별칭도_인식한다():
     assert ask("스태커 크레인이 멈췄어요", equipment="SRM").verdict == Verdict.ANSWERED
 
 
-# --- 근거 확보·생성·검증 -----------------------------------------------
+# --- 엔지니어 답변: 근거 확보·생성·검증 --------------------------------
 def test_신고_설비로_검색하고_설정한_건수를_넘긴다(fakes):
     settings = SearchSettings(manual_k=4, history_k=2, evidence_threshold=0.35)
     ask("위치가 어긋나요", settings)
@@ -180,6 +213,53 @@ def test_생성_장애는_DependencyError_그대로_올라간다(fakes):
     fakes.generate_error = DependencyError("모델 장애")
     with pytest.raises(DependencyError, match="모델 장애"):
         ask("위치가 어긋나요")
+
+
+# --- 고객 안내: 절차 조회·생성·검증 ------------------------------------
+def test_신고한_에러코드의_허용_절차를_조회하고_검색은_하지_않는다(fakes):
+    ask_customer()
+    assert fakes.fetched == ["S-104"]
+    assert fakes.searches == []
+
+
+def test_허용_절차가_없으면_보류하고_생성은_부르지_않는다(fakes):
+    fakes.procedures = []
+    answer = ask_customer()
+    assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
+    assert answer.steps == []
+    assert answer.notice
+    assert fakes.guidance_calls == 0
+
+
+def test_허용_절차가_있으면_생성한_안내를_돌려준다(fakes):
+    answer = ask_customer()
+    assert answer is fakes.guidance
+    assert fakes.guidance_check_calls == 1
+
+
+def test_안내_검증에_실패하면_DependencyError(fakes):
+    fakes.guidance_check_ok = False
+    with pytest.raises(DependencyError):
+        ask_customer()
+
+
+def test_안내_생성기가_보류를_돌려주면_검증_없이_그대로_돌려준다(fakes):
+    hold = Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="보류")
+    fakes.guidance = hold
+    assert ask_customer() is hold
+    assert fakes.guidance_check_calls == 0
+
+
+def test_절차_조회_장애는_DependencyError_그대로_올라간다(fakes):
+    fakes.fetch_error = DependencyError("조회 장애")
+    with pytest.raises(DependencyError, match="조회 장애"):
+        ask_customer()
+
+
+def test_안내_생성_장애는_DependencyError_그대로_올라간다(fakes):
+    fakes.guidance_error = DependencyError("모델 장애")
+    with pytest.raises(DependencyError, match="모델 장애"):
+        ask_customer()
 
 
 # --- 보류 답변 모양 ----------------------------------------------------
