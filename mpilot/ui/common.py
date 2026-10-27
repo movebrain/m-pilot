@@ -168,20 +168,20 @@ def verdict_label(verdict: Verdict | str) -> str:
 
 
 def status_choices() -> list[tuple[str, str]]:
-    """상태 필터 드롭다운의 선택지를 만든다. 맨 앞은 '전체'다.
+    """상태 필터의 선택지를 만든다. 맨 앞은 '전체'다.
 
     Returns:
         list[tuple[str, str]]: `(라벨, 값)` 목록. '전체'의 값은 빈 문자열이다.
-            `gr.Dropdown(choices=...)`에 그대로 넣는다.
+            `gr.Radio`·`gr.Dropdown`의 `choices`에 그대로 넣는다.
     """
     return [("전체", "")] + [(label, status.value) for status, label in STATUS_LABELS.items()]
 
 
 def parse_status_filter(value: str | None) -> CaseStatus | None:
-    """상태 필터 드롭다운 값을 서비스 인자로 바꾼다.
+    """상태 필터 값을 서비스 인자로 바꾼다.
 
     Args:
-        value: 드롭다운에서 고른 값. 빈 문자열이나 `None`은 '전체'다.
+        value: 필터에서 고른 값. 빈 문자열이나 `None`은 '전체'다.
 
     Returns:
         CaseStatus | None: 고른 상태. '전체'면 `None`.
