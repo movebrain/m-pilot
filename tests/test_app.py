@@ -36,11 +36,12 @@ def test_fake_mode_skips_initialize(monkeypatch):
             called.append(("launch", server_port))
 
     monkeypatch.setattr(app, "initialize", lambda: called.append("initialize"))
+    monkeypatch.setattr(app.fake_service, "install", lambda: called.append("install"))
     monkeypatch.setattr(app, "build_app", lambda role: FakeDemo())
 
     app.main(Role.ENGINEER, 7861, argv=["--fake"])
 
-    assert called == [("launch", 7861)]
+    assert called == ["install", ("launch", 7861)]
 
 
 def test_initialize_runs_in_spec_order(monkeypatch):
@@ -74,7 +75,10 @@ def test_initialize_runs_in_spec_order(monkeypatch):
 
 
 @pytest.mark.parametrize("role", [Role.CUSTOMER, Role.ENGINEER])
-def test_build_app_assembles_role_screens(role):
+def test_build_app_assembles_role_screens(monkeypatch, role):
+    # --fake와 같은 조건으로 조립한다. 테스트가 끝나면 원래 service 함수로 되돌린다.
+    for name in app.fake_service.public_function_names(app.service):
+        monkeypatch.setattr(app.service, name, getattr(app.fake_service, name))
     demo = app.build_app(role)
     texts = [getattr(block, "value", None) for block in demo.blocks.values()]
     assert common.VIRTUAL_DATA_BANNER in texts
