@@ -91,6 +91,11 @@ def _is_out_of_scope(question: str, equipment: str) -> bool:
     )
 
 
+def _is_valid_hold(answer: Answer) -> bool:
+    """`answered`가 아닌 답변이 보류 모양(`steps=[]`, 비지 않은 `notice`)인지 확인한다."""
+    return not answer.steps and bool(answer.notice and answer.notice.strip())
+
+
 def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> str:
     """질문과 검색 설정을 검사하고, 공백을 정리한 질문을 돌려준다.
 
@@ -103,12 +108,12 @@ def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> 
 
     Raises:
         ValidationError: 질문이 비었거나 `MAX_QUESTION_LEN`자를 넘을 때,
-            또는 `manual_k`·`history_k`가 1보다 작거나 `evidence_threshold`가 0보다 작을 때.
+            또는 `manual_k`·`history_k`가 1보다 작을 때. `evidence_threshold`의 범위는 `SearchSettings`가 막는다.
     """
     question = request.question.strip()
     if not question or len(question) > MAX_QUESTION_LEN:
         raise ValidationError("질문은 공백 제외 1~2,000자여야 합니다.")
-    if settings.manual_k < 1 or settings.history_k < 1 or settings.evidence_threshold < 0:
+    if settings.manual_k < 1 or settings.history_k < 1:
         raise ValidationError("검색 설정 값이 허용 범위를 벗어났습니다.")
     return question
    
@@ -116,9 +121,9 @@ def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> 
 def run_customer_guidance(context: CaseContext) -> Answer:
     """고객 안내 처리 흐름을 실행한다.
 
-    허용 절차 직접 조회 → 생성 → (`answered`일 때만) 인용·안전 문구 검증 순으로 진행한다. 허용 절차가
+    허용 절차 직접 조회 → 생성 → 검증 순으로 진행한다. `answered`이면 인용·안전 문구를 검증한다. 허용 절차가
     없거나 생성 결과의 `verdict`가 `answered`가 아니면(근거 부족·적용 대상 아님) 추측하지 않고
-    `passes_guidance_check`를 부르지 않은 채 그 보류 `Answer`를 그대로 돌려준다.
+    `passes_guidance_check`를 부르지 않은 채, 보류 모양(`steps=[]`, `notice` 있음)만 확인해 그 `Answer`를 돌려준다.
 
     Args:
         context: 신고 맥락. 대상 에러코드의 상세(허용 절차 ID, 필수 안전 문구 포함)와 증상 메모.
@@ -129,7 +134,7 @@ def run_customer_guidance(context: CaseContext) -> Answer:
             `verdict`만 보고 엔지니어 접수(`held`)로 바꾼다.
 
     Raises:
-        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패일 때
+        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패, 보류 판정 형식 오류일 때
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
     error_code = context.error_code
@@ -141,9 +146,12 @@ def run_customer_guidance(context: CaseContext) -> Answer:
         )
 
     answer = generator.generate_customer_guidance(context, hits)
-    is_answered = answer.verdict == Verdict.ANSWERED
-    if is_answered and not generator.passes_guidance_check(answer, hits, error_code):
-        raise DependencyError("고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.")  
+    if answer.verdict != Verdict.ANSWERED:
+        if not _is_valid_hold(answer):
+            raise DependencyError("고객 안내의 보류 판정 형식 검증에 실패했습니다.")
+        return answer
+    if not generator.passes_guidance_check(answer, hits, error_code):
+        raise DependencyError("고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.")
     return answer
 
 
@@ -153,7 +161,8 @@ def run_engineer_answer(
     """엔지니어 답변 처리 흐름을 실행한다.
 
     범위 확인(대상 설비 밖이면 `not_applicable`) → 매뉴얼·이력 검색 → 근거 충분성 판단(부족하면
-    `insufficient_evidence`) → 생성 → 인용 검증 순으로 진행한다.
+    `insufficient_evidence`) → 생성 → 검증 순으로 진행한다. `answered`이면 인용을 검증하고, 아니면 보류 모양
+    (`steps=[]`, `notice` 있음)을 확인한다.
 
     Args:
         context: 신고 맥락. 신고한 에러코드로 대상 설비와 코드를 고정한다.
@@ -166,7 +175,7 @@ def run_engineer_answer(
 
     Raises:
         ValidationError: 질문이 비었거나 설정 값이 허용 범위를 벗어났을 때.
-        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용 검증 실패일 때.
+        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용 검증 실패, 보류 판정 형식 오류일 때.
     """
     question = _validate_engineer_input(request, settings)
 
@@ -183,7 +192,10 @@ def run_engineer_answer(
         )
 
     answer = generator.generate_engineer_answer(context, hits, request)
-    is_answered = answer.verdict == Verdict.ANSWERED
-    if is_answered and not generator.passes_answer_check(answer, hits, equipment):
+    if answer.verdict != Verdict.ANSWERED:
+        if not _is_valid_hold(answer):
+            raise DependencyError("답변의 보류 판정 형식 검증에 실패했습니다.")
+        return answer
+    if not generator.passes_answer_check(answer, hits, equipment):
         raise DependencyError("답변의 인용 검증에 실패했습니다.")
     return answer
