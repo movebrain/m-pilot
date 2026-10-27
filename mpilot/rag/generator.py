@@ -147,7 +147,7 @@ def generate_engineer_answer(
         # 근거 자료(매뉴얼 + 과거 이력)를 AI가 읽기 좋은 모양으로 넣는다.
         evidence=_format_evidence(hits),
         # 엔지니어가 지금 물어본 질문
-        question=request.question,
+        question=_escape_tag_text(request.question),
     )
     # 엔지니어용 역할 지시 + 위에서 만든 질문글을 AI에게 보내고, 받은 답을 그대로 돌려준다.
     return _invoke([SystemMessage(content=prompts.ENGINEER_SYSTEM), HumanMessage(content=human)])
@@ -156,7 +156,7 @@ def generate_engineer_answer(
 def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool:
     """고객 안내의 인용과 안전 문구를 검사한다.
 
-    인용이 모두 `hits`에 있고 설비가 일치하는지, `error_code.required_safety_rules`의 문구가
+    인용이 모두 `hits`에 있고(`locator` 포함) 설비가 일치하는지, `error_code.required_safety_rules`의 문구가
     빠지지 않았는지 확인한다.
 
     Args:
@@ -200,7 +200,7 @@ def passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipm
         equipment: 신고 대상 설비. 인용한 근거의 설비가 이것과 같아야 한다.
 
     Returns:
-        bool: 모든 인용이 `hits`에 있고 설비가 일치하면 `True`, 아니면 `False`.
+        bool: 모든 인용이 `hits`에 있고(`locator` 포함) 설비가 일치하면 `True`, 아니면 `False`.
     """
     # "답했음"이라면서 단계가 하나도 없으면 말이 안 된다.
     if _is_answered(answer) and not answer.steps:
@@ -217,8 +217,9 @@ def _invoke(messages: list[BaseMessage]) -> Answer:    # ← 여기부터 새로
     try:
         result = _chat_model.with_structured_output(Answer).invoke(messages)
     except Exception as exc:
-        print("답변 생성 모델 호출 실패:", exc)
-        raise DependencyError("답변 생성 모델 호출에 실패했습니다.")
+        # 예외 본문에 요청 내용이 섞일 수 있어 종류만 남긴다. 원인 체인은 `from exc`로 유지한다.
+        print("답변 생성 모델 호출 실패:", type(exc).__name__)
+        raise DependencyError("답변 생성 모델 호출에 실패했습니다.") from exc
     return result
 
 
@@ -234,9 +235,17 @@ def _citations_valid(answer: Answer, hits: list[SearchHit], equipment: Equipment
             for hit in hits:
                 if hit.kind == citation.kind and hit.ref_id == citation.ref_id:
                     found = hit
-            if found is None or found.equipment != equipment:
+            # 화면에는 인용의 locator가 출처로 보이므로 근거의 locator와 같아야 한다.
+            if found is None or found.equipment != equipment or not _same_locator(found.locator, citation.locator):
                 return False
     return True
+
+
+def _same_locator(source: str, cited: str) -> bool:
+    """인용의 locator가 근거의 locator와 같은지 본다. 공백 차이와 프롬프트의 이스케이프 형태는 같은 것으로 본다."""
+    # 모델은 프롬프트에 이스케이프되어 들어간 locator를 보고 베끼므로 원본·이스케이프 둘 다 받아 준다.
+    cited = _collapse_whitespace(cited)
+    return cited in (_collapse_whitespace(source), _collapse_whitespace(_escape_tag_text(source)))
 
 
 def _contains_all_safety_rules(answer: Answer, rules: list[str]) -> bool:
@@ -270,15 +279,13 @@ def _collapse_whitespace(text: str) -> str:
 
 
 def _format_memo_for_prompt (memo: str | None) -> str:
-    """고객이 쓴 메모를 프롬프트에 넣기 좋게 다듬는다. 길이를 자르고 꺾쇠를 무해한 글자로 바꾼다."""
+    """고객이 쓴 메모를 프롬프트에 넣기 좋게 다듬는다. 길이를 자르고 태그 글자를 `_escape_tag_text`로 바꾼다."""
     # 메모가 없거나 공백뿐이라면
     if not memo or not memo.strip():
         # "(없음)"을 돌려준다.
         return prompts.NO_MEMO
-    # "<" 와 ">" 를 아예 다른 글자로 바꿔서 빠져나가는 메모 방지
-    cleaned = memo.replace("<", "&lt;").replace(">", "&gt;").strip()
-    # 너무 길면 앞에서부터 자르고, 결과가 비면 "(없음)"을 돌려준다.
-    return cleaned[:_MAX_MEMO_CHARS] or prompts.NO_MEMO
+    # 너무 길면 앞에서부터 자른 뒤(바꾼 글자가 중간에 잘리지 않게) 태그 글자를 바꿔서 돌려준다.
+    return _escape_tag_text(memo.strip()[:_MAX_MEMO_CHARS])
 
 
 def _bullet_lines(items: list[str]) -> str:
@@ -341,6 +348,6 @@ def _format_history(turns: list[ChatTurn]) -> str:
         else:
             answer_text = turn.answer.verdict.value
 
-        lines.append(f"질문: {turn.question}\n답변: {answer_text}")
+        lines.append(f"질문: {_escape_tag_text(turn.question)}\n답변: {_escape_tag_text(answer_text)}")
     # 대화와 대화 사이에 빈 줄을 하나 두고 이어 붙인다.
     return "\n\n".join(lines)

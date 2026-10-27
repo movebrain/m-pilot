@@ -3,9 +3,11 @@
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from mpilot.models import (
     Answer,
+    AnswerStep,
     CaseContext,
     ChatRequest,
     DependencyError,
@@ -15,6 +17,10 @@ from mpilot.models import (
     Verdict,
 )
 from mpilot.rag import pipeline
+
+
+# 보류 판정에 잘못 붙은 단계(검증 전 모양만 시험하므로 내용은 상관없다)
+STEP = AnswerStep.model_construct(text="조치", citations=[])
 
 
 def make_context(equipment: str = "SRM", code: str = "S-104") -> CaseContext:
@@ -131,11 +137,15 @@ def test_2000자_질문은_검증을_통과한다():
 @pytest.mark.parametrize("settings", [
     SearchSettings(manual_k=0, history_k=3, evidence_threshold=0.35),
     SearchSettings(manual_k=3, history_k=0, evidence_threshold=0.35),
-    SearchSettings(manual_k=3, history_k=3, evidence_threshold=-0.1),
 ])
 def test_잘못된_검색_설정은_ValidationError(settings):
     with pytest.raises(ValidationError):
         ask("위치가 어긋나요", settings)
+
+
+def test_음수_임계값은_SearchSettings_생성_오류():
+    with pytest.raises(PydanticValidationError):
+        SearchSettings(manual_k=3, history_k=3, evidence_threshold=-0.1)
 
 
 # --- 범위 확인 ---------------------------------------------------------
@@ -203,6 +213,17 @@ def test_생성기가_보류를_돌려주면_검증_없이_그대로_돌려준�
     assert fakes.check_calls == 0
 
 
+@pytest.mark.parametrize("hold", [
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[STEP], notice="보류"),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=None),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="  "),
+])
+def test_보류_판정이_보류_모양이_아니면_DependencyError(fakes, hold):
+    fakes.generated = hold
+    with pytest.raises(DependencyError):
+        ask("위치가 어긋나요")
+
+
 def test_검색_장애는_DependencyError_그대로_올라간다(fakes):
     fakes.search_error = DependencyError("검색 장애")
     with pytest.raises(DependencyError, match="검색 장애"):
@@ -248,6 +269,17 @@ def test_안내_생성기가_보류를_돌려주면_검증_없이_그대로_돌�
     fakes.guidance = hold
     assert ask_customer() is hold
     assert fakes.guidance_check_calls == 0
+
+
+@pytest.mark.parametrize("hold", [
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[STEP], notice="보류"),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=None),
+    Answer.model_construct(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="  "),
+])
+def test_안내_보류_판정이_보류_모양이_아니면_DependencyError(fakes, hold):
+    fakes.guidance = hold
+    with pytest.raises(DependencyError):
+        ask_customer()
 
 
 def test_절차_조회_장애는_DependencyError_그대로_올라간다(fakes):
