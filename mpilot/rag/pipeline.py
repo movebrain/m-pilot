@@ -51,7 +51,8 @@ def _is_out_of_scope(question: str, equipment: str) -> bool:
     """질문이 신고 설비 밖을 묻는지 판단한다."""
     if _mentions(question, OUT_OF_SCOPE_EQUIPMENT_KEYWORDS):
         return True
-    if _mentions(question, EQUIPMENT_ALIASES[equipment]):
+    own_aliases = EQUIPMENT_ALIASES.get(equipment, ())
+    if _mentions(question, own_aliases):
         return False
     return any(
         _mentions(question, aliases)
