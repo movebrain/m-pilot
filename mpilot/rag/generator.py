@@ -55,8 +55,8 @@ if TYPE_CHECKING:
 _MAX_HISTORY_TURNS = 6
 
 # 고객 메모의 최대 길이. 너무 긴 글이 프롬프트를 채우지 못하게 자른다.
-# 메모는 500글자까지만 쓴다.
-_MAX_MEMO_CHARS = 500
+# 메모는 2000글자까지만 쓴다.
+_MAX_MEMO_CHARS = 2000
 
 # 이 파일 이름으로 된 로그 기록 담당자를 만든다.
 _logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
         # 심각도(상/중/하)
         severity=error_code.severity.value,
         # 고객이 쓴 메모. 너무 길거나 위험한 글자는 다듬어서 넣는다.
-        memo=_memo_text(context.memo),
+        memo=_format_memo_for_prompt (context.memo),
         # 안전 문구를 줄줄이 적는다. 하나도 없으면 "(없음)"을 넣는다.
         safety_rules=_bullet_lines(safety_rules) or prompts.NO_SAFETY_RULES,
         # 근거 자료(매뉴얼 절차)를 AI가 읽기 좋은 모양으로 넣는다.
@@ -153,7 +153,7 @@ def generate_engineer_answer(
         # 에러코드 표에 적힌 조치(참고용)
         action=error_code.action,
         # 고객이 쓴 메모. 너무 길거나 위험한 글자는 다듬어서 넣는다.
-        memo=_memo_text(context.memo),
+        memo=_format_memo_for_prompt (context.memo),
         # 지난 대화를 최근 것만 골라서 글로 만든다.
         history=_format_history(request.turns),
         # 근거 자료(매뉴얼 + 과거 이력)를 AI가 읽기 좋은 모양으로 넣는다.
@@ -279,9 +279,9 @@ def _contains_all_safety_rules(answer: Answer, rules: list[str]) -> bool:
         # 그 글도 목록에 더한다.
         texts.append(answer.notice)
     # 모은 글을 한 줄로 이어 붙이고, 공백 차이는 없앤다. 이 안에서 문구를 찾는다.
-    haystack = _normalize(" ".join(texts))
+    haystack = _collapse_whitespace(" ".join(texts))
     # 안전 문구가 하나씩 전부 그 글 안에 있어야 합격. (빈 문구는 건너뛴다)
-    return all(_normalize(rule) in haystack for rule in rules if rule.strip())
+    return all(_collapse_whitespace(rule) in haystack for rule in rules if rule.strip())
 
 
 def _enum_value(member: object) -> object:
@@ -295,13 +295,13 @@ def _is_answered(answer: Answer) -> bool:
     return _enum_value(answer.verdict) == "answered"
 
 
-def _normalize(text: str) -> str:
+def _collapse_whitespace(text: str) -> str:
     """공백 차이로 검사가 어긋나지 않도록 연속 공백을 한 칸으로 줄인다."""
     # 띄어쓰기·줄바꿈이 여러 개 이어진 곳을 공백 한 칸으로 바꾸고, 앞뒤 공백도 지운다.
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _memo_text(memo: str | None) -> str:
+def _format_memo_for_prompt (memo: str | None) -> str:
     """고객이 쓴 메모를 프롬프트에 넣기 좋게 다듬는다. 길이를 자르고 <memo> 태그를 벗어나는 글자를 없앤다."""
     # 메모가 없거나 공백뿐이라면
     if not memo or not memo.strip():
