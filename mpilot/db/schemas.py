@@ -8,9 +8,18 @@
     - `error_codes`: PK `(equipment, code)`. 에러코드 표 한 행과 가이드 검증용 목록 열 2개
       (`customer_procedure_ref_ids`, `required_safety_rules`, JSON 배열 문자열).
     - `service_cases`: PK `case_id`. FK `(equipment, code)` → `error_codes`.
-      `status`, `route`, `guide_failure`, `guidance_answer`(JSON 문자열), `created_at`, `completed_at`.
+      `customer_memo`(TEXT, NULL), `source`, `status`, `route`, `guide_failure`,
+      `self_guide_answer`(TEXT, NULL, JSON 문자열), `created_at`(DATETIME, NOT NULL),
+      `completed_at`(DATETIME, NULL).
     - `resolutions`: PK이자 FK `case_id` → `service_cases`. 건당 한 행. `cause`, `action`, `result`.
-    - `chat_turns`: PK `turn_id`(자동 증가). FK `case_id` → `service_cases`. `question`, `answer`(JSON 문자열).
+    - `chat_turns`: PK `turn_id`(자동 증가). FK `case_id` → `service_cases`. `question`,
+      `answer`(JSON 문자열), `created_at`(DATETIME, NOT NULL).
+
+컬럼과 모델 필드:
+    - `customer_memo`·`self_guide_answer`는 모델 필드 `memo`·`guidance_answer`에 대응한다.
+      이름 변환은 `rdb`가 맡는다.
+    - DATETIME에는 UTC 기준, 시간대 없는 값으로 저장하고, 꺼낼 때 UTC 시간대를 붙여
+      datetime으로 돌려준다(`rdb`가 맡는다).
 
 책임:
     - 컬럼 이름·타입·NULL 여부·DB 수준 제약(PK·FK)을 spec §3.3 표와 맞춘다.
