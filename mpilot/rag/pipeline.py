@@ -116,15 +116,17 @@ def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> 
 def run_customer_guidance(context: CaseContext) -> Answer:
     """고객 안내 처리 흐름을 실행한다.
 
-    허용 절차 직접 조회 → 생성 → 인용·안전 문구 검증 순으로 진행한다. 허용 절차가 없거나 만들 수 없으면
-    추측하지 않고 보류 `Answer`를 돌려준다.
+    허용 절차 직접 조회 → 생성 → (`answered`일 때만) 인용·안전 문구 검증 순으로 진행한다. 허용 절차가
+    없거나 생성 결과의 `verdict`가 `answered`가 아니면(근거 부족·적용 대상 아님) 추측하지 않고
+    `passes_guidance_check`를 부르지 않은 채 그 보류 `Answer`를 그대로 돌려준다.
 
     Args:
         context: 신고 맥락. 대상 에러코드의 상세(허용 절차 ID, 필수 안전 문구 포함)와 증상 메모.
 
     Returns:
-        Answer: `answered`이면 출처가 붙은 단계별 안내. 만들 수 없으면 `steps=[]`인 보류 판정이며,
-            `service`가 이를 엔지니어 접수(`held`)로 바꾼다.
+        Answer: `answered`이고 `passes_guidance_check`를 통과하면 출처가 붙은 단계별 안내. 허용 절차가
+            없거나 생성 결과가 `answered`가 아니면 `steps=[]`인 보류 판정이며, `service`가 이를
+            `verdict`만 보고 엔지니어 접수(`held`)로 바꾼다.
 
     Raises:
         DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패일 때
