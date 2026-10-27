@@ -104,6 +104,7 @@
 │   ├── config.py                      # [공통] 앱 설정 로드·검증
 │   ├── models.py                      # [공통] 업무 데이터 정의와 순수 업무 규칙
 │   ├── service.py                     # [UI] 화면과 DB·RAG를 잇는 유즈케이즈(접수·질문·완료 등)
+│   ├── fake_backend.py                # [UI] --fake 실행용 가짜 DB·RAG(메모리). 진짜 구현으로 다 바뀌면 지운다
 │   ├── db/                            # [DB]
 │   │   ├── parser.py                  # 매뉴얼 PDF를 출처가 붙은 검색 단위로 분해
 │   │   ├── schemas.py                 # 관계형 DB 구조·연결 설정 정의
@@ -317,7 +318,8 @@ stateDiagram-v2
 ```text
 app_customer.py, app_engineer.py ──→ app
 app.py ──→ ui/*, service, config, models, db/rdb, db/vectordb, rag/generator
-service ──→ db/parser, db/rdb, db/vectordb, rag/pipeline, config, models
+service ──→ db/parser, db/rdb, db/vectordb, rag/pipeline, config, models (교체 기간에만 fake_backend)
+fake_backend ──→ db/rdb, models (app의 --fake만 install을 부른다)
 rag/pipeline ──→ rag/retriever, rag/generator, models
 rag/retriever ──→ db/vectordb, models
 db/rdb ──→ db/schemas, models

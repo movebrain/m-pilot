@@ -36,11 +36,12 @@ def test_fake_mode_skips_initialize(monkeypatch):
             called.append(("launch", server_port))
 
     monkeypatch.setattr(app, "initialize", lambda: called.append("initialize"))
+    monkeypatch.setattr(app.fake_backend, "install", lambda: called.append("install"))
     monkeypatch.setattr(app, "build_app", lambda role: FakeDemo())
 
     app.main(Role.ENGINEER, 7861, argv=["--fake"])
 
-    assert called == [("launch", 7861)]
+    assert called == ["install", ("launch", 7861)]
 
 
 def test_initialize_runs_in_spec_order(monkeypatch):
@@ -74,7 +75,8 @@ def test_initialize_runs_in_spec_order(monkeypatch):
 
 
 @pytest.mark.parametrize("role", [Role.CUSTOMER, Role.ENGINEER])
-def test_build_app_assembles_role_screens(role):
+def test_build_app_assembles_role_screens(monkeypatch, role):
+    monkeypatch.setattr(app.service.rdb, "fetch_cases", lambda status=None, source=None: [])
     demo = app.build_app(role)
     texts = [getattr(block, "value", None) for block in demo.blocks.values()]
     assert common.VIRTUAL_DATA_BANNER in texts
