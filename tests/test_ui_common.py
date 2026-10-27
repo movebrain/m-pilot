@@ -82,6 +82,17 @@ def test_format_answer_held_shows_notice_only():
     assert "1." not in text
 
 
+@pytest.mark.parametrize("verdict", list(Verdict))
+def test_every_verdict_has_a_label(verdict):
+    assert common.verdict_label(verdict)
+
+
+@pytest.mark.parametrize("verdict", [v for v in Verdict if v is not Verdict.ANSWERED])
+def test_every_hold_verdict_has_a_default_notice(verdict):
+    answer = Answer(verdict=verdict, steps=[], notice=None)
+    assert common.verdict_label(verdict) in common.format_answer_markdown(answer)
+
+
 @pytest.mark.parametrize(
     "exc_type", [ValidationError, NotFoundError, InvalidStateError, DependencyError]
 )

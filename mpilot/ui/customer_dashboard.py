@@ -100,7 +100,7 @@ def build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: g
         # value에 함수를 주면 페이지를 열 때마다 목록을 새로 읽는다.
         table = gr.Dataframe(
             headers=TABLE_HEADERS, value=load_rows, interactive=False, wrap=True,
-            label="신고를 누르면 상세를 봅니다",
+            type="array", label="신고를 누르면 상세를 봅니다",
         )
 
     def on_screen_change(current: str, filter_value: str | None):
@@ -109,9 +109,8 @@ def build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: g
             return gr.Column(visible=False), gr.skip()
         return gr.Column(visible=True), load_rows(filter_value)
 
-    def on_select(rows, evt: gr.SelectData):
-        values = rows.values.tolist() if hasattr(rows, "values") else rows
-        selected = picked_case_id(values, evt.index[0])
+    def on_select(rows: list[list[str]], evt: gr.SelectData):
+        selected = picked_case_id(rows, evt.index[0])
         if selected is None:
             return gr.skip(), gr.skip()
         return selected, common.SCREEN_CUSTOMER_DETAIL
