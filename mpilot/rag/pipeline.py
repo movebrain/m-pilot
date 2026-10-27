@@ -3,15 +3,14 @@
 역할:
     retriever와 generator를 순서대로 엮어, 신고 한 건 또는 질문 하나를 `Answer` 하나로 만든다.
 
-처리 순서(spec §2.6): 범위 확인 → 근거 확보 → 생성 → 검증.
+처리 순서(spec §2.6): 근거 확보 → 생성 → 검증.
     - 고객 안내: 근거는 허용 절차를 직접 조회한다(검색하지 않는다).
     - 엔지니어 답변: 근거는 `manual`·`history` 검색으로 얻는다. 시작값은 각 3건(`manual_k`, `history_k`).
 
 책임:
-    - 범위 밖·근거 부족은 예외가 아니라 조치 단계가 없는(`steps=[]`) `Answer`로 돌려준다.
-      범위 밖 설비 질문은 `not_applicable`, 근거 없이 다른 주제·다른 코드를 묻는 질문은 `insufficient_evidence`다.
+    - 근거 부족은 예외가 아니라 조치 단계가 없는(`steps=[]`) `insufficient_evidence` `Answer`로 돌려준다.
+      4종 밖 설비·다른 설비를 말한 질문도 신고 설비 자료만 검색하고, 근거가 없으면 같은 판정이다.
     - 모델·검색 장애와 검증 실패는 `DependencyError`로 올린다.
-    - 범위 밖 키워드 상수 `OUT_OF_SCOPE_EQUIPMENT_KEYWORDS`와 4종 설비 별칭을 이 모듈에서 관리한다.
     - 대상 코드는 신고한 코드로 고정한다.
     - 결과를 DB에 저장하지 않는다. 저장은 `service`가 맡는다.
 
@@ -25,70 +24,19 @@ from __future__ import annotations
 from mpilot.models import Answer, CaseContext, ChatRequest, DependencyError, SearchSettings, ValidationError, Verdict
 from mpilot.rag import generator, retriever
 
-# 범위 밖 설비 키워드와 4종 설비 별칭(값은 예시, 팀 확정 필요)
-OUT_OF_SCOPE_EQUIPMENT_KEYWORDS: tuple[str, ...] = ("컨베이어", "지게차", "엘리베이터")
-
-# 4종 설비 별칭(소문자로 비교한다). 값은 예시이며 팀 확정이 필요하다.
-EQUIPMENT_ALIASES: dict[str, tuple[str, ...]] = {
-    "Mini Loader": ("mini loader", "미니로더", "미니 로더"),
-    "SRM": ("srm", "스태커크레인", "스태커 크레인"),
-    "AGV": ("agv", "무인운반차"),
-    "RTV": ("rtv", "레일대차"),
-}
-
 MAX_QUESTION_LEN = 2000  # 질문 최대 길이: 공백 제거 후 1~2,000자
 
 
-def _make_hold_answer(verdict: Verdict, notice: str) -> Answer:
+def _make_hold_answer(notice: str) -> Answer:
     """보류 답변을 만든다. 보류는 예외가 아니라 조치 단계가 없는 Answer다.
      
     Args:
-        verdict: 보류 판정(`insufficient_evidence` 또는 `not_applicable`).
         notice: 화면에 보여줄 한국어 안내 문구.
          
     Returns:
-        Answer: `steps=[]`인 보류 답변.
+        Answer: `steps=[]`인 근거 부족(`insufficient_evidence`) 답변.
     """
-    return Answer(verdict=verdict, steps=[], notice=notice)
-
-def _contains_any_word(text: str, words: tuple[str, ...]) -> bool:
-    """글 안에 단어가 하나라도 들어 있는지 대소문자 구분 없이 확인한다.
-    
-    Args:
-        text: 검사할 글.
-        words: 찾을 단어 목록.
-        
-    Returns:
-        bool: 단어가 하나라도 들어 있으면 `True`.
-    """
-    lowered = text.lower()
-    return any(word.lower() in lowered for word in words)
-
-
-def _is_out_of_scope(question: str, equipment: str) -> bool:
-    """질문이 신고 설비 밖을 묻는지 판단한다.
-    
-
-    범위 밖 키워드가 있으면 범위 밖이다. 신고 설비를 말하면 범위 안이다.
-    신고 설비는 말하지 않고 다른 설비만 말하면 범위 밖이다.
-    
-    Args:
-        question: 공백을 정리한 질문.
-        equipment: 신고한 에러코드의 설비.
-          
-    Returns:
-        bool: 범위 밖이면 `True`.
-    """
-    if _contains_any_word(question, OUT_OF_SCOPE_EQUIPMENT_KEYWORDS):
-        return True
-    own_aliases = EQUIPMENT_ALIASES.get(equipment, ())
-    if _contains_any_word(question, own_aliases):
-        return False
-    return any(
-        _contains_any_word(question, aliases)
-        for name, aliases in EQUIPMENT_ALIASES.items()
-        if name != equipment
-    )
+    return Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=notice)
 
 
 def _is_valid_hold(answer: Answer) -> bool:
@@ -122,7 +70,7 @@ def run_customer_guidance(context: CaseContext) -> Answer:
     """고객 안내 처리 흐름을 실행한다.
 
     허용 절차 직접 조회 → 생성 → 검증 순으로 진행한다. `answered`이면 인용·안전 문구를 검증한다. 허용 절차가
-    없거나 생성 결과의 `verdict`가 `answered`가 아니면(근거 부족·적용 대상 아님) 추측하지 않고
+    없거나 생성 결과의 `verdict`가 `answered`가 아니면(근거 부족) 추측하지 않고
     `passes_guidance_check`를 부르지 않은 채, 보류 모양(`steps=[]`, `notice` 있음)만 확인해 그 `Answer`를 돌려준다.
 
     Args:
@@ -140,10 +88,7 @@ def run_customer_guidance(context: CaseContext) -> Answer:
     error_code = context.error_code
     hits = retriever.fetch_customer_procedures(error_code)
     if not hits:
-        return _make_hold_answer(
-            Verdict.INSUFFICIENT_EVIDENCE,
-            "고객이 직접 조치할 수 있는 절차가 없어 엔지니어가 접수합니다.",
-        )
+        return _make_hold_answer("고객이 직접 조치할 수 있는 절차가 없어 엔지니어가 접수합니다.")
 
     answer = generator.generate_customer_guidance(context, hits)
     if answer.verdict != Verdict.ANSWERED:
@@ -160,8 +105,8 @@ def run_engineer_answer(
 ) -> Answer:
     """엔지니어 답변 처리 흐름을 실행한다.
 
-    범위 확인(대상 설비 밖이면 `not_applicable`) → 매뉴얼·이력 검색 → 근거 충분성 판단(부족하면
-    `insufficient_evidence`) → 생성 → 검증 순으로 진행한다. `answered`이면 인용을 검증하고, 아니면 보류 모양
+    매뉴얼·이력 검색(신고 설비 필터) → 근거 충분성 판단(부족하면 `insufficient_evidence`) → 생성 →
+    검증 순으로 진행한다. `answered`이면 인용을 검증하고, 아니면 보류 모양
     (`steps=[]`, `notice` 있음)을 확인한다.
 
     Args:
@@ -170,8 +115,8 @@ def run_engineer_answer(
         settings: 검색 설정. `manual_k`, `history_k`, `evidence_threshold`.
 
     Returns:
-        Answer: `answered`이면 출처가 붙은 단계. 범위 밖이거나 근거가 부족하면 조치 없이 안내 문구만 있는
-            보류 판정(`steps=[]`).
+        Answer: `answered`이면 출처가 붙은 단계. 근거가 부족하면 조치 없이 안내 문구만 있는
+            `insufficient_evidence`(`steps=[]`).
 
     Raises:
         ValidationError: 질문이 비었거나 설정 값이 허용 범위를 벗어났을 때.
@@ -180,16 +125,11 @@ def run_engineer_answer(
     question = _validate_engineer_input(request, settings)
 
     equipment = context.error_code.equipment  # 대상 설비·코드는 신고 코드로 고정
-    if _is_out_of_scope(question, equipment):
-        return _make_hold_answer(Verdict.NOT_APPLICABLE, "대상 설비 밖의 질문이라 답할 수 없습니다.")
-
     manual_hits = retriever.search_manual(equipment, question, settings.manual_k)
     history_hits = retriever.search_history(equipment, question, settings.history_k)
     hits = manual_hits + history_hits
     if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
-        return _make_hold_answer(
-            Verdict.INSUFFICIENT_EVIDENCE, "근거가 부족해 조치를 제시할 수 없습니다."
-        )
+        return _make_hold_answer("신고한 설비의 매뉴얼·이력에서 관련 근거를 찾지 못했습니다.")
 
     answer = generator.generate_engineer_answer(context, hits, request)
     if answer.verdict != Verdict.ANSWERED:

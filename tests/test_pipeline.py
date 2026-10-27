@@ -1,4 +1,4 @@
-"""pipeline 테스트: 입력 검증, 범위 확인, 근거 확보·생성·검증 연결, 고객 안내, 보류 답변 모양."""
+"""pipeline 테스트: 입력 검증, 범위 밖 질문의 검색 진행, 근거 확보·생성·검증 연결, 고객 안내, 보류 답변 모양."""
 
 from types import SimpleNamespace
 
@@ -148,31 +148,23 @@ def test_음수_임계값은_SearchSettings_생성_오류():
         SearchSettings(manual_k=3, history_k=3, evidence_threshold=-0.1)
 
 
-# --- 범위 확인 ---------------------------------------------------------
-def test_범위_밖_키워드는_not_applicable_보류(fakes):
-    answer = ask("컨베이어 모터가 고장났어요")
-    assert answer.verdict == Verdict.NOT_APPLICABLE
+# --- 범위 밖 질문도 검색으로 이어진다 ----------------------------------
+@pytest.mark.parametrize("question", [
+    "컨베이어 이재 시간 초과 원인이 뭐야?",
+    "SRM 포트에서 정위치 정지 실패 원인?",
+])
+def test_다른_설비나_컨베이어를_말해도_신고_설비로_검색한다(fakes, question):
+    answer = ask(question, equipment="AGV")
+    assert answer.verdict == Verdict.ANSWERED
+    assert fakes.searches == [("manual", "AGV", question, 3), ("history", "AGV", question, 3)]
+
+
+def test_밖_설비_질문에_근거가_없으면_근거_부족으로_알린다(fakes):
+    fakes.enough = False
+    answer = ask("지게차 포크가 안 올라가요", equipment="AGV")
+    assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
     assert answer.steps == []
-    assert answer.notice
-    assert fakes.searches == []  # 범위 밖이면 검색하지 않는다
-
-
-def test_다른_설비만_말하면_not_applicable_보류():
-    answer = ask("AGV 배터리는 어떻게 교체해?", equipment="SRM")
-    assert answer.verdict == Verdict.NOT_APPLICABLE
-    assert answer.steps == []
-
-
-def test_신고_설비와_다른_설비를_같이_말하면_범위_안():
-    assert ask("SRM이랑 AGV가 같이 멈췄어요", equipment="SRM").verdict == Verdict.ANSWERED
-
-
-def test_설비를_말하지_않은_질문은_범위_안():
-    assert ask("리셋해도 다시 떠요").verdict == Verdict.ANSWERED
-
-
-def test_별칭도_인식한다():
-    assert ask("스태커 크레인이 멈췄어요", equipment="SRM").verdict == Verdict.ANSWERED
+    assert "신고한 설비" in answer.notice
 
 
 # --- 엔지니어 답변: 근거 확보·생성·검증 --------------------------------
@@ -296,7 +288,7 @@ def test_안내_생성_장애는_DependencyError_그대로_올라간다(fakes):
 
 # --- 보류 답변 모양 ----------------------------------------------------
 def test_보류_답변은_조치_단계가_없다():
-    answer = pipeline._make_hold_answer(Verdict.INSUFFICIENT_EVIDENCE, "근거가 부족합니다.")
+    answer = pipeline._make_hold_answer("근거가 부족합니다.")
     assert answer.steps == []
     assert answer.notice == "근거가 부족합니다."
     assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
