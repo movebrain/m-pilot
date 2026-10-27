@@ -22,20 +22,12 @@
 소유: RAG 파트
 """
 
-# 타입 표시를 "글자 그대로" 나중에 읽게 한다. 아직 만들어지지 않은 타입 이름도 적을 수 있다.
-from __future__ import annotations
-
-# 꺾쇠·따옴표 같은 특수 글자를 안전한 글자로 바꾸는 도구를 가져온다.
-import html
-# 오류가 났을 때 기록(로그)을 남기는 도구를 가져온다.
-import logging
-# 글자 패턴을 찾고 바꾸는 도구(정규식)를 가져온다.
-import re
-# 타입 검사할 때만 true가 되는 스위치를 가져온다.
-from typing import TYPE_CHECKING
-
-# 모델에게 보낼 메시지 종류(기본 메시지, 사용자 메시지, 시스템 지시 메시지)를 가져온다.
+# 채팅 모델 타입
+from langchain_core.language_models import BaseChatModel
+# 모델에게 보낼 메시지 종류(기본, 사용자, 시스템 지시)
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
+
 
 # 우리 프로젝트의 공용 자료형들을 models에서 가져온다.
 from mpilot.models import (
@@ -51,11 +43,6 @@ from mpilot.models import (
 # 지시문(프롬프트) 모음 파일을 가져온다.
 from mpilot.rag import prompts
 
-# 타입 검사할 때만 아래 줄을 읽는다. 실행 중에는 읽지 않는다.
-if TYPE_CHECKING:
-    # 채팅 모델의 타입 이름만 필요해서 여기서만 가져온다.
-    from langchain_core.language_models import BaseChatModel
-
 # 생성 입력에 넣을 최근 대화 턴 수. 저장된 대화는 지우지 않고 입력에서만 줄인다.
 # 지난 대화를 최대 6번까지만 AI에게 보여 준다.
 _MAX_HISTORY_TURNS = 6
@@ -63,11 +50,6 @@ _MAX_HISTORY_TURNS = 6
 # 고객 메모의 최대 길이. 너무 긴 글이 프롬프트를 채우지 못하게 자른다.
 # 메모는 2000글자까지만 쓴다.
 _MAX_MEMO_CHARS = 2000
-
-# 이 파일 이름으로 된 로그 기록 담당자를 만든다.
-_logger = logging.getLogger(__name__)
-
-# 쓸 AI 모델을 담아 두는 칸. 처음에는 비어 있다(None).
 _chat_model: BaseChatModel | None = None
 
 
@@ -128,7 +110,6 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
     return _invoke([SystemMessage(content=prompts.CUSTOMER_SYSTEM), HumanMessage(content=human)])
 
 #엔지니어 안내 답변 만들기 (생성)
-# 엔지니어 답변을 만드는 함수의 시작. 받는 재료가 많아서 줄을 나눠 적었다.
 def generate_engineer_answer(
     context: CaseContext, hits: list[SearchHit], request: ChatRequest
 ) -> Answer:
@@ -199,13 +180,13 @@ def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: Err
         return False
     # 모든 단계의 출처가 진짜 있는 근거이고 설비도 맞는지 확인한다.
     if not _citations_valid(answer, hits, error_code.equipment):
-        # 하나라도 틀리면 불합격.
         return False
     # 고객 안내의 근거는 매뉴얼 절차뿐이다. 이력 인용이 섞이면 실패로 본다.
     # 모든 출처를 하나씩 보면서, 매뉴얼이 아닌 것(과거 이력)이 하나라도 있는지 찾는다.
-    if any(_enum_value(c.kind) != "manual" for step in answer.steps for c in step.citations):
-        # 이력이 섞여 있으면 불합격.
-        return False
+    for step in answer.steps:
+        for c in step.citations:
+            if c.kind.value != "manual":
+                return False
     # 마지막으로 꼭 들어가야 할 안전 문구가 다 있는지 확인하고, 그 결과(True/False)를 돌려준다.
     return _contains_all_safety_rules(answer, error_code.required_safety_rules)
 
@@ -229,52 +210,32 @@ def passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipm
     return _citations_valid(answer, hits, equipment)
 
 
-# --- 내부 도우미 -------------------------------------------------------------
 
-
-def _invoke(messages: list[BaseMessage]) -> Answer:
-    """모델을 호출해 구조화된 `Answer`를 받는다. 실패는 `DependencyError`로 바꾼다."""
-    # 모델이 아직 설정되지 않았다면
+def _invoke(messages: list[BaseMessage]) -> Answer:    # ← 여기부터 새로 넣는 것    """모델을 호출해 구조화된 `Answer`를 받는다. 실패는 `DependencyError`로 바꾼다."""
     if _chat_model is None:
-        # "모델을 먼저 설정하세요"라는 오류를 낸다.
         raise DependencyError("답변 생성 모델이 설정되지 않았습니다(set_chat_model 호출 필요).")
-    # 모델 호출은 실패할 수 있으니 안전하게 감싸서 시도한다.
     try:
-        # 모델에게 "Answer 모양으로 답해줘"라고 정하고, 메시지를 보내서 결과를 받는다.
         result = _chat_model.with_structured_output(Answer).invoke(messages)
-    except Exception as exc:  # 네트워크·제한 시간·파싱 실패를 모두 의존 장애로 본다.
-        # 예외 원문에는 요청 ID나 키 일부 같은 내부 정보가 있을 수 있어 화면용 문구에는 싣지 않고 로그에만 남긴다.
-        # 자세한 오류 내용은 로그 파일에만 적어 둔다.
-        _logger.exception("답변 생성 모델 호출 실패")
-        # 화면에는 짧고 안전한 문구만 담은 오류를 낸다. (원래 오류는 뒤에 붙여 둔다)
-        raise DependencyError("답변 생성 모델 호출에 실패했습니다.") from exc
-    # 받은 결과가 Answer 모양이 아니라면
-    if not isinstance(result, Answer):
-        # "형식이 이상하다"는 오류를 낸다.
-        raise DependencyError("답변 생성 모델이 올바른 형식의 답변을 돌려주지 않았습니다.")
-    # 제대로 된 답을 돌려준다.
+    except Exception as exc:
+        print("답변 생성 모델 호출 실패:", exc)
+        raise DependencyError("답변 생성 모델 호출에 실패했습니다.")
     return result
+
 
 
 def _citations_valid(answer: Answer, hits: list[SearchHit], equipment: Equipment) -> bool:
     """모든 단계에 출처가 있고, 각 인용이 `hits`에 실재하며 설비가 일치하는지 본다."""
-    # (종류, 번호)를 이름표로 해서 근거들을 찾기 쉽게 사전으로 만든다.
-    by_key = {(hit.kind, hit.ref_id): hit for hit in hits}
-    # 답변의 단계를 하나씩 본다.
+    # 각 단계의 출처가 hits 안에 진짜 있고 설비도 맞는지 하나씩 확인한다.
     for step in answer.steps:
-        # 이 단계에 출처가 하나도 없으면
         if not step.citations:
-            # 불합격.
             return False
-        # 이 단계에 붙은 출처를 하나씩 본다.
         for citation in step.citations:
-            # 출처의 (종류, 번호)로 우리가 준 근거 중에서 찾아본다. 없으면 None.
-            hit = by_key.get((citation.kind, citation.ref_id))
-            # 근거를 못 찾았거나(지어낸 출처), 설비가 다르면
-            if hit is None or hit.equipment != equipment:
-                # 불합격.
+            found = None
+            for hit in hits:
+                if hit.kind == citation.kind and hit.ref_id == citation.ref_id:
+                    found = hit
+            if found is None or found.equipment != equipment:
                 return False
-    # 끝까지 문제가 없었으니 합격.
     return True
 
 
@@ -296,22 +257,16 @@ def _contains_all_safety_rules(answer: Answer, rules: list[str]) -> bool:
     return all(_collapse_whitespace(rule) in haystack for rule in rules if rule.strip())
 
 
-
-
-def _enum_value(member: object) -> object:
-    """열거형이면 값을, 문자열이면 그대로 돌려준다(멤버 이름에 의존하지 않기 위함)."""
-    # .value가 있으면 그 값을, 없으면 받은 것을 그대로 돌려준다.
-    return getattr(member, "value", member)
-
 def _is_answered(answer: Answer) -> bool:
-    # 답변 상태가 "answered"(답했음)인지 True/False로 알려 준다.
-    return _enum_value(answer.verdict) == "answered"
+    """답변 상태가 'answered'(답했음)인지 알려 준다."""
+    return answer.verdict.value == "answered"
+
 
 
 def _collapse_whitespace(text: str) -> str:
     """공백 차이로 검사가 어긋나지 않도록 연속 공백을 한 칸으로 줄인다."""
     # 띄어쓰기·줄바꿈이 여러 개 이어진 곳을 공백 한 칸으로 바꾸고, 앞뒤 공백도 지운다.
-    return re.sub(r"\s+", " ", text).strip()
+    return " ".join(text.split())
 
 
 def _format_memo_for_prompt (memo: str | None) -> str:
@@ -322,20 +277,26 @@ def _format_memo_for_prompt (memo: str | None) -> str:
         return prompts.NO_MEMO
     # "<" 와 ">" 를 아예 다른 글자로 바꿔서 빠져나가는 메모 방지
     cleaned = memo.replace("<", "&lt;").replace(">", "&gt;").strip()
-    # 글자 수가 너무 많으면 앞에서부터 2000글자만 쓴다.
-    #다 지워져서 비었다면 "(없음)"을 돌려준다.
+    # 너무 길면 앞에서부터 자르고, 결과가 비면 "(없음)"을 돌려준다.
     return cleaned[:_MAX_MEMO_CHARS] or prompts.NO_MEMO
 
 
 def _bullet_lines(items: list[str]) -> str:
-    # 항목마다 앞에 "- "를 붙이고, 줄바꿈으로 이어서 한 덩어리 글로 만든다.
-    return "\n".join(f"- {item}" for item in items)
+    lines = []
+    for item in items:
+        lines.append(f"- {item}")
+    return "\n".join(lines)
 
 
 def _escape_tag_text(text: str) -> str:
     """`<evidence>` 태그의 속성값·본문에 안전하게 넣도록 꺾쇠·따옴표 같은 글자를 바꾼다."""
     # &, <, >, ", ' 를 모두 안전한 글자로 바꾼다. (속성값·본문 양쪽에 다 써도 안전하다)
-    return html.escape(text, quote=True)
+    text = text.replace("&", "&amp;")   # & 를 가장 먼저 바꿔야 합니다
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    text = text.replace('"', "&quot;")
+    text = text.replace("'", "&#x27;")
+    return text
 
 
 def _format_evidence(hits: list[SearchHit]) -> str:
@@ -345,14 +306,15 @@ def _format_evidence(hits: list[SearchHit]) -> str:
         # "(없음)"을 돌려준다.
         return prompts.NO_EVIDENCE
     # 근거를 안전한 <evidence> 태그와 방패(_escape_tag_text)로 감싸서 만든다!
-    blocks = [
-        f'<evidence kind="{_escape_tag_text(str(hit.kind.value))}" '
-        f'ref_id="{_escape_tag_text(str(hit.ref_id))}" '
-        f'locator="{_escape_tag_text(str(hit.locator))}">\n'
-        f"{_escape_tag_text(hit.text)}\n</evidence>"
-        for hit in hits
-    ]
-    # 근거와 근거 사이에 빈 줄을 하나 두고 이어 붙인다.
+    blocks = []
+    for hit in hits:
+        block = (
+            f'<evidence kind="{_escape_tag_text(str(hit.kind.value))}" '
+            f'ref_id="{_escape_tag_text(str(hit.ref_id))}" '
+            f'locator="{_escape_tag_text(str(hit.locator))}">\n'
+            f"{_escape_tag_text(hit.text)}\n</evidence>"
+        )
+        blocks.append(block)
     return "\n\n".join(blocks)
 
 
@@ -368,12 +330,17 @@ def _format_history(turns: list[ChatTurn]) -> str:
     lines: list[str] = []
     # 최근 대화를 한 번씩 본다.
     for turn in recent:
-        # 그때의 답변을 글로 만든다. 단계가 있으면 단계 글을 " / "로 이어 붙인다.
-        answer_text = " / ".join(step.text for step in turn.answer.steps) or (
-            # 단계가 없으면 안내 문구를, 그것도 없으면 상태 이름을 쓴다.
-            turn.answer.notice or turn.answer.verdict.value
-        )
-        # "질문: ... 답변: ..." 모양으로 만들어서 목록에 넣는다.
+        step_texts = []
+        for step in turn.answer.steps:
+            step_texts.append(step.text)
+
+        if step_texts:
+            answer_text = " / ".join(step_texts)
+        elif turn.answer.notice:
+            answer_text = turn.answer.notice
+        else:
+            answer_text = turn.answer.verdict.value
+
         lines.append(f"질문: {turn.question}\n답변: {answer_text}")
     # 대화와 대화 사이에 빈 줄을 하나 두고 이어 붙인다.
     return "\n\n".join(lines)
