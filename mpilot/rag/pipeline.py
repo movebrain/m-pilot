@@ -38,7 +38,7 @@ EQUIPMENT_ALIASES: dict[str, tuple[str, ...]] = {
 MAX_QUESTION_LEN = 2000  # 질문 최대 길이: 공백 제거 후 1~2,000자
 
 
-def _hold(verdict: Verdict, notice: str) -> Answer:
+def _make_hold_answer(verdict: Verdict, notice: str) -> Answer:
     """보류 답변을 만든다. 보류는 예외가 아니라 조치 단계가 없는 Answer다.
      
     Args:
@@ -50,7 +50,7 @@ def _hold(verdict: Verdict, notice: str) -> Answer:
     """
     return Answer(verdict=verdict, steps=[], notice=notice)
 
-def _mentions(text: str, words: tuple[str, ...]) -> bool:
+def _contains_any_word(text: str, words: tuple[str, ...]) -> bool:
     """글 안에 단어가 하나라도 들어 있는지 대소문자 구분 없이 확인한다.
     
     Args:
@@ -78,13 +78,13 @@ def _is_out_of_scope(question: str, equipment: str) -> bool:
     Returns:
         bool: 범위 밖이면 `True`.
     """
-    if _mentions(question, OUT_OF_SCOPE_EQUIPMENT_KEYWORDS):
+    if _contains_any_word(question, OUT_OF_SCOPE_EQUIPMENT_KEYWORDS):
         return True
     own_aliases = EQUIPMENT_ALIASES.get(equipment, ())
-    if _mentions(question, own_aliases):
+    if _contains_any_word(question, own_aliases):
         return False
     return any(
-        _mentions(question, aliases)
+        _contains_any_word(question, aliases)
         for name, aliases in EQUIPMENT_ALIASES.items()
         if name != equipment
     )
@@ -129,7 +129,7 @@ def run_customer_guidance(context: CaseContext) -> Answer:
         DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패일 때
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
-    raise NotImplementedError("PR3에서 구현")
+    raise NotImplementedError("PR3에서 구현: 허용 절차 조회 → 생성 → 검증")
 
 
 def run_engineer_answer(
@@ -157,6 +157,6 @@ def run_engineer_answer(
 
     equipment = context.error_code.equipment  # 대상 설비·코드는 신고 코드로 고정
     if _is_out_of_scope(question, equipment):
-        return _hold(Verdict.NOT_APPLICABLE, "대상 설비 밖의 질문이라 답할 수 없습니다.")
+        return _make_hold_answer(Verdict.NOT_APPLICABLE, "대상 설비 밖의 질문이라 답할 수 없습니다.")
 
     raise NotImplementedError("PR2에서 구현: 근거 확보 → 생성 → 검증")

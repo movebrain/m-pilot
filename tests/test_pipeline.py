@@ -88,7 +88,7 @@ def test_별칭도_인식한다():
 
 # --- 보류 답변 모양 ----------------------------------------------------
 def test_보류_답변은_조치_단계가_없다():
-    answer = pipeline._hold(Verdict("insufficient_evidence"), "근거가 부족합니다.")
+    answer = pipeline._make_hold_answer(Verdict("insufficient_evidence"), "근거가 부족합니다.")
     assert answer.steps == []
     assert answer.notice == "근거가 부족합니다."
     assert answer.verdict == Verdict("insufficient_evidence")
