@@ -29,9 +29,15 @@
 
 from __future__ import annotations
 
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
 from mpilot.config import AppConfig
 from mpilot.db import parser, rdb, vectordb
 from mpilot.models import (
+    Answer,
+    CaseContext,
     CaseDetail,
     CaseInput,
     CaseStatus,
@@ -42,10 +48,15 @@ from mpilot.models import (
     DependencyError,
     Equipment,
     ErrorCode,
+    GuideFailure,
     Resolution,
     Source,
     ValidationError,
+    Verdict,
+    has_customer_procedure,
+    is_self_guide_candidate,
 )
+from mpilot.rag import pipeline
 
 
 def _to_customer_result(detail: CaseDetail) -> CustomerCaseResult:
@@ -147,8 +158,7 @@ def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
         ValidationError: 허용되지 않은 설비일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.fetch_error_codes)
-    ...
+    return rdb.fetch_error_codes(equipment)
 
 
 def submit_case(data: CaseInput) -> str:
@@ -167,8 +177,75 @@ def submit_case(data: CaseInput) -> str:
         ValidationError: 미등록 코드이거나 메모가 2,000자를 넘을 때.
         DependencyError: DB 저장에 실패했을 때. 가이드 생성 실패는 예외가 아니라 엔지니어 접수로 처리한다.
     """
-    # TODO: 실제 호출로 교체 (pipeline.run_customer_guidance, rdb.save_self_guide_case / save_support_case)
-    ...
+    error_code = _find_error_code(data)
+    case_id = _new_case_id()
+
+    if not is_self_guide_candidate(error_code):
+        # 심각도 상이거나 엔지니어 필요 코드: 처음부터 엔지니어 처리 건이다.
+        rdb.save_support_case(case_id, data, None)
+        return case_id
+    if not has_customer_procedure(error_code):
+        # 허용 절차가 없으면 가이드를 만들 근거가 없다. pipeline도 같은 경우를 보류로 돌려주므로 held로 맞춘다.
+        rdb.save_support_case(case_id, data, GuideFailure.HELD)
+        return case_id
+
+    answer = _run_guidance_within_limit(CaseContext(error_code=error_code, memo=data.memo))
+    if answer is None:
+        rdb.save_support_case(case_id, data, GuideFailure.GENERATION_FAILED)
+    elif answer.verdict == Verdict.ANSWERED:
+        rdb.save_self_guide_case(case_id, data, answer)
+    else:
+        rdb.save_support_case(case_id, data, GuideFailure.HELD)
+    return case_id
+
+
+def _new_case_id() -> str:
+    """새 접수번호 `SC-<UUID 앞 8자리>`를 만든다. 충돌은 `rdb`가 오류로 알린다(재시도하지 않는다)."""
+    return f"SC-{uuid.uuid4().hex[:8]}"
+
+
+def _find_error_code(data: CaseInput) -> ErrorCode:
+    """신고한 `(설비, 코드)`의 에러코드 표 행을 찾는다. 비슷한 코드로 대체하지 않는다.
+
+    Args:
+        data: 고객이 제출한 신고 입력.
+
+    Returns:
+        ErrorCode: 정확히 같은 코드의 행.
+
+    Raises:
+        ValidationError: 표에 없는 코드일 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    for row in rdb.fetch_error_codes(data.equipment):
+        if row.code == data.code:
+            return row
+    raise ValidationError("미등록 코드")
+
+
+def _run_guidance_within_limit(context: CaseContext) -> Answer | None:
+    """고객 안내를 제한 시간(`llm_timeout_seconds`) 안에 만든다.
+
+    Args:
+        context: 신고한 에러코드와 증상 메모.
+
+    Returns:
+        Answer | None: 만든 안내(보류 판정 포함). 장애·검증 실패·시간 초과면 `None`이다.
+            가이드를 만들지 못한 것은 오류가 아니라 엔지니어 접수로 처리하므로 예외를 올리지 않는다.
+
+    Raises:
+        DependencyError: `set_config` 전에 불렀을 때.
+    """
+    timeout = _require_config().llm_timeout_seconds
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        return executor.submit(pipeline.run_customer_guidance, context).result(timeout=timeout)
+    except FutureTimeoutError:
+        return None  # 시간 초과: 늦게 끝난 결과는 쓰지 않는다
+    except Exception:
+        return None  # 모델·검색 장애와 검증 실패(DependencyError)를 포함해 신고는 엔지니어 접수로 넘긴다
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
