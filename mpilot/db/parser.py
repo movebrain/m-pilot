@@ -191,7 +191,7 @@ class Section(BaseModel):
         page: 조각이 있는 쪽. `PageText.page`와 같은 인쇄 쪽 번호다.
         top: 조각 첫 줄의 세로 위치(pt). `ChunkDraft.top`으로 그대로 넘어가 표·OCR 초안과 순서를 맞춘다.
         title: 절 제목(예: `8.1 운전 모드 전환`). 문서 첫 절 제목보다 앞에 있는 본문이면 None.
-        text: 조각 본문. 줄을 줄바꿈으로 이은 것이다.
+        text: 조각 본문. 줄을 줄바꿈으로 이은 것이며, 문단 경계는 빈 줄(줄바꿈 두 개)이다.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -437,3 +437,198 @@ def _extract_page_texts(pdf_path: Path, tables: list[RawTable]) -> list[PageText
 
     _read_manual_identity(footers)  # 모든 쪽의 문서번호·버전이 같은지 확인한다. 다르거나 꼬리글이 하나도 없으면 ValidationError
     return page_texts  # 표지를 뺀 쪽들을 PDF 쪽 순서대로 돌려준다
+
+
+# ---------------------------------------------------------------------------
+# 절 나누기와 텍스트 초안(#80)
+#
+# 흐름: `PageText` 목록 → 목차에서 절 제목 목록을 읽는다 → 본문 줄이 절 제목과 같을 때만 나눠 `Section`
+#       → 최대 길이를 넘는 조각만 문단, 그다음 문장 경계에서 나눠 `ChunkDraft(kind="text")`
+# 번호 목록(`1. VCS에서 …`)은 절 제목(`1. 일반 사항`)과 모양이 같아서 정규식이 아니라 목차를 기준으로 삼는다.
+# ---------------------------------------------------------------------------
+
+# 텍스트 청크 최대 길이(글자 수, 줄바꿈 포함). 청킹 규칙의 일부라 동결 대상이다.
+# 근거(#80 실측): 표를 뺀 쪽별 절 조각 310개의 중앙값은 120자, p95는 439자이고 800자를 넘는 것은 4개다.
+# 고객 안내에 인용할 절차 절(7.4 LOTO 최대 659자, 8.x 최대 465자)이 쪼개지지 않게 정했다.
+_MAX_TEXT_CHUNK_CHARS = 800
+
+# 문단 경계로 보는 줄 간격(pt). 같은 문단 안은 약 14pt, 번호 항목 사이는 약 15pt, 문단·절 사이는 21pt 이상이다(4종 실측).
+_PARAGRAPH_GAP = 18.0
+
+# 목차 한 줄: `<절 제목> <쪽 번호>`. 예: `7.4 LOTO (Lock-Out / Tag-Out) 절차 19`
+_CONTENTS_LINE_PATTERN = re.compile(r"^(?P<title>.+?) (?P<page>\d+)$")
+
+# 문장 끝: 숫자가 아닌 글자 뒤 마침표·물음표·느낌표와 그 뒤 공백. `1.` 같은 번호와 `1.5` 같은 수는 끊지 않는다.
+_SENTENCE_END_PATTERN = re.compile(r"(?<=\D[.?!])\s+")
+
+
+def _read_section_titles(page_texts: list[PageText]) -> tuple[set[str], set[int]]:
+    """매뉴얼 목차에서 절 제목을 읽는다.
+
+    첫 줄이 `목차`인 쪽에서 시작하고, 그다음 쪽도 첫 줄이 목차 줄(`<제목> <쪽 번호>`)이면 목차가 이어진 것으로 본다.
+
+    Args:
+        page_texts: 한 매뉴얼의 쪽들. `_extract_page_texts`의 결과.
+
+    Returns:
+        tuple[set[str], set[int]]: `(쪽 번호를 뗀 절 제목, 목차 쪽의 page_texts 안 위치)`.
+
+    Raises:
+        ValidationError: 목차 쪽이 없거나 목차에서 제목을 하나도 읽지 못했을 때.
+    """
+    start = next((i for i, page_text in enumerate(page_texts) if _first_line(page_text) == "목차"), None)
+    if start is None:
+        raise ValidationError("매뉴얼 목차를 찾지 못했습니다")
+    contents_pages = {start}
+    for index in range(start + 1, len(page_texts)):
+        if not _CONTENTS_LINE_PATTERN.match(_first_line(page_texts[index])):
+            break  # 첫 줄이 목차 줄이 아니면 본문이 시작된 것이다
+        contents_pages.add(index)
+    titles = {
+        match["title"]
+        for index in contents_pages
+        for line in page_texts[index].lines
+        if (match := _CONTENTS_LINE_PATTERN.match(line.text.strip()))
+    }
+    if not titles:
+        raise ValidationError("매뉴얼 목차에서 절 제목을 읽지 못했습니다")
+    return titles, contents_pages
+
+
+def _first_line(page_text: PageText) -> str:
+    """쪽의 첫 줄을 앞뒤 공백을 떼어 돌려준다. 줄이 없으면 빈 문자열."""
+    return page_text.lines[0].text.strip() if page_text.lines else ""
+
+
+def _make_section(page: int, title: str | None, lines: list[TextLine]) -> list[Section]:
+    """한 쪽에서 모은 줄로 `Section`을 만든다.
+
+    Args:
+        page: 줄이 있는 쪽.
+        title: 줄이 속한 절 제목. 첫 절 앞이면 None.
+        lines: 위에서부터 모은 줄. 절이 이 쪽에서 시작했으면 첫 줄이 제목 줄이다.
+
+    Returns:
+        list[Section]: 조각 하나. 줄이 없거나 제목 줄뿐이면 빈 목록.
+    """
+    body = lines[1:] if lines and lines[0].text.strip() == title else lines
+    if not body:
+        return []
+    return [Section(page=page, top=lines[0].top, title=title, text=_join_lines(lines))]
+
+
+def _join_lines(lines: list[TextLine]) -> str:
+    """줄을 이어 본문을 만든다. 같은 문단은 줄바꿈 하나로, 줄 간격이 `_PARAGRAPH_GAP`보다 넓은 곳은 빈 줄로 잇는다.
+
+    Args:
+        lines: 위에서부터 순서대로 놓인 줄. 하나 이상이어야 한다.
+
+    Returns:
+        str: 이은 본문.
+    """
+    text = lines[0].text
+    for previous, line in zip(lines, lines[1:]):
+        text += ("\n\n" if line.top - previous.top > _PARAGRAPH_GAP else "\n") + line.text
+    return text
+
+
+def _split_sections(page_texts: list[PageText]) -> list[Section]:
+    """매뉴얼 하나의 쪽들을 목차의 절 제목 기준으로 나눈다.
+
+    - 본문 줄이 목차의 절 제목과 같을 때만 새 절을 시작한다. 번호 목록 줄은 목차에 없으므로 절을 나누지 않는다.
+    - 제목 줄은 조각 본문의 첫 줄로 남긴다.
+    - 절이 쪽을 넘어가면 쪽마다 `Section`을 만들고 같은 `title`을 붙인다. 첫 절 제목보다 앞의 본문은 `title=None`이다.
+    - 목차 쪽은 결과에서 뺀다. 제목 줄뿐인 조각(장 제목 바로 뒤에 절 제목이 오는 경우 등)은 만들지 않는다.
+
+    Args:
+        page_texts: 한 매뉴얼의 쪽들. `_extract_page_texts`의 결과이며 쪽 순서대로다.
+
+    Returns:
+        list[Section]: 쪽 순서, 쪽 안에서는 위에서부터의 순서. 문단 경계는 빈 줄로 남는다(`_join_lines`).
+
+    Raises:
+        ValidationError: 목차를 찾지 못했을 때.
+    """
+    titles, contents_pages = _read_section_titles(page_texts)
+    sections: list[Section] = []
+    title: str | None = None  # 지금 읽고 있는 절. 쪽을 넘어가도 이어진다
+    for index, page_text in enumerate(page_texts):
+        if index in contents_pages:
+            continue
+        lines: list[TextLine] = []  # 이 쪽에서 지금 절에 속한 줄
+        for line in page_text.lines:
+            if line.text.strip() in titles:  # 새 절이 시작되면 앞 절 조각을 닫는다
+                sections += _make_section(page_text.page, title, lines)
+                title, lines = line.text.strip(), []
+            lines.append(line)
+        sections += _make_section(page_text.page, title, lines)
+    return sections
+
+
+def _pack(parts: list[str], separator: str) -> list[str]:
+    """조각을 앞에서부터 이어 붙이되, 하나가 최대 길이(`_MAX_TEXT_CHUNK_CHARS`)를 넘지 않게 묶는다.
+
+    Args:
+        parts: 순서대로 놓인 조각.
+        separator: 조각 사이에 넣을 구분자.
+
+    Returns:
+        list[str]: 묶은 조각. 최대 길이보다 긴 조각은 그대로 하나가 된다.
+    """
+    chunks: list[str] = []
+    for part in parts:
+        if chunks and len(chunks[-1]) + len(separator) + len(part) <= _MAX_TEXT_CHUNK_CHARS:
+            chunks[-1] += separator + part
+        else:
+            chunks.append(part)
+    return chunks
+
+
+def _split_text(text: str) -> list[str]:
+    """본문을 최대 길이(`_MAX_TEXT_CHUNK_CHARS`) 이하 조각으로 나눈다.
+
+    최대 길이 이하면 그대로 둔다. 넘으면 문단(빈 줄) 경계로 나누고, 그래도 넘는 문단은 문장 경계로,
+    그래도 넘는 문장은 글자 수로 자른 뒤 최대 길이 안에서 다시 묶는다.
+
+    Args:
+        text: 절 조각 본문.
+
+    Returns:
+        list[str]: 앞뒤 공백을 뗀 조각. 각각 최대 길이 이하이며 빈 조각은 없다. 본문이 비면 빈 목록.
+    """
+    text = text.strip()
+    if len(text) <= _MAX_TEXT_CHUNK_CHARS:
+        return [text] if text else []
+    paragraphs: list[str] = []
+    for paragraph in filter(str.strip, text.split("\n\n")):
+        if len(paragraph) <= _MAX_TEXT_CHUNK_CHARS:
+            paragraphs.append(paragraph)
+            continue
+        pieces = [
+            sentence[start:start + _MAX_TEXT_CHUNK_CHARS]
+            for sentence in _SENTENCE_END_PATTERN.split(paragraph)
+            for start in range(0, len(sentence), _MAX_TEXT_CHUNK_CHARS)
+        ]
+        paragraphs += _pack(pieces, " ")
+    return [chunk.strip() for chunk in _pack(paragraphs, "\n\n")]
+
+
+def _to_text_drafts(sections: list[Section]) -> list[ChunkDraft]:
+    """절 조각을 텍스트 청크 초안으로 바꾼다.
+
+    청크 최대 길이는 800자(`_MAX_TEXT_CHUNK_CHARS`, 줄바꿈 포함)이며 동결 대상이다.
+    최대 길이를 넘는 조각만 문단, 그다음 문장 경계에서 나눈다(`_split_text`).
+    한 조각에서 나온 초안은 모두 조각의 `page`·`top`·`title`을 받는다. 같은 위치의 초안끼리는
+    목록 순서가 유지되므로 번호를 매길 때도 본문 순서가 지켜진다.
+
+    Args:
+        sections: `_split_sections`의 결과.
+
+    Returns:
+        list[ChunkDraft]: `kind="text"` 초안. 입력 순서대로이고 빈 본문 초안은 없다.
+    """
+    return [
+        ChunkDraft(page=section.page, top=section.top, kind="text", section=section.title, text=text)
+        for section in sections
+        for text in _split_text(section.text)
+    ]
