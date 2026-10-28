@@ -15,6 +15,8 @@
     - 모든 검색은 설비 필터가 필수다. 이 모듈은 그 필터를 쓸 수 있는 저장소를 돌려준다.
     - DB(`rdb`)의 확정 이력이 정본이다. 반영 실패는 건별로 저장하지 않고 앱 재시작의 전체 재생성으로 복구한다.
     - 같은 ID는 같은 원문을 유지한다. 과거 인용 원문은 현재 색인에서 조회하며 스냅샷은 저장하지 않는다.
+    - 매뉴얼 본문 청크는 절 제목을 앞에 붙인 글로 임베딩하되 저장하는 원문은 청크 원문 그대로 둔다.
+      에러코드 절(`<번호> <코드> <이름>`)의 청크에는 메타데이터 `code`를 단다.
     - 모듈을 import할 때 임베딩 API나 저장소에 접속하지 않는다. 연결은 `connect`가 맡는다.
 
 의존: `models`만 import한다(의존 규칙 §2.5).
@@ -24,6 +26,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC
 from typing import TYPE_CHECKING
 
@@ -141,9 +144,16 @@ def get_document(kind: CitationKind, ref_id: str) -> Document:
 #     1. `langchain_chroma.Chroma` 객체를 돌려준다(재생성에 `reset_collection()`을 쓴다).
 #     2. `connect` 때 만든 같은 객체를 매번 돌려준다. 같은 컬렉션을 가리키는 Chroma 객체를 따로
 #        만들어 두면, 한쪽에서 컬렉션을 다시 만든 뒤 다른 쪽 객체로는 검색이 실패한다.
+#     3. 매뉴얼 본문 청크는 저장 원문과 임베딩할 글이 달라 `Chroma.embeddings`로 벡터를 만들어
+#        `_collection.upsert`로 직접 넣는다(`_write_documents`).
 # ---------------------------------------------------------------------------
 
 _ID_SEP = ":"
+
+# 에러코드 절 제목 `<번호> <에러코드> <이름>`(예: `13.1 M401 주행 서보 과전류`)에서 에러코드를 읽는 규칙.
+_SECTION_CODE = re.compile(r"^\d+\.\d+ ([A-Z]\d{3}) ")
+
+_UPSERT_BATCH = 1000  # Chroma 한 번 쓰기의 최대 건수(저장소 한도 안쪽)
 
 
 def _make_doc_id(prefix: str, *parts: object) -> str:
@@ -209,7 +219,8 @@ def _build_error_document(code: ErrorCode) -> tuple[str, Document]:
 def _build_manual_document(chunk: Chunk) -> tuple[str, Document]:
     """매뉴얼 청크 하나를 `manual` 컬렉션 문서로 만든다(ID `manual:<manual_id>:<page>:<chunk_no>`).
 
-    본문은 청크 원문 그대로다. 인용 원문 확인 때 같은 글자를 보여 줘야 하므로 바꾸지 않는다.
+    본문은 청크 원문 그대로다. 인용 원문 확인 때 같은 글자를 보여 줘야 하므로 바꾸지 않는다(임베딩할 글은
+    `_embedding_text`가 따로 만든다). 절 제목이 `<번호> <에러코드> <이름>`이면 메타데이터 `code`에 에러코드를 단다.
 
     Args:
         chunk: `parser.parse_manuals`가 만든 매뉴얼 청크.
@@ -232,6 +243,9 @@ def _build_manual_document(chunk: Chunk) -> tuple[str, Document]:
         "chunk_no": chunk.chunk_no,
         "version": chunk.version,
     }
+    section_code = _SECTION_CODE.match(chunk.section)
+    if section_code:  # 에러코드 절의 청크만 코드를 단다(Chroma는 None 값을 받지 않는다). 다른 코드의 청크를 거르는 데 쓴다.
+        metadata["code"] = section_code[1]
     return doc_id, Document(page_content=chunk.text, metadata=metadata, id=doc_id)
 
 
@@ -278,8 +292,29 @@ def _build_history_document(case: CaseDetail) -> tuple[str, Document]:
     return doc_id, Document(page_content=text, metadata=metadata, id=doc_id)
 
 
+def _embedding_text(doc: Document) -> str:
+    """문서를 벡터로 바꿀 글을 만든다.
+
+    매뉴얼 본문 청크는 절 제목을 앞에 붙인다. 코드 이름이 본문에 없는 연속 청크도 어느 코드의 내용인지 벡터에
+    담기게 해서, 같은 질문에 다른 코드의 비슷한 청크가 섞여 나오는 일을 줄이려는 것이다. 저장하는 원문
+    (`page_content`)은 바꾸지 않는다. 코드 표 행과 이력은 원문 그대로 임베딩한다.
+
+    Args:
+        doc: 색인할 문서.
+
+    Returns:
+        str: 임베딩에 쓸 글. 매뉴얼 본문은 `<절>\\n<원문>`, 그 밖은 원문이다.
+    """
+    if doc.metadata.get("doc_type") == "manual":
+        return f"{doc.metadata['section']}\n{doc.page_content}"
+    return doc.page_content
+
+
 def _write_documents(store: VectorStore, docs: dict[str, Document], what: str) -> None:
     """문서를 저장소에 넣는다(같은 ID는 덮어쓴다). 비어 있으면 아무것도 하지 않는다.
+
+    임베딩할 글(`_embedding_text`)이 저장 원문과 다른 문서가 있으면 벡터를 직접 만들어 넣고, 모두 같으면
+    저장소의 `add_documents`를 쓴다. 어느 쪽이든 저장되는 원문은 `page_content` 그대로다.
 
     Args:
         store: 쓸 벡터 저장소(`get_store`가 돌려준 것).
@@ -294,8 +329,22 @@ def _write_documents(store: VectorStore, docs: dict[str, Document], what: str) -
     """
     if not docs:
         return
+    ids = list(docs.keys())
+    documents = list(docs.values())
+    texts = [_embedding_text(doc) for doc in documents]
     try:
-        store.add_documents(list(docs.values()), ids=list(docs.keys()))
+        if texts == [doc.page_content for doc in documents]:
+            store.add_documents(documents, ids=ids)
+        else:
+            vectors = store.embeddings.embed_documents(texts)
+            for start in range(0, len(ids), _UPSERT_BATCH):
+                batch = slice(start, start + _UPSERT_BATCH)
+                store._collection.upsert(
+                    ids=ids[batch],
+                    embeddings=vectors[batch],
+                    documents=[doc.page_content for doc in documents[batch]],
+                    metadatas=[doc.metadata for doc in documents[batch]],
+                )
     except MpilotError:
         raise
     except Exception as e:  # OpenAI·Chroma 오류 종류가 많아 한곳에서 의존 오류로 바꾼다.
