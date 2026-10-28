@@ -8,7 +8,7 @@
     - 같은 PDF에서는 항상 같은 청크·같은 `chunk_no`를 낸다(재현성).
     - 청크 ID 구성 요소(`manual_id`, `page`, `chunk_no`)를 확정한다.
       ID 형식 `manual:<manual_id>:<page>:<chunk_no>`와 청킹 규칙은 1주차 초에 확정·동결한다.
-      사람이 `customer_procedure_ref_ids`를 쓸 때 이 ID를 쓰므로 동결 뒤에는 바꾸지 않는다.
+      `scripts.build_error_codes`가 이 ID로 `customer_procedure_ref_ids`를 만들므로 동결 뒤에는 바꾸지 않는다.
     - 구성 요소에 `:`가 들어 있으면 적재 오류로 본다.
     - DB·벡터 저장소에는 접근하지 않는다. 색인 생성은 `vectordb`가 맡는다.
     - 이미지 페이지 OCR(`set_vision_model` 등)은 현재 매뉴얼 4종에 이미지 페이지가 없어 파일 끝에 주석으로 보류해 두었다.
