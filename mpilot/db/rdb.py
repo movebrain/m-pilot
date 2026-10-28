@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from mpilot.models import (
     InvalidStateError,
     NotFoundError,
     Resolution,
+    Route,
     ServiceCase,
     Source,
     ValidationError,
@@ -450,7 +452,70 @@ def load_seed_history_from_csv(path: Path) -> int:
         ValidationError: 에러코드 표에 없는 코드, 필수값 누락, 건수 불일치, 완료 시각이 신고 시각보다 빠를 때.
         DependencyError: 파일을 읽거나 DB에 쓰는 데 실패했을 때.
     """
-    ...
+    engine = _get_engine()  # connect 전이면 여기서 DependencyError
+    columns = ["case_id", "equipment", "code", "memo", "cause", "action", "result",
+               "created_at", "completed_at"]  # spec §3.4 history_seed.csv
+    try:
+        # dtype=str·keep_default_na=False: 숫자·빈칸을 pandas가 바꾸지 않게 글자 그대로 읽는다(자동 보정 금지).
+        df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise DependencyError(f"파일을 읽을 수 없습니다({type(e).__name__}): {path}") from None
+    except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        raise ValidationError(f"{Path(path).name}: CSV 형식이 올바르지 않습니다: {e}") from None
+    if set(df.columns) != set(columns) or df.empty:
+        raise ValidationError(f"{Path(path).name}: 머리글이 {columns}와 다르거나 데이터가 없습니다.")
+    rows = df.to_dict("records")
+
+    known_codes = {(c.equipment, c.code) for e in Equipment for c in fetch_error_codes(e)}
+
+    cases, records = [], []
+    for no, row in enumerate(rows, start=1):
+        case_id = row["case_id"]
+        # 메모 밖의 값이 모두 채워져야 한다(공백뿐이면 빈 값, 열이 모자란 행은 NaN).
+        if not all(isinstance(row[c], str) and (c == "memo" or row[c].strip()) for c in columns):
+            raise ValidationError(f"{no}번째 행: 필수값이 비었거나 열 개수가 다릅니다.")
+        if ":" in case_id:  # 문서 ID history:<case_id>의 구분자(spec §3.4)
+            raise ValidationError(f"{no}번째 행: case_id에 ':'가 있습니다: {case_id}")
+        if len(case_id) > service_cases.c.case_id.type.length:  # VARCHAR(64), 넘으면 MySQL이 거부
+            raise ValidationError(f"{no}번째 행: case_id가 너무 깁니다: {case_id}")
+        if any(c["case_id"] == case_id for c in cases):
+            raise ValidationError(f"{no}번째 행: case_id 중복 {case_id}")
+        try:
+            # 설비 4종·메모 2,000자·원인/조치/결과 1~5,000자는 models 규칙으로 검증한다.
+            data = CaseInput(equipment=row["equipment"], code=row["code"],
+                             memo=row["memo"] if row["memo"].strip() else None)
+            record = Resolution(cause=row["cause"], action=row["action"], result=row["result"])
+            # 공통 도구: UTC로 바꾸고 시간대를 뗀다. 시간대가 없으면 짐작하지 않고 ValidationError.
+            created_at = _to_db_time(datetime.fromisoformat(row["created_at"]))
+            completed_at = _to_db_time(datetime.fromisoformat(row["completed_at"]))
+        except (ValueError, ValidationError) as e:
+            raise ValidationError(f"{no}번째 행 값이 올바르지 않습니다: {e}") from None
+        if (data.equipment, data.code) not in known_codes:
+            raise ValidationError(f"{no}번째 행: 에러코드 표에 없는 코드 {data.equipment}/{data.code}")
+        if completed_at < created_at:
+            raise ValidationError(f"{no}번째 행: 완료 시각이 신고 시각보다 빠릅니다.")
+
+        # 시드 고정값(spec §3.4). 컬럼 이름은 최종 ERD를 따른다(#61).
+        cases.append({"case_id": case_id, "equipment": data.equipment.value, "code": data.code,
+                      "customer_memo": data.memo,
+                      "source": Source.SEED.value, "status": CaseStatus.COMPLETED.value,
+                      "route": Route.SUPPORT.value, "guide_failure": None, "self_guide_answer": None,
+                      "created_at": created_at, "completed_at": completed_at})
+        records.append({"case_id": case_id, **record.model_dump()})
+
+    per_equipment = 50  # 설비당 50건, 총 200건(spec §3.4)
+    count = Counter(c["equipment"] for c in cases)
+    if any(count[e.value] != per_equipment for e in Equipment):
+        raise ValidationError(f"건수 불일치: 설비당 {per_equipment}건이어야 합니다. "
+                              f"현재 { {e.value: count[e.value] for e in Equipment} }")
+
+    try:
+        with engine.begin() as conn:  # 신고 건 → 조치 기록 순(FK), 한 트랜잭션
+            conn.execute(insert(service_cases), cases)
+            conn.execute(insert(resolutions), records)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"시드 이력을 DB에 저장하지 못했습니다({type(e).__name__}).") from None
+    return len(cases)
 
 
 def fetch_cases(
