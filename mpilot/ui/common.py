@@ -218,7 +218,7 @@ def citation_label(citation: Citation) -> str:
     return f"[{CITATION_KIND_LABELS[citation.kind]}] {citation.locator}"
 
 
-def format_answer_markdown(answer: Answer) -> str:
+def format_answer_markdown(answer: Answer, show_notice: bool = False) -> str:
     """답변을 화면용 Markdown으로 바꾼다. 고객 안내와 엔지니어 대화가 같이 쓴다.
 
     `answered`이면 번호 붙은 단계와 단계별 출처를, 보류 판정이면 판정 라벨과 안내 문구만 보인다.
@@ -226,6 +226,8 @@ def format_answer_markdown(answer: Answer) -> str:
 
     Args:
         answer: RAG 답변.
+        show_notice: `True`이고 `answered`인 답변에 `notice`가 있으면 단계 앞에 인용문으로 보인다
+            (다른 설비 자료로 답했다는 안내). 고객 안내는 이 값을 쓰지 않는다.
 
     Returns:
         str: Markdown 문자열.
@@ -235,6 +237,8 @@ def format_answer_markdown(answer: Answer) -> str:
         return f"**{verdict_label(answer.verdict)}**\n\n{notice}"
 
     lines: list[str] = []
+    if show_notice and answer.notice:
+        lines.extend([f"> {answer.notice}", ""])
     for no, step in enumerate(answer.steps, start=1):
         lines.append(f"{no}. {step.text}")
         if step.citations:

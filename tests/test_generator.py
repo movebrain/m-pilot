@@ -16,7 +16,7 @@ from mpilot.models import (
     SearchHit,
     Verdict,
 )
-from mpilot.rag import generator
+from mpilot.rag import generator, prompts
 
 
 def make_hit() -> SearchHit:
@@ -122,3 +122,42 @@ def test_모델_호출_실패는_예외_종류만_출력하고_원인을_잇는�
     assert "RuntimeError" in out
     assert "요청 내용 비밀 메모" not in out
     assert info.value.__cause__ is error
+
+
+# --- 다른 설비 폴백 ----------------------------------------------------
+def make_other_equipment_hit() -> SearchHit:
+    return make_hit().model_copy(update={"equipment": Equipment.AGV})
+
+
+def test_다른_설비_근거_인용은_기본으로_검증_실패():
+    assert generator.passes_answer_check(make_answer("41쪽 9.4"), [make_other_equipment_hit()], Equipment.SRM) is False
+
+
+def test_다른_설비_근거_인용은_허용하면_통과한다():
+    answer = make_answer("41쪽 9.4")
+    assert generator.passes_answer_check(answer, [make_other_equipment_hit()], Equipment.SRM, allow_other_equipment=True) is True
+
+
+def test_다른_설비를_허용해도_없는_근거나_다른_locator는_검증_실패():
+    hit = make_other_equipment_hit()
+    assert generator.passes_answer_check(make_answer("99쪽"), [hit], Equipment.SRM, allow_other_equipment=True) is False
+    assert generator.passes_answer_check(make_answer("41쪽 9.4"), [], Equipment.SRM, allow_other_equipment=True) is False
+
+
+def test_고객_안내_검증은_다른_설비_근거를_계속_막는다():
+    assert generator.passes_guidance_check(make_answer("41쪽 9.4"), [make_other_equipment_hit()], make_error_code()) is False
+
+
+def test_근거_태그에_설비는_폴백일_때만_적는다():
+    assert 'equipment="AGV"' in generator._format_evidence([make_other_equipment_hit()], with_equipment=True)
+    assert "equipment=" not in generator._format_evidence([make_other_equipment_hit()])
+
+
+@pytest.mark.parametrize("cross_equipment", [False, True])
+def test_폴백일_때만_엔지니어_시스템_지시문에_다른_설비_규칙을_붙인다(monkeypatch, cross_equipment):
+    sent = []
+    monkeypatch.setattr(generator, "_invoke", lambda messages: sent.append(messages[0].content))
+    context = CaseContext(error_code=make_error_code(), memo="")
+    request = ChatRequest.model_construct(question="질문", turns=[])
+    generator.generate_engineer_answer(context, [make_hit()], request, cross_equipment=cross_equipment)
+    assert (prompts.ENGINEER_CROSS_EQUIPMENT_RULES in sent[0]) is cross_equipment

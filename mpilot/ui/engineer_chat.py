@@ -68,7 +68,7 @@ def chat_markdown(turns: list[ChatTurn]) -> str:
     if not turns:
         return EMPTY_CHAT_NOTICE
     blocks = [
-        f"**Q{no}.** {turn.question}\n\n{common.format_answer_markdown(turn.answer)}"
+        f"**Q{no}.** {turn.question}\n\n{common.format_answer_markdown(turn.answer, show_notice=True)}"
         for no, turn in enumerate(turns, start=1)
     ]
     return "\n\n---\n\n".join(blocks)
