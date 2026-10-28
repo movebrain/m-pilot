@@ -1,7 +1,7 @@
-"""parser 표 추출·OCR 테스트: _extract_tables, _validate_table, _table_to_drafts, _find_image_pages,
-_ocr_page, _ocr_to_drafts, set_vision_model.
+"""parser 표 추출 테스트: _extract_tables, _validate_table, _table_to_drafts.
 
-OpenAI 없이 돈다. 표는 저장소의 실제 매뉴얼 PDF로, OCR은 Pillow로 만든 이미지 PDF와 가짜 비전 모델로 확인한다.
+저장소의 실제 매뉴얼 PDF로 확인한다. 이미지 페이지·OCR 테스트(_find_image_pages, _ocr_page, _ocr_to_drafts,
+set_vision_model)는 parser의 OCR 코드와 함께 주석으로 보류해 두었다(파일 아래쪽).
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ import re
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw
+# from PIL import Image, ImageDraw  # OCR 테스트 보류
 
 from mpilot.db import parser
 from mpilot.db.parser import ChunkDraft, RawTable
-from mpilot.models import DependencyError, ValidationError
+from mpilot.models import DependencyError  # OCR 테스트를 되살리면 ValidationError도 import한다
 
 ROOT = Path(__file__).resolve().parents[1]
 MANUALS = ROOT / "data" / "manuals"
@@ -50,45 +50,46 @@ def table(rows, caption="표 9-4. 에러 코드 일람", continued=False) -> Raw
     return RawTable(page=3, index=1, bbox=(40.0, 120.0, 550.0, 700.0), caption=caption, rows=rows, continued=continued)
 
 
-def image_pdf(path: Path, pages: int = 1) -> Path:
-    """표지 한 쪽 뒤에 글자 없이 그림만 있는 쪽이 `pages`개 있는 PDF를 만든다(스캔본처럼 텍스트를 읽을 수 없는 쪽).
-
-    매뉴얼처럼 PDF 첫 쪽은 표지라 청킹 대상이 아니다. 그래서 인쇄 쪽 번호 1은 PDF 둘째 쪽이다.
-    """
-    images = []
-    for i in range(pages + 1):
-        img = Image.new("RGB", (595, 842), "white")
-        ImageDraw.Draw(img).rectangle((60, 80 + i * 10, 500, 300), outline="black", width=4)
-        images.append(img)
-    images[0].save(path, "PDF", save_all=True, append_images=images[1:])
-    return path
-
-
-class FakeVisionModel:
-    """받은 메시지를 기록하고 정해진 답을 돌려주는 가짜 비전 모델."""
-
-    def __init__(self, reply="| 항목 | 값 |\n| --- | --- |\n| 정격 하중 | 1,000 kg |", error=None, replies=None):
-        self.replies = list(replies) if replies is not None else [reply]
-        self.error = error
-        self.calls = []
-
-    def invoke(self, messages):
-        self.calls.append(messages)
-        if self.error:
-            raise self.error
-        reply = self.replies[min(len(self.calls), len(self.replies)) - 1]
-
-        class Response:
-            content = reply
-
-        return Response()
-
-
-@pytest.fixture
-def vision(monkeypatch):
-    """테스트마다 비전 모델 설정을 비운 상태로 시작하고 끝나면 되돌린다."""
-    monkeypatch.setattr(parser, "_vision_model", None)
-    return parser
+# --- OCR 테스트 준비물(보류: parser의 OCR 코드와 함께 주석 처리) ---
+# def image_pdf(path: Path, pages: int = 1) -> Path:
+#     """표지 한 쪽 뒤에 글자 없이 그림만 있는 쪽이 `pages`개 있는 PDF를 만든다(스캔본처럼 텍스트를 읽을 수 없는 쪽).
+#
+#     매뉴얼처럼 PDF 첫 쪽은 표지라 청킹 대상이 아니다. 그래서 인쇄 쪽 번호 1은 PDF 둘째 쪽이다.
+#     """
+#     images = []
+#     for i in range(pages + 1):
+#         img = Image.new("RGB", (595, 842), "white")
+#         ImageDraw.Draw(img).rectangle((60, 80 + i * 10, 500, 300), outline="black", width=4)
+#         images.append(img)
+#     images[0].save(path, "PDF", save_all=True, append_images=images[1:])
+#     return path
+#
+#
+# class FakeVisionModel:
+#     """받은 메시지를 기록하고 정해진 답을 돌려주는 가짜 비전 모델."""
+#
+#     def __init__(self, reply="| 항목 | 값 |\n| --- | --- |\n| 정격 하중 | 1,000 kg |", error=None, replies=None):
+#         self.replies = list(replies) if replies is not None else [reply]
+#         self.error = error
+#         self.calls = []
+#
+#     def invoke(self, messages):
+#         self.calls.append(messages)
+#         if self.error:
+#             raise self.error
+#         reply = self.replies[min(len(self.calls), len(self.replies)) - 1]
+#
+#         class Response:
+#             content = reply
+#
+#         return Response()
+#
+#
+# @pytest.fixture
+# def vision(monkeypatch):
+#     """테스트마다 비전 모델 설정을 비운 상태로 시작하고 끝나면 되돌린다."""
+#     monkeypatch.setattr(parser, "_vision_model", None)
+#     return parser
 
 
 # --- _extract_tables ------------------------------------------------------
@@ -245,120 +246,122 @@ def test_table_to_drafts_marks_continued_and_handles_missing_caption():
     assert parser._table_to_drafts(table([])) == []
 
 
-# --- _find_image_pages ----------------------------------------------------
+# --- [보류] 이미지 페이지·OCR 테스트(parser의 OCR 코드가 주석이라 함께 막아 둠) ---
 
-
-@pytest.mark.parametrize(
-    ("text", "areas", "expected"),
-    [
-        ("", [], True),  # 글자 없음
-        ("본문", [], False),
-        ("본문", [0.25 * 1000], True),  # 경계값: 25%면 이미지 페이지
-        ("본문", [0.1 * 1000, 0.1 * 1000], False),  # 합 20%
-    ],
-)
-def test_is_image_page_rule(text, areas, expected):
-    assert parser._is_image_page(text, 1000.0, areas) is expected
-
-
-def test_find_image_pages_detects_image_only_pages_and_skips_cover(tmp_path):
-    # PDF는 표지 + 그림 쪽 2개. 표지는 청킹 대상이 아니라 빠지고, 나머지는 인쇄 번호 1, 2로 센다.
-    assert parser._find_image_pages(image_pdf(tmp_path / "scan.pdf", pages=2)) == [1, 2]
-
-
-def test_find_image_pages_is_empty_for_current_manual():
-    # 현재 매뉴얼에는 이미지 페이지가 없다(실측). 바뀌면 OCR 경로가 실제 실행에 들어온다.
-    assert parser._find_image_pages(SRM_PDF) == []
-
-
-def test_find_image_pages_wraps_unreadable_pdf(tmp_path):
-    with pytest.raises(DependencyError):
-        parser._find_image_pages(tmp_path / "missing.pdf")
-
-
-# --- set_vision_model / _ocr_page ------------------------------------------
-
-
-def test_ocr_page_sends_300dpi_png_with_transcription_prompt(vision, tmp_path):
-    fake = FakeVisionModel(reply="  전사 결과\n  ")
-    vision.set_vision_model(fake)
-    assert vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1) == "전사 결과"
-
-    (message,) = fake.calls[0]
-    text_part, image_part = message.content
-    assert "OCR 작업" in text_part["text"] and "그대로 전사" in text_part["text"]
-    assert len(fake.calls) == 1  # 거부가 아니면 다시 부르지 않는다
-    url = image_part["image_url"]["url"]
-    assert url.startswith("data:image/png;base64,")
-    assert image_part["image_url"]["detail"] == "high"
-    # 300dpi: A4 폭 595pt → 약 2480px
-    import base64
-    import io
-
-    width, _ = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).size
-    assert abs(width - 595 * 300 / 72) <= 3
-
-
-def test_ocr_page_without_model_is_dependency_error(vision, tmp_path):
-    with pytest.raises(DependencyError, match="set_vision_model"):
-        vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1)
-
-
-def test_ocr_page_wraps_model_failure(vision, tmp_path):
-    vision.set_vision_model(FakeVisionModel(error=TimeoutError("timed out")))
-    with pytest.raises(DependencyError, match="TimeoutError"):
-        vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1)
-
-
-@pytest.mark.parametrize("page_no", [0, 2])  # 0은 표지, 2는 표지를 뺀 쪽 수(1)를 넘음
-def test_ocr_page_rejects_page_out_of_range(vision, tmp_path, page_no):
-    vision.set_vision_model(FakeVisionModel())
-    with pytest.raises(ValidationError):
-        vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), page_no)
-
-
-def test_ocr_page_retries_in_english_once_after_refusal(vision, tmp_path):
-    fake = FakeVisionModel(replies=["I'm sorry, I can't assist with that.", "| S135 | 시간 초과 |"])
-    vision.set_vision_model(fake)
-    assert vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1) == "| S135 | 시간 초과 |"
-    assert len(fake.calls) == 2
-    retry_text = fake.calls[1][0].content[0]["text"]
-    assert "Plain OCR task" in retry_text
-    assert fake.calls[1][0].content[1] == fake.calls[0][0].content[1]  # 같은 이미지를 다시 보낸다
-
-
-def test_ocr_page_refused_twice_is_dependency_error(vision, tmp_path):
-    fake = FakeVisionModel(replies=["I'm sorry, I can't assist with that."])
-    vision.set_vision_model(fake)
-    with pytest.raises(DependencyError, match="거부"):
-        vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1)
-    assert len(fake.calls) == 2
-
-
-def test_ocr_page_joins_list_content(vision, tmp_path):
-    fake = FakeVisionModel(reply=[{"type": "text", "text": "첫 줄"}, {"type": "text", "text": " 둘째"}])
-    vision.set_vision_model(fake)
-    assert vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1) == "첫 줄 둘째"
-
-
-# --- _ocr_to_drafts -------------------------------------------------------
-
-
-def test_ocr_to_drafts_empty_text_gives_no_drafts():
-    assert parser._ocr_to_drafts("", 5) == []
-    assert parser._ocr_to_drafts("  \n\n ", 5) == []
-
-
-def test_ocr_to_drafts_short_text_is_one_draft():
-    assert parser._ocr_to_drafts("첫 문단\n\n둘째 문단", 5) == [
-        ChunkDraft(page=5, top=0.0, kind="ocr", section=None, text="첫 문단\n\n둘째 문단")
-    ]
-
-
-def test_ocr_to_drafts_groups_paragraphs_under_limit_without_cutting():
-    paragraphs = [f"{i}번 " + "다" * 300 for i in range(6)] + ["라" * (parser.DRAFT_MAX_CHARS + 10)]
-    drafts = parser._ocr_to_drafts("\n\n".join(paragraphs), 7)
-    assert all(d.kind == "ocr" and d.page == 7 for d in drafts)
-    assert all(len(d.text) <= parser.DRAFT_MAX_CHARS for d in drafts[:-1])
-    assert drafts[-1].text == paragraphs[-1]  # 긴 문단은 자르지 않는다
-    assert "\n\n".join(d.text for d in drafts) == "\n\n".join(paragraphs)
+# # --- _find_image_pages ----------------------------------------------------
+#
+#
+# @pytest.mark.parametrize(
+#     ("text", "areas", "expected"),
+#     [
+#         ("", [], True),  # 글자 없음
+#         ("본문", [], False),
+#         ("본문", [0.25 * 1000], True),  # 경계값: 25%면 이미지 페이지
+#         ("본문", [0.1 * 1000, 0.1 * 1000], False),  # 합 20%
+#     ],
+# )
+# def test_is_image_page_rule(text, areas, expected):
+#     assert parser._is_image_page(text, 1000.0, areas) is expected
+#
+#
+# def test_find_image_pages_detects_image_only_pages_and_skips_cover(tmp_path):
+#     # PDF는 표지 + 그림 쪽 2개. 표지는 청킹 대상이 아니라 빠지고, 나머지는 인쇄 번호 1, 2로 센다.
+#     assert parser._find_image_pages(image_pdf(tmp_path / "scan.pdf", pages=2)) == [1, 2]
+#
+#
+# def test_find_image_pages_is_empty_for_current_manual():
+#     # 현재 매뉴얼에는 이미지 페이지가 없다(실측). 바뀌면 OCR 경로가 실제 실행에 들어온다.
+#     assert parser._find_image_pages(SRM_PDF) == []
+#
+#
+# def test_find_image_pages_wraps_unreadable_pdf(tmp_path):
+#     with pytest.raises(DependencyError):
+#         parser._find_image_pages(tmp_path / "missing.pdf")
+#
+#
+# # --- set_vision_model / _ocr_page ------------------------------------------
+#
+#
+# def test_ocr_page_sends_300dpi_png_with_transcription_prompt(vision, tmp_path):
+#     fake = FakeVisionModel(reply="  전사 결과\n  ")
+#     vision.set_vision_model(fake)
+#     assert vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1) == "전사 결과"
+#
+#     (message,) = fake.calls[0]
+#     text_part, image_part = message.content
+#     assert "OCR 작업" in text_part["text"] and "그대로 전사" in text_part["text"]
+#     assert len(fake.calls) == 1  # 거부가 아니면 다시 부르지 않는다
+#     url = image_part["image_url"]["url"]
+#     assert url.startswith("data:image/png;base64,")
+#     assert image_part["image_url"]["detail"] == "high"
+#     # 300dpi: A4 폭 595pt → 약 2480px
+#     import base64
+#     import io
+#
+#     width, _ = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).size
+#     assert abs(width - 595 * 300 / 72) <= 3
+#
+#
+# def test_ocr_page_without_model_is_dependency_error(vision, tmp_path):
+#     with pytest.raises(DependencyError, match="set_vision_model"):
+#         vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1)
+#
+#
+# def test_ocr_page_wraps_model_failure(vision, tmp_path):
+#     vision.set_vision_model(FakeVisionModel(error=TimeoutError("timed out")))
+#     with pytest.raises(DependencyError, match="TimeoutError"):
+#         vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1)
+#
+#
+# @pytest.mark.parametrize("page_no", [0, 2])  # 0은 표지, 2는 표지를 뺀 쪽 수(1)를 넘음
+# def test_ocr_page_rejects_page_out_of_range(vision, tmp_path, page_no):
+#     vision.set_vision_model(FakeVisionModel())
+#     with pytest.raises(ValidationError):
+#         vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), page_no)
+#
+#
+# def test_ocr_page_retries_in_english_once_after_refusal(vision, tmp_path):
+#     fake = FakeVisionModel(replies=["I'm sorry, I can't assist with that.", "| S135 | 시간 초과 |"])
+#     vision.set_vision_model(fake)
+#     assert vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1) == "| S135 | 시간 초과 |"
+#     assert len(fake.calls) == 2
+#     retry_text = fake.calls[1][0].content[0]["text"]
+#     assert "Plain OCR task" in retry_text
+#     assert fake.calls[1][0].content[1] == fake.calls[0][0].content[1]  # 같은 이미지를 다시 보낸다
+#
+#
+# def test_ocr_page_refused_twice_is_dependency_error(vision, tmp_path):
+#     fake = FakeVisionModel(replies=["I'm sorry, I can't assist with that."])
+#     vision.set_vision_model(fake)
+#     with pytest.raises(DependencyError, match="거부"):
+#         vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1)
+#     assert len(fake.calls) == 2
+#
+#
+# def test_ocr_page_joins_list_content(vision, tmp_path):
+#     fake = FakeVisionModel(reply=[{"type": "text", "text": "첫 줄"}, {"type": "text", "text": " 둘째"}])
+#     vision.set_vision_model(fake)
+#     assert vision._ocr_page(image_pdf(tmp_path / "scan.pdf"), 1) == "첫 줄 둘째"
+#
+#
+# # --- _ocr_to_drafts -------------------------------------------------------
+#
+#
+# def test_ocr_to_drafts_empty_text_gives_no_drafts():
+#     assert parser._ocr_to_drafts("", 5) == []
+#     assert parser._ocr_to_drafts("  \n\n ", 5) == []
+#
+#
+# def test_ocr_to_drafts_short_text_is_one_draft():
+#     assert parser._ocr_to_drafts("첫 문단\n\n둘째 문단", 5) == [
+#         ChunkDraft(page=5, top=0.0, kind="ocr", section=None, text="첫 문단\n\n둘째 문단")
+#     ]
+#
+#
+# def test_ocr_to_drafts_groups_paragraphs_under_limit_without_cutting():
+#     paragraphs = [f"{i}번 " + "다" * 300 for i in range(6)] + ["라" * (parser.DRAFT_MAX_CHARS + 10)]
+#     drafts = parser._ocr_to_drafts("\n\n".join(paragraphs), 7)
+#     assert all(d.kind == "ocr" and d.page == 7 for d in drafts)
+#     assert all(len(d.text) <= parser.DRAFT_MAX_CHARS for d in drafts[:-1])
+#     assert drafts[-1].text == paragraphs[-1]  # 긴 문단은 자르지 않는다
+#     assert "\n\n".join(d.text for d in drafts) == "\n\n".join(paragraphs)
