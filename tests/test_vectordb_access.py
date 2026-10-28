@@ -6,6 +6,8 @@ OpenAI 대신 결정적 가짜 임베딩을 쓰고, Chroma는 메모리 클라�
 
 from __future__ import annotations
 
+import importlib
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -111,9 +113,22 @@ def test_connect_failure_is_dependency_error(monkeypatch):
     def boom(**_):
         raise RuntimeError("초기화 실패")
 
-    monkeypatch.setattr(vectordb, "Chroma", boom)
+    monkeypatch.setattr("langchain_chroma.Chroma", boom)
     with pytest.raises(DependencyError):
         vectordb.connect(DeterministicFakeEmbedding(size=16))
+
+
+def test_chroma_import_failure_is_dependency_error_not_import_error(monkeypatch):
+    # sqlite3가 3.35 미만이면 langchain_chroma(chromadb)를 import하는 순간 실패한다.
+    # 그래도 vectordb 모듈 import(= 앱 시작, --fake 포함)는 되고, connect에서만 DependencyError가 나야 한다.
+    monkeypatch.setitem(sys.modules, "langchain_chroma", None)  # 이 상태에서 import하면 실패한다
+    try:
+        importlib.reload(vectordb)  # 모듈 맨 위에서 Chroma를 불러오면 여기서 실패한다
+        with pytest.raises(DependencyError):
+            vectordb.connect(DeterministicFakeEmbedding(size=16))
+    finally:
+        monkeypatch.undo()
+        importlib.reload(vectordb)  # 다음 테스트를 위해 원래 상태로 되돌린다
 
 
 def test_get_document_after_rebuild_search_index(connected):

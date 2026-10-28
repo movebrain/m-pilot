@@ -27,8 +27,6 @@ from __future__ import annotations
 from datetime import UTC
 from typing import TYPE_CHECKING
 
-from langchain_chroma import Chroma
-
 from mpilot.models import (
     CaseDetail,
     CaseStatus,
@@ -64,6 +62,10 @@ def connect(embeddings: Embeddings) -> None:
     """
     global _stores
     try:
+        # import 순간 sqlite3 버전 검사(3.35 미만이면 RuntimeError)가 있어, 모듈 맨 위가 아니라 여기서 불러온다.
+        # 그래야 이 환경에서도 앱(--fake 포함)은 켜지고, 실패는 아래에서 DependencyError로 바뀐다.
+        from langchain_chroma import Chroma
+
         # client·persist_directory를 주지 않으면 메모리 Chroma다(spec §2.1).
         _stores = {kind: Chroma(collection_name=kind.value, embedding_function=embeddings)
                    for kind in CitationKind}
