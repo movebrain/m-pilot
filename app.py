@@ -10,7 +10,8 @@
       → 화면 조립 → 실행.
     - 초기화가 `ValidationError`·`DependencyError`로 실패하면 화면을 띄우지 않고 콘솔에 고정 문구를 출력한 뒤 종료한다.
       예외의 원문은 비밀 정보를 담을 수 있어 출력하지 않는다.
-    - `--fake`로 실행하면 초기화를 건너뛰고 `service`의 가짜 데이터로 화면만 띄운다(DB·RAG 연결 전 화면 확인용).
+    - `--fake`로 실행하면 초기화를 건너뛰고 `fake_service.install()`로 `service` 함수를 메모리 구현으로 바꿔
+      화면만 띄운다(DB·RAG 연결 전 화면 확인용).
     - 화면 상태 3개(`role`, `case_id`, `screen`)를 `gr.State`로 만들어 그 역할의 화면 함수에 같게 넘긴다.
       `role`은 앱마다 고정하고, `screen`은 그 역할의 첫 화면에서 시작한다.
     - 모든 화면 위에 "모든 데이터는 가상" 배너를 보인다.
@@ -28,7 +29,7 @@ from collections.abc import Callable, Sequence
 
 import gradio as gr
 
-from mpilot import service
+from mpilot import fake_service, service
 from mpilot.config import load_config
 from mpilot.db import rdb, vectordb
 from mpilot.models import DependencyError, Role, ValidationError
@@ -134,7 +135,9 @@ def main(role: Role, port: int, argv: Sequence[str] | None = None) -> None:
         SystemExit: 초기화가 실패했을 때(종료 코드 1). 화면은 띄우지 않는다.
     """
     args = _parse_args(argv)
-    if not args.fake:
+    if args.fake:
+        fake_service.install()
+    else:
         try:
             initialize()
         except (ValidationError, DependencyError) as e:
