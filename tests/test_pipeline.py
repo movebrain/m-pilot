@@ -156,7 +156,14 @@ def test_음수_임계값은_SearchSettings_생성_오류():
 def test_다른_설비나_컨베이어를_말해도_신고_설비로_검색한다(fakes, question):
     answer = ask(question, equipment="AGV")
     assert answer.verdict == Verdict.ANSWERED
-    assert fakes.searches == [("manual", "AGV", question, 3), ("history", "AGV", question, 3)]
+    expected_query = f"S-104 주행 위치 편차 {question}"
+    assert [
+        (kind, equipment.value, query, k)
+        for kind, equipment, query, k in fakes.searches
+    ] == [
+        ("manual", "AGV", expected_query, 3),
+        ("history", "AGV", expected_query, 3),
+    ]
 
 
 def test_밖_설비_질문에_근거가_없으면_근거_부족으로_알린다(fakes):
@@ -171,9 +178,13 @@ def test_밖_설비_질문에_근거가_없으면_근거_부족으로_알린다(
 def test_신고_설비로_검색하고_설정한_건수를_넘긴다(fakes):
     settings = SearchSettings(manual_k=4, history_k=2, evidence_threshold=0.35)
     ask("위치가 어긋나요", settings)
-    assert fakes.searches == [
-        ("manual", "SRM", "위치가 어긋나요", 4),
-        ("history", "SRM", "위치가 어긋나요", 2),
+    expected_query = "S-104 주행 위치 편차 위치가 어긋나요"
+    assert [
+        (kind, equipment.value, query, k)
+        for kind, equipment, query, k in fakes.searches
+    ] == [
+        ("manual", "SRM", expected_query, 4),
+        ("history", "SRM", expected_query, 2),
     ]
 
 
