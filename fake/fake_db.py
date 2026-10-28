@@ -34,7 +34,7 @@ from pathlib import Path
 
 from langchain_core.embeddings import Embeddings
 
-from mpilot import fake_service
+from fake import fake_service
 from mpilot.db import parser, rdb, vectordb
 from mpilot.models import (
     ActionOwner,

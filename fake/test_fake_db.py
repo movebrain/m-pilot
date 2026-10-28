@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from mpilot import fake_db, service
+from fake import fake_db
+from mpilot import service
 from mpilot.config import AppConfig
 from mpilot.db import parser, rdb, vectordb
 from mpilot.models import (

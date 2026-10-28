@@ -104,7 +104,6 @@
 │   ├── config.py                      # [공통] 앱 설정 로드·검증
 │   ├── models.py                      # [공통] 업무 데이터 정의와 순수 업무 규칙
 │   ├── service.py                     # [UI] 화면과 DB·RAG를 잇는 유즈케이즈(접수·질문·완료 등)
-│   ├── fake_service.py                # [UI] --fake 실행용 가짜 service(원자료 CSV + 메모리). service와 같은 공개 함수
 │   ├── db/                            # [DB]
 │   │   ├── parser.py                  # 매뉴얼 PDF를 출처가 붙은 검색 단위로 분해
 │   │   ├── schemas.py                 # 관계형 DB 구조·연결 설정 정의
@@ -122,6 +121,11 @@
 │       ├── engineer_dashboard.py      # 엔지니어 대시보드
 │       ├── engineer_chat.py           # 장애 분석 대화
 │       └── engineer_resolution.py     # 조치 이력 저장
+├── fake/                              # [UI] 수동 테스트·시연용 가짜 구현. 사용법·재현 절차는 fake/README.md
+│   ├── fake_service.py                # --fake 실행용 가짜 service(원자료 CSV + 메모리). service와 같은 공개 함수
+│   ├── fake_db.py                     # 가짜 rdb·vectordb·parser(메모리 + 진짜 Chroma). service·rag는 진짜 코드로 돈다
+│   ├── run.py                         # 가짜 DB 위에서 고객·엔지니어 앱 실행(`python -m fake.run`)
+│   └── test_*.py                      # 위 가짜들과 실행 진입점의 테스트
 ├── scripts/
 │   ├── init_db.py                     # [DB] DB 초기화·초기 자료 적재 실행
 │   └── evaluate.py                    # [RAG] RAG 품질 평가 실행·기록
@@ -317,9 +321,12 @@ stateDiagram-v2
 
 ```text
 app_customer.py, app_engineer.py ──→ app
-app.py ──→ ui/*, service, fake_service, config, models, db/rdb, db/vectordb, rag/generator
+app.py ──→ ui/*, service, fake/fake_service, config, models, db/rdb, db/vectordb, rag/generator
 service ──→ db/parser, db/rdb, db/vectordb, rag/pipeline, config, models
-fake_service ──→ service(바꿔 끼울 대상), config, models (app의 --fake만 install을 부른다)
+fake/fake_service ──→ service(바꿔 끼울 대상), config, models (app의 --fake만 install을 부른다)
+fake/fake_db ──→ fake/fake_service(CSV 로더·조회 도우미), db/parser, db/rdb, db/vectordb(바꿔 끼울 대상), models (fake/run만 install을 부른다)
+fake/run ──→ app, fake/fake_db, db/vectordb, rag/generator
+mpilot/* ──✗ fake/* (운영 코드는 fake를 import하지 않는다)
 rag/pipeline ──→ rag/retriever, rag/generator, models
 rag/retriever ──→ db/vectordb, models
 db/rdb ──→ db/schemas, models
