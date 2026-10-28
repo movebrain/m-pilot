@@ -29,7 +29,8 @@ from collections.abc import Callable, Sequence
 
 import gradio as gr
 
-from mpilot import fake_service, service
+from fake import fake_service
+from mpilot import service
 from mpilot.config import load_config
 from mpilot.db import rdb, vectordb
 from mpilot.models import DependencyError, Role, ValidationError

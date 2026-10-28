@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from mpilot import fake_service, service
+from fake import fake_service
+from mpilot import service
 from mpilot.models import (
     CaseInput,
     CaseStatus,
