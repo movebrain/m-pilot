@@ -181,7 +181,7 @@ def has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool:
     """검색 결과가 근거로 충분한지 판단한다.
 
     판단 기준은 각 근거의 `distance`와 `threshold`의 비교다. 비교 방식과 결합 규칙은
-    보류 정확도·정상 답변율 평가 결과를 보고 정한다. 아래는 바뀔 수 있는 초기안이다(#49에서 확정).
+    환각·과잉 보류 평가 결과(spec §2.7)를 보고 정한다. 아래는 바뀔 수 있는 초기안이다(#49에서 확정).
 
     - 경계: `distance <= threshold`인 근거가 하나라도 있으면 충분하다. 같으면 충분하다.
     - `distance`가 `None`인 근거는 비교에서 제외한다.
