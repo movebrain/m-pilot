@@ -184,7 +184,7 @@ def test_to_text_drafts_skips_empty_text():
 def test_agv_loto_numbered_list_stays_in_one_draft():
     drafts = _to_text_drafts(_split_sections(_extract_page_texts(AGV_PDF, [])))
     [loto] = [d for d in drafts if d.section == "7.4 LOTO (Lock-Out / Tag-Out) 절차"]
-    assert loto.page == 19
+    assert loto.page == 22  # 합본은 목차가 5쪽으로 늘어 원본(19쪽)보다 3쪽 뒤에 있다
     for step in range(1, 7):
         assert f"\n{step}. " in loto.text
 

@@ -147,10 +147,11 @@ def test_equipment_from_manual_id_rejects_unknown_code(manual_id):
 @pytest.mark.parametrize(
     ("file_name", "manual_id", "version", "equipment"),
     [
-        ("agv_spec_sheet_dummy_rev1_1.pdf", "HMX-AGV-TSM-001", "1.1", Equipment.AGV),
-        ("mini_loader_spec_sheet_dummy_rev1_1.pdf", "HMX-MLD-TSM-001", "1.1", Equipment.MINI_LOADER),
-        ("rtv_spec_sheet_dummy_rev2_1.pdf", "HMX-RTV-TSM-001", "2.1", Equipment.RTV),
-        ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.2", Equipment.SRM),
+        # 파일명의 rev는 원본 개정이고, 합본은 원본에 13장을 더한 개정이라 꼬리글 버전이 0.1 높다.
+        ("agv_spec_sheet_dummy_rev1_1.pdf", "HMX-AGV-TSM-001", "1.2", Equipment.AGV),
+        ("mini_loader_spec_sheet_dummy_rev1_1.pdf", "HMX-MLD-TSM-001", "1.2", Equipment.MINI_LOADER),
+        ("rtv_spec_sheet_dummy_rev2_1.pdf", "HMX-RTV-TSM-001", "2.2", Equipment.RTV),
+        ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.3", Equipment.SRM),
     ],
 )
 def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, equipment):
