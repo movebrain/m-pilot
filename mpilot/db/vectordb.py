@@ -27,6 +27,8 @@ from __future__ import annotations
 from datetime import UTC
 from typing import TYPE_CHECKING
 
+from langchain_chroma import Chroma
+
 from mpilot.models import (
     CaseDetail,
     CaseStatus,
@@ -35,6 +37,7 @@ from mpilot.models import (
     DependencyError,
     ErrorCode,
     MpilotError,
+    NotFoundError,
     Route,
     ValidationError,
 )
@@ -43,6 +46,8 @@ if TYPE_CHECKING:
     from langchain_core.documents import Document
     from langchain_core.embeddings import Embeddings
     from langchain_core.vectorstores import VectorStore
+
+_stores = {}  # connect가 만든 컬렉션별 저장소. 키는 CitationKind(manual, history)
 
 
 def connect(embeddings: Embeddings) -> None:
@@ -57,7 +62,13 @@ def connect(embeddings: Embeddings) -> None:
     Raises:
         DependencyError: 저장소를 초기화할 수 없을 때.
     """
-    ...
+    global _stores
+    try:
+        # client·persist_directory를 주지 않으면 메모리 Chroma다(spec §2.1).
+        _stores = {kind: Chroma(collection_name=kind.value, embedding_function=embeddings)
+                   for kind in CitationKind}
+    except Exception as e:
+        raise DependencyError("검색 저장소를 초기화할 수 없습니다.") from e
 
 
 def get_store(kind: CitationKind) -> VectorStore:
@@ -73,7 +84,13 @@ def get_store(kind: CitationKind) -> VectorStore:
         ValidationError: 지원하지 않는 종류일 때.
         DependencyError: 저장소에 접근할 수 없거나 `connect` 전에 불렀을 때.
     """
-    ...
+    try:
+        kind = CitationKind(kind)
+    except ValueError:
+        raise ValidationError(f"지원하지 않는 저장소 종류입니다: {kind}") from None
+    if kind not in _stores:
+        raise DependencyError("검색 저장소가 연결되지 않았습니다. vectordb.connect를 먼저 부르세요.")
+    return _stores[kind]
 
 
 def get_document(kind: CitationKind, ref_id: str) -> Document:
@@ -92,7 +109,20 @@ def get_document(kind: CitationKind, ref_id: str) -> Document:
         NotFoundError: 그 ID의 문서가 컬렉션에 없을 때.
         DependencyError: 저장소 조회에 실패했을 때.
     """
-    ...
+    from langchain_core.documents import Document
+
+    try:
+        store = get_store(kind)
+    except ValidationError:  # 계약 예외에 맞춰 모르는 종류는 '그 컬렉션에 없음'으로 본다
+        raise NotFoundError(f"검색 문서가 없습니다: {kind}/{ref_id}") from None
+    try:
+        found = store.get(ids=[ref_id])  # 유사도 검색이 아니라 ID로 정확히 찾는다
+    except Exception as e:
+        raise DependencyError("검색 문서를 조회하지 못했습니다.") from e
+    if not found["ids"]:
+        raise NotFoundError(f"검색 문서가 없습니다: {kind}/{ref_id}")
+    return Document(id=ref_id, page_content=found["documents"][0],
+                    metadata=found["metadatas"][0] or {})
 
 
 # ---------------------------------------------------------------------------
