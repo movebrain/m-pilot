@@ -21,6 +21,7 @@ from mpilot.models import (
     ErrorCode,
     NotFoundError,
     Role,
+    Resolution,
     Route,
     ServiceCase,
     Severity,
@@ -39,6 +40,9 @@ MANUAL = Citation(kind=CitationKind.MANUAL, ref_id="manual:srm_rev1_2:41:1", loc
 HISTORY = Citation(kind=CitationKind.HISTORY, ref_id="history:SEED-1", locator="SEED-1")
 
 
+RESOLUTION = Resolution(cause="엔코더 케이블 접촉 불량", action="커넥터 재체결", result="정상 동작 확인")
+
+
 def _detail(status=CaseStatus.IN_PROGRESS) -> CaseDetail:
     return CaseDetail(
         service_case=ServiceCase(
@@ -47,7 +51,7 @@ def _detail(status=CaseStatus.IN_PROGRESS) -> CaseDetail:
             completed_at=_NOW if status == CaseStatus.COMPLETED else None,
         ),
         error_code=_CODE,
-        resolution=None,
+        resolution=RESOLUTION if status == CaseStatus.COMPLETED else None,
     )
 
 
@@ -71,9 +75,17 @@ def test_case_summary_shows_case_fields():
 
 def test_chat_markdown_empty_and_order():
     assert chat.chat_markdown([]) == chat.EMPTY_CHAT_NOTICE
+    assert chat.chat_markdown([], completed=True) == chat.COMPLETED_NO_CHAT_NOTICE  # 완료 건은 질문 안내를 하지 않는다
     text = chat.chat_markdown([_turn(1, MANUAL), _turn(2)])
     assert text.index("질문1") < text.index("질문2")
     assert "근거가 부족합니다." in text  # 근거 부족은 안내만 보인다
+
+
+def test_resolution_markdown_only_for_completed():
+    text = chat.resolution_markdown(_detail(CaseStatus.COMPLETED))
+    for expected in ("엔코더 케이블 접촉 불량", "커넥터 재체결", "정상 동작 확인"):
+        assert expected in text
+    assert chat.resolution_markdown(_detail()) == ""
 
 
 def test_citations_are_unique_in_order():
@@ -117,19 +129,26 @@ def screen(monkeypatch):
 
 
 def test_enter_loads_case_and_chat(screen):
-    column, summary, text, pick, box, found, question, send, next_screen = (
+    column, summary, text, record, pick, box, found, question, resolve, send, next_screen = (
         screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
     )
-    assert column.visible and "SC-1" in summary and "질문1" in text
+    assert column.visible and "SC-1" in summary and "질문1" in text and record == ""
     assert pick.visible and found == [MANUAL]
-    assert question.interactive and send.interactive
+    assert question.visible and question.interactive and resolve.visible and send.visible and send.interactive
     assert next_screen == gr.skip()
 
 
-def test_enter_completed_case_blocks_question(screen):
+def test_enter_completed_case_is_read_only(screen):
     screen["detail"] = _detail(CaseStatus.COMPLETED)
-    *_, question, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
-    assert not question.interactive and not send.interactive
+    _, _, text, record, *_, question, resolve, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
+    assert "질문1" in text and "커넥터 재체결" in record  # 대화 기록과 조치 결과가 보인다
+    assert not question.visible and not resolve.visible and not send.visible
+
+
+def test_enter_completed_case_without_chat(screen):
+    screen["detail"], screen["turns"] = _detail(CaseStatus.COMPLETED), []
+    _, _, text, *_ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
+    assert text == chat.COMPLETED_NO_CHAT_NOTICE
 
 
 def test_enter_unknown_case_goes_back(screen):
@@ -156,7 +175,7 @@ def test_send_failure_keeps_question_and_shows_fixed_text(screen):
 
 def test_after_send_reloads_and_unlocks(screen):
     screen["turns"] = [_turn(1, MANUAL), _turn(2)]
-    summary, text, *_, send = screen["handlers"]["on_after_send"]("SC-1")
+    summary, text, *_, send = screen["handlers"]["on_after_send"]("SC-1")  # send_btn이 맨 끝
     assert "질문2" in text and send.interactive
 
 
