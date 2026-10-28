@@ -171,15 +171,15 @@
 
 | 모듈      | 함수 시그니처                                                                                           | 책임                                      | 예외                             |
 | --------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------- |
-| retriever | `search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]`                            | 설비 필터로 매뉴얼 근거를 검색한다        | ValidationError, DependencyError |
-| retriever | `search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]`                           | 설비 필터로 확정 이력 근거를 검색한다     | ValidationError, DependencyError |
+| retriever | `search_manual(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                     | 설비 필터로 매뉴얼 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
+| retriever | `search_history(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                    | 설비 필터로 확정 이력 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
 | retriever | `fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]`                                   | 고객이 수행할 매뉴얼 절차 원문을 가져온다 | DependencyError                  |
 | retriever | `has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool`                                  | 검색 결과가 근거로 충분한지 판단한다      | ValidationError                  |
 | generator | `set_chat_model(chat_model: BaseChatModel) -> None`                                                     | 답변 생성에 쓸 모델을 설정한다            | —                                |
 | generator | `generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer`                     | 고객 안내 답변을 생성한다                 | DependencyError                  |
-| generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest) -> Answer` | 엔지니어 대화 답변을 생성한다             | DependencyError                  |
+| generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False) -> Answer` | 엔지니어 대화 답변을 생성한다(`cross_equipment`는 다른 설비 근거가 섞인 폴백일 때 `True`) | DependencyError                  |
 | generator | `passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool`           | 고객 안내의 인용과 안전 문구를 검사한다   | —                                |
-| generator | `passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipment) -> bool`              | 엔지니어 답변의 인용을 검사한다           | —                                |
+| generator | `passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
 | pipeline  | `run_customer_guidance(context: CaseContext) -> Answer`                                                 | 고객 안내 처리 흐름을 실행한다            | DependencyError                  |
 | pipeline  | `run_engineer_answer(context: CaseContext, request: ChatRequest, settings: SearchSettings) -> Answer`   | 엔지니어 답변 처리 흐름을 실행한다        | ValidationError, DependencyError |
 | evaluate  | `run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]`                                 | 평가 문항을 실행하고 결과를 기록한다      | ValidationError, DependencyError |
@@ -340,7 +340,7 @@ scripts ──→ config, db/rdb, models
 - 대화 이력은 생성 입력에서만 줄이고 저장된 이력은 지우지 않는다.
 - 원문 밖의 원인·절차를 단정하지 않고, 증상 메모는 확인된 사실과 구분한다(프롬프트 규칙).
 - 고객 안내(`customer_guidance`)는 허용된 ID로 `manual` 원문을 직접 조회·인용한다(유사도 임계값 미적용). `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
-- 대상 코드는 신고 코드로 고정하며 pipeline 입력 계약은 §2.3.2를 따른다. 4종 밖 설비·다른 설비·사전에 없는 주제·다른 코드를 묻는 질문도 신고 설비 필터로 검색한다. 보류 여부는 설비·키워드로 미리 거르지 않고 검색 결과의 근거 유무로만 정하며, 근거가 없으면 insufficient_evidence다.
+- 대상 코드는 신고 코드로 고정하며 pipeline 입력 계약은 §2.3.2를 따른다. 4종 밖 설비·다른 설비·사전에 없는 주제·다른 코드를 묻는 질문도 먼저 신고 설비 필터로 검색한다. 보류 여부는 설비·키워드로 미리 거르지 않고 검색 결과의 근거 유무로만 정한다. 신고 설비 자료만으로 근거가 부족하면(`has_enough_evidence`가 거짓) 설비 필터 없이 4종 전체를 질문 원문으로 한 번 더 검색한다(폴백, 임계값은 1차와 같다). 폴백 근거로 답하면 인용의 설비가 신고 설비와 달라도 통과시키고 `Answer.notice`에 다른 설비 자료를 포함했다는 고정 문구를 담으며, 그래도 근거가 없으면 insufficient_evidence다.
 - 파이프라인은 근거 확보 → 생성 → 검증 순이다. 고객 근거는 직접 조회, 엔지니어 근거는 검색이다. 근거 부족은 steps=[]인 Answer이며, 모델·검색 장애와 검증 실패는 DependencyError다. 저장은 service가 담당한다.
 - 출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가로 나눈다. 건별 사전 승인은 없다.
 
@@ -354,7 +354,7 @@ scripts ──→ config, db/rdb, models
 
 | 지표        | 정의                                                                                                                             | 합격선 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 인용 검증   | 공개된 답변의 인용이 모두 확보한 근거(검색 결과 또는 고객 허용 ID 직접 조회)에 있고 설비가 일치하는 비율(평가 스크립트가 재검사) | 100%   |
+| 인용 검증   | 공개된 답변의 인용이 모두 확보한 근거(검색 결과 또는 고객 허용 ID 직접 조회)에 있고 설비가 일치하는 비율(폴백으로 답한 건은 설비 일치를 제외)(평가 스크립트가 재검사) | 100%   |
 | 정상 답변율 | 목적별 사전에 정상 답변 대상으로 분류한 문항 중 verdict=answered인 비율. 보류·실패도 분모에 포함                                 | ≥ 80%  |
 | 보류 정확도 | 근거 부족 문항에서 조치 단계 없이 맞는 판정을 낸 비율                                                             | ≥ 90%  |
 
@@ -522,7 +522,7 @@ erDiagram
 | `steps[].citations[].kind`    | 문자열         | `CitationKind` 값                                             |
 | `steps[].citations[].ref_id`  | 문자열         | 인용한 문서 ID(§3.4)                                          |
 | `steps[].citations[].locator` | 문자열         | 화면에 보이는 출처 표기. 매뉴얼은 쪽·절, 이력은 접수번호·코드 |
-| `notice`                      | 문자열 \| null | `answered`가 아닐 때의 한국어 안내. `answered`이면 null       |
+| `notice`                      | 문자열 \| null | `answered`가 아닐 때의 한국어 안내. `answered`이면 null(폴백 답변은 다른 설비 자료 안내 문구) |
 
 #### 모델에 두지 않는 것
 
@@ -582,7 +582,7 @@ erDiagram
 
 - ID는 `:`로 구분한다. 설비 이름의 공백(`Mini Loader`)은 그대로 쓰고, 구성 요소에 `:`가 있으면 적재 오류다. `chunk_no`는 쪽 안에서 1부터 매긴다.
 - 청킹 규칙과 청크 ID 형식(`manual:<manual_id>:<page>:<chunk_no>`)은 1주차 초에 확정하고 동결한다. 사람이 `customer_procedure_ref_ids`를 작성하기 전에 확정해야 하며, 동결 뒤에 바꾸면 그 목록을 다시 써야 하므로 바꾸지 않는다.
-- 모든 검색은 설비 필터가 필수다. `history`에는 `resolutions` 행이 있는 건(시드 포함)만 넣고 `case_id`로 중복을 제거한다.
+- 검색은 신고 설비 필터가 기본이다. 필터 없는 검색은 신고 설비 자료만으로 근거가 부족할 때의 폴백뿐이다(§2.6). `history`에는 `resolutions` 행이 있는 건(시드 포함)만 넣고 `case_id`로 중복을 제거한다.
 - 이력 본문은 설비·코드·메모와 확정된 원인·조치·결과다. 자동 가이드·대화는 넣지 않는다.
 - DB(`rdb`)의 확정 이력이 정본이다. 같은 `case_id`는 upsert이고 전체 재생성은 같은 ID를 쓴다. DB와 Chroma의 원자성은 가정하지 않으며, 반영 실패는 건별로 저장하지 않고 앱 재시작의 전체 재생성으로 복구한다. 재생성은 컬렉션을 삭제하고 다시 만든다(원자 교체 없음, 실패하면 시작을 중단하고 다시 시작한다).
 - 색인 생성은 모든 `customer_procedure_ref_ids`가 `manual` 컬렉션에 실제로 있는지 검증하고 없으면 실패한다.

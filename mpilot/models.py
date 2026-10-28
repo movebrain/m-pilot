@@ -188,7 +188,8 @@ class Answer(_Model):
     Attributes:
         verdict: 답변됨·근거 부족 중 하나.
         steps: 조치 단계 목록. 보류 판정이면 `[]`.
-        notice: `answered`가 아닐 때의 한국어 안내 문구. `answered`이면 `None`.
+        notice: `answered`가 아닐 때의 한국어 안내 문구. `answered`이면 `None`이다. 다만 신고 설비 자료만으로
+            근거가 부족해 다른 설비 자료로 답한 `answered`는 그 사실을 알리는 문구를 담는다.
     """
 
     verdict: Verdict

@@ -9,7 +9,9 @@
 
 책임:
     - 근거 부족은 예외가 아니라 조치 단계가 없는(`steps=[]`) `insufficient_evidence` `Answer`로 돌려준다.
-      4종 밖 설비·다른 설비를 말한 질문도 신고 설비 자료만 검색하고, 근거가 없으면 같은 판정이다.
+      4종 밖 설비·다른 설비를 말한 질문도 먼저 신고 설비 자료를 검색하고, 근거가 없으면 같은 판정이다.
+    - 신고 설비 자료만으로 근거가 부족하면 설비 필터 없이 4종 전체를 질문 원문으로 한 번 더 찾는다(폴백).
+      폴백 근거로 답하면 다른 설비 자료가 섞였음을 `notice`로 알린다.
     - 모델·검색 장애와 검증 실패는 `DependencyError`로 올린다.
     - 대상 코드는 신고한 코드로 고정한다.
     - 결과를 DB에 저장하지 않는다. 저장은 `service`가 맡는다.
@@ -25,6 +27,10 @@ from mpilot.models import Answer, CaseContext, ChatRequest, DependencyError, Sea
 from mpilot.rag import generator, retriever
 
 MAX_QUESTION_LEN = 2000  # 질문 최대 길이: 공백 제거 후 1~2,000자
+CROSS_EQUIPMENT_NOTICE = (
+    "신고한 설비의 자료만으로는 근거가 부족해 다른 설비의 매뉴얼·이력을 포함해 답했습니다. "
+    "설비가 다르므로 출처의 설비를 확인한 뒤 적용하세요."
+)
 
 
 def _make_hold_answer(notice: str) -> Answer:
@@ -105,9 +111,11 @@ def run_engineer_answer(
 ) -> Answer:
     """엔지니어 답변 처리 흐름을 실행한다.
 
-    매뉴얼·이력 검색(신고 설비 필터) → 근거 충분성 판단(부족하면 `insufficient_evidence`) → 생성 →
-    검증 순으로 진행한다. `answered`이면 인용을 검증하고, 아니면 보류 모양
-    (`steps=[]`, `notice` 있음)을 확인한다.
+    매뉴얼·이력 검색(신고 설비 필터) → 근거 충분성 판단 → 생성 → 검증 순으로 진행한다. 신고 설비 자료만으로
+    근거가 부족하면 설비 필터 없이 질문 원문으로 다시 찾고(폴백), 그래도 부족하면 `insufficient_evidence`다.
+    `answered`이면 인용을 검증하고, 아니면 보류 모양(`steps=[]`, `notice` 있음)을 확인한다.
+    폴백 근거로 답한 `answered`는 인용의 설비가 신고 설비와 달라도 통과시키고 `notice`에 다른 설비 자료를
+    포함했다는 고정 문구를 담는다.
 
     Args:
         context: 신고 맥락. 신고한 에러코드로 대상 설비와 코드를 고정한다.
@@ -115,8 +123,8 @@ def run_engineer_answer(
         settings: 검색 설정. `manual_k`, `history_k`, `evidence_threshold`.
 
     Returns:
-        Answer: `answered`이면 출처가 붙은 단계. 근거가 부족하면 조치 없이 안내 문구만 있는
-            `insufficient_evidence`(`steps=[]`).
+        Answer: `answered`이면 출처가 붙은 단계(폴백이면 `notice`에 다른 설비 자료 안내). 근거가 부족하면
+            조치 없이 안내 문구만 있는 `insufficient_evidence`(`steps=[]`).
 
     Raises:
         ValidationError: 질문이 비었거나 설정 값이 허용 범위를 벗어났을 때.
@@ -128,14 +136,23 @@ def run_engineer_answer(
     manual_hits = retriever.search_manual(equipment, question, settings.manual_k)
     history_hits = retriever.search_history(equipment, question, settings.history_k)
     hits = manual_hits + history_hits
+    cross_equipment = False
     if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
-        return _make_hold_answer("신고한 설비의 매뉴얼·이력에서 관련 근거를 찾지 못했습니다.")
+        # 신고 설비 자료만으로 부족하면 설비 필터 없이 4종 전체에서 질문 원문으로 한 번 더 찾는다.
+        manual_hits = retriever.search_manual(None, question, settings.manual_k)
+        history_hits = retriever.search_history(None, question, settings.history_k)
+        hits = manual_hits + history_hits
+        if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
+            return _make_hold_answer("신고한 설비의 매뉴얼·이력에서 관련 근거를 찾지 못했습니다.")
+        cross_equipment = True
 
-    answer = generator.generate_engineer_answer(context, hits, request)
+    answer = generator.generate_engineer_answer(context, hits, request, cross_equipment=cross_equipment)
     if answer.verdict != Verdict.ANSWERED:
         if not _is_valid_hold(answer):
             raise DependencyError("답변의 보류 판정 형식 검증에 실패했습니다.")
         return answer
-    if not generator.passes_answer_check(answer, hits, equipment):
+    if not generator.passes_answer_check(answer, hits, equipment, allow_other_equipment=cross_equipment):
         raise DependencyError("답변의 인용 검증에 실패했습니다.")
+    if cross_equipment:
+        return Answer(verdict=answer.verdict, steps=answer.steps, notice=CROSS_EQUIPMENT_NOTICE)
     return answer

@@ -111,7 +111,7 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
 
 #엔지니어 안내 답변 만들기 (생성)
 def generate_engineer_answer(
-    context: CaseContext, hits: list[SearchHit], request: ChatRequest
+    context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False
 ) -> Answer:
     """엔지니어 대화 답변을 생성한다.
 
@@ -119,6 +119,8 @@ def generate_engineer_answer(
         context: 신고 맥락. 대상 에러코드의 상세와 증상 메모.
         hits: 매뉴얼·이력 검색으로 얻은 근거.
         request: 현재 질문과 저장된 대화. 대화 이력은 생성 입력에서만 줄이고 저장본은 지우지 않는다.
+        cross_equipment: `True`이면 `hits`에 신고 설비가 아닌 설비의 근거가 섞여 있다는 뜻이다. 근거에
+            설비를 밝히고 다른 설비 근거로 답하게 하는 규칙을 시스템 지시문에 덧붙인다.
 
     Returns:
         Answer: 단계마다 출처가 붙은 답변. 인용 검사는 `passes_answer_check`가 한다.
@@ -145,12 +147,13 @@ def generate_engineer_answer(
         # 지난 대화를 최근 것만 골라서 글로 만든다.
         history=_format_history(request.turns),
         # 근거 자료(매뉴얼 + 과거 이력)를 AI가 읽기 좋은 모양으로 넣는다.
-        evidence=_format_evidence(hits),
+        evidence=_format_evidence(hits, with_equipment=cross_equipment),
         # 엔지니어가 지금 물어본 질문
         question=_escape_tag_text(request.question),
     )
     # 엔지니어용 역할 지시 + 위에서 만든 질문글을 AI에게 보내고, 받은 답을 그대로 돌려준다.
-    return _invoke([SystemMessage(content=prompts.ENGINEER_SYSTEM), HumanMessage(content=human)])
+    system = prompts.ENGINEER_SYSTEM + (prompts.ENGINEER_CROSS_EQUIPMENT_RULES if cross_equipment else "")
+    return _invoke([SystemMessage(content=system), HumanMessage(content=human)])
 
     #답변 검사 (보여 줘도 되는지 판단)
 def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool:
@@ -191,23 +194,28 @@ def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: Err
     return _contains_all_safety_rules(answer, error_code.required_safety_rules)
 
 
-def passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipment) -> bool:
+def passes_answer_check(
+    answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False
+) -> bool:
     """엔지니어 답변의 인용을 검사한다.
 
     Args:
         answer: 검사할 엔지니어 답변.
         hits: 답변 생성에 쓴 검색 근거(인용의 기준).
         equipment: 신고 대상 설비. 인용한 근거의 설비가 이것과 같아야 한다.
+        allow_other_equipment: `True`이면 인용한 근거의 설비가 신고 설비와 달라도 통과시킨다.
+            신고 설비 자료만으로 근거가 부족해 필터 없이 다시 찾은 답변에만 쓴다.
 
     Returns:
-        bool: 모든 인용이 `hits`에 있고(`locator` 포함) 설비가 일치하면 `True`, 아니면 `False`.
+        bool: 모든 인용이 `hits`에 있고(`locator` 포함) 설비가 일치하면(`allow_other_equipment`가 아니라면) `True`,
+            아니면 `False`.
     """
     # "답했음"이라면서 단계가 하나도 없으면 말이 안 된다.
     if _is_answered(answer) and not answer.steps:
         # 불합격으로 돌려보낸다.
         return False
     # 모든 단계의 출처가 진짜 있는 근거이고 설비도 맞는지 확인한 결과를 돌려준다.
-    return _citations_valid(answer, hits, equipment)
+    return _citations_valid(answer, hits, equipment, allow_other_equipment)
 
 
 
@@ -224,8 +232,13 @@ def _invoke(messages: list[BaseMessage]) -> Answer:    # ← 여기부터 새로
 
 
 
-def _citations_valid(answer: Answer, hits: list[SearchHit], equipment: Equipment) -> bool:
-    """모든 단계에 출처가 있고, 각 인용이 `hits`에 실재하며 설비가 일치하는지 본다."""
+def _citations_valid(
+    answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False
+) -> bool:
+    """모든 단계에 출처가 있고, 각 인용이 `hits`에 실재하며 설비가 일치하는지 본다.
+
+    `allow_other_equipment`이면 설비 일치는 보지 않는다(실재와 `locator` 일치는 그대로 본다).
+    """
     # 각 단계의 출처가 hits 안에 진짜 있고 설비도 맞는지 하나씩 확인한다.
     for step in answer.steps:
         if not step.citations:
@@ -236,7 +249,9 @@ def _citations_valid(answer: Answer, hits: list[SearchHit], equipment: Equipment
                 if hit.kind == citation.kind and hit.ref_id == citation.ref_id:
                     found = hit
             # 화면에는 인용의 locator가 출처로 보이므로 근거의 locator와 같아야 한다.
-            if found is None or found.equipment != equipment or not _same_locator(found.locator, citation.locator):
+            if found is None or not _same_locator(found.locator, citation.locator):
+                return False
+            if found.equipment != equipment and not allow_other_equipment:
                 return False
     return True
 
@@ -306,8 +321,11 @@ def _escape_tag_text(text: str) -> str:
     return text
 
 
-def _format_evidence(hits: list[SearchHit]) -> str:
-    """근거를 모델이 그대로 옮겨 쓸 수 있도록 인용 식별자와 원문을 나란히 적는다."""
+def _format_evidence(hits: list[SearchHit], with_equipment: bool = False) -> str:
+    """근거를 모델이 그대로 옮겨 쓸 수 있도록 인용 식별자와 원문을 나란히 적는다.
+
+    `with_equipment`이면 태그에 `equipment` 속성(근거의 설비)을 함께 적는다.
+    """
     # 근거가 하나도 없다면
     if not hits:
         # "(없음)"을 돌려준다.
@@ -315,8 +333,9 @@ def _format_evidence(hits: list[SearchHit]) -> str:
     # 근거를 안전한 <evidence> 태그와 방패(_escape_tag_text)로 감싸서 만든다!
     blocks = []
     for hit in hits:
+        equipment_attr = f' equipment="{_escape_tag_text(hit.equipment.value)}"' if with_equipment else ""
         block = (
-            f'<evidence kind="{_escape_tag_text(str(hit.kind.value))}" '
+            f'<evidence kind="{_escape_tag_text(str(hit.kind.value))}"{equipment_attr} '
             f'ref_id="{_escape_tag_text(str(hit.ref_id))}" '
             f'locator="{_escape_tag_text(str(hit.locator))}">\n'
             f"{_escape_tag_text(hit.text)}\n</evidence>"
