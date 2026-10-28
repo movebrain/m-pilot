@@ -235,9 +235,8 @@ def test_hash_embeddings_are_deterministic_and_unit_length():
 
 def test_install_swaps_db_functions(installed):
     assert rdb.fetch_cases is fake_db.fetch_cases
-    assert vectordb.get_store is fake_db.get_store
     assert parser.parse_manuals is fake_db.parse_manuals
-    assert vectordb.rebuild_search_index is not fake_db.get_store  # 색인 쓰기는 진짜 구현을 그대로 쓴다
+    assert vectordb.get_store.__module__ == "mpilot.db.vectordb"  # 벡터 저장소는 바꾸지 않는다
 
 
 # ---------------------------------------------------------------------------
