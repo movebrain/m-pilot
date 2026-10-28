@@ -346,8 +346,6 @@ def _write_documents(store: VectorStore, docs: dict[str, Document], what: str) -
                     documents=[doc.page_content for doc in documents[batch]],
                     metadatas=[doc.metadata for doc in documents[batch]],
                 )
-    except MpilotError:
-        raise
     except Exception as e:  # OpenAI·Chroma 오류 종류가 많아 한곳에서 의존 오류로 바꾼다.
         raise DependencyError(f"{what} 색인에 쓰지 못했습니다({type(e).__name__}).") from None
 
