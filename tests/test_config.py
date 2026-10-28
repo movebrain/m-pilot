@@ -77,6 +77,20 @@ def test_evidence_threshold_has_no_default(clean_env, tmp_path):
         load_config(path)
 
 
+@pytest.mark.parametrize("value", ["-0.1", "nan", "inf", "-inf"])
+def test_evidence_threshold_must_be_finite_and_non_negative(clean_env, tmp_path, value):
+    path = write_env(tmp_path, EVIDENCE_THRESHOLD=value)
+
+    with pytest.raises(ValidationError, match="evidence_threshold"):
+        load_config(path)
+
+
+def test_evidence_threshold_zero_is_allowed(clean_env, tmp_path):
+    config = load_config(write_env(tmp_path, EVIDENCE_THRESHOLD="0"))
+
+    assert config.search.evidence_threshold == 0
+
+
 def test_demo_accounts_must_be_two_distinct_ids(clean_env, tmp_path):
     path = write_env(tmp_path, DEMO_ENGINEER_ID="customer")
 

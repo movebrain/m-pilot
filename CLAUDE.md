@@ -27,7 +27,7 @@
 | 공통 | `mpilot/config.py`(`AppConfig`, `.env` 로드), `mpilot/models.py`(예외·열거형·업무 객체·순수 업무 규칙) |
 | DB | `mpilot/db/`(`parser`, `schemas`, `rdb`, `vectordb`), `scripts/init_db.py`, `docker-compose.yml` |
 | RAG | `mpilot/rag/`(`retriever`, `generator`, `pipeline`), `prompts/`, `scripts/evaluate.py` |
-| UI·총괄 | `app.py`, `mpilot/service.py`, `mpilot/ui/`(화면 7개와 `common.py`) |
+| UI·총괄 | `app.py`(공통부), `app_customer.py`, `app_engineer.py`, `mpilot/service.py`, `mpilot/fake_service.py`(--fake용), `mpilot/ui/`(화면 6개와 `common.py`) |
 | 자료 | `data/manuals/`(사양서 PDF 4종), `data/raw/`(에러코드 표 CSV, 장애 이력 더미 4종), `data/chroma/`·`data/photos/`(로컬 전용) |
 
 - 소유 파트가 아닌 파일은 고치지 않는다. 고쳤다면 담당자에게 알린다. 필요한 기능은 spec §2.3의 함수를 호출한다.
@@ -63,7 +63,7 @@
 
 - **경로는 표만으로**: 심각도 `상`이면 조치 구분과 무관하게 `support`. 조치 구분이 `고객사 조치`면 `self_guide` 후보. 그 밖은 `support`. 가이드를 못 만들면(`held`, `generation_failed`) 조치를 추측하지 않고 `support`로 접수한다.
 - **고객 안내는 허용 절차만**: 매뉴얼에서 고객이 수행하도록 명시한 절차 ID를 직접 조회해 인용한다. 과거 이력은 고객 안내에 쓰지 않는다.
-- **출처 없는 답은 없다**: 모든 단계에 인용이 있고 설비가 일치해야 한다. 근거 부족·적용 대상 아님은 조치 단계 없이 그 사실만 알린다.
+- **출처 없는 답은 없다**: 모든 단계에 인용이 있고 설비가 일치해야 한다. 근거 부족은 조치 단계 없이 그 사실만 알린다.
 - **설비 필터 필수**: 모든 검색에 `equipment` 필터를 건다. `(설비, 코드)`가 키다.
 - **이력은 확정분만**: `resolutions`가 있는 건만 `history` 색인에 넣는다. 셀프 가이드는 조회용으로만 두고 근거로 재사용하지 않는다. DB가 정본이고 Chroma는 재생성한다.
 - **완료는 끝이다**: 완료된 건은 질문·조치를 더 저장하지 않는다(`InvalidStateError`).
@@ -81,7 +81,8 @@
 ```
 docker compose up -d           # 로컬 MySQL
 python -m scripts.init_db      # 시연 전 한 번. 모든 테이블을 지우고 다시 적재
-python app.py                  # Gradio 앱
+python app_customer.py         # 고객 앱(7860). --fake면 DB·RAG 없이 가짜 데이터
+python app_engineer.py         # 엔지니어 앱(7861). --fake 동일
 python -m pytest               # 테스트(그냥 pytest는 쓰지 않는다)
 python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ```
@@ -89,4 +90,4 @@ python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ## 8. 아직 어긋나 있는 곳 (PR #26 리뷰 포인트, 정리되면 지운다)
 
 - 위 spec 절 번호는 이 PR의 개정본 기준이다. 이 PR이 머지되기 전까지 `develop`의 spec은 개정 전 `src/` 구조다.
-- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `EVIDENCE_THRESHOLD`는 사람이 정할 때까지 비워 두며, 비어 있으면 앱이 시작되지 않는다.
+- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `.env.example`의 `EVIDENCE_THRESHOLD=0.5`는 평가(#49) 전에 임의로 둔 임시 값이며 사람이 정한다. 비어 있거나 음수·NaN·무한대면 앱이 시작되지 않는다.

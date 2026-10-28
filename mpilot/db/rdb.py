@@ -8,7 +8,10 @@
     - 신고를 상태 전이 규칙(spec §2.10)에 맞춰 저장한다. 완료된 건에는 질문·조치 결과를 더 저장하지 않는다.
       완료 처리는 조건부 UPDATE로 보호한다(중복 제출·동시 수정 방지는 이것뿐이다).
     - 목록은 최신순으로 돌려준다. 고객에게 어떤 필드를 보일지는 `service`가 정한다.
-    - 시간은 UTC로 저장한다. `completed_at`은 `created_at`보다 빠를 수 없다.
+    - 시각 컬럼(DATETIME)에는 UTC 기준, 시간대 없는 값으로 저장하고, 꺼낼 때 UTC 시간대를 붙여
+      datetime으로 돌려준다. `completed_at`은 `created_at`보다 빠를 수 없다.
+    - DB 컬럼 `customer_memo`·`self_guide_answer`와 모델 필드 `memo`·`guidance_answer`를
+      서로 변환한다(spec §3.3). 컬럼 이름은 이 모듈 밖으로 내보내지 않는다.
     - SQL과 DB 접속은 이 모듈(과 `schemas`)에만 둔다. 모듈을 import할 때 DB에 접속하지 않는다.
     - Chroma 검색 색인은 다루지 않는다. 색인은 `vectordb`가 맡는다.
 
@@ -105,8 +108,9 @@ def load_seed_history_from_csv(path: Path) -> int:
     """시드 이력 CSV를 검증해 적재하고 적재 건수를 반환한다.
 
     설비당 50건, 총 200건이어야 한다. 시드는 `source=seed`, `route=support`, `guide_failure=NULL`,
-    `guidance_answer=NULL`, `status=completed`로 고정해 `service_cases`와 `resolutions`에 쓴다.
-    시간은 ISO 8601(시간대 포함)을 UTC로 바꿔 저장한다. 코드·필수값 오류면 중단한다.
+    `self_guide_answer=NULL`, `status=completed`로 고정해 `service_cases`와 `resolutions`에 쓴다.
+    CSV `memo` 열은 `service_cases.customer_memo`에 넣는다. 시간은 ISO 8601(시간대 포함)을
+    UTC로 바꾼 뒤 시간대 없는 DATETIME으로 저장한다. 코드·필수값 오류면 중단한다.
 
     Args:
         path: 시드 이력 CSV 경로(`AppConfig.history_seed_path`, `data/history_seed.csv`).
@@ -162,7 +166,8 @@ def save_self_guide_case(
     """셀프 가이드 건을 완료 상태로 저장한다.
 
     `source=reported`, `route=self_guide`, `status=completed`, `guide_failure=NULL`로 저장하고
-    가이드의 내용·단계·출처를 `guidance_answer`에 JSON으로 남긴다. `resolutions` 행은 만들지 않는다.
+    가이드의 내용·단계·출처를 `service_cases.self_guide_answer`에 JSON으로 남긴다.
+    `resolutions` 행은 만들지 않는다.
 
     Args:
         case_id: 새 접수번호(`SC-<UUID 앞 8자리>`). PK가 충돌하면 재시도 없이 오류로 알린다.
@@ -220,7 +225,7 @@ def fetch_chat_turns(case_id: str) -> list[ChatTurn]:
 def save_chat_turn(case_id: str, question: str, answer: Answer) -> ChatTurn:
     """질문·답변을 저장하고 첫 질문이면 조치 중으로 바꾼다.
 
-    보류 판정(`insufficient_evidence`, `not_applicable`)의 답변도 저장한다. 상태가 `received`이면
+    보류 판정(`insufficient_evidence`)의 답변도 저장한다. 상태가 `received`이면
     `in_progress`로 바꾸고, 이미 `in_progress`이면 상태는 그대로 둔다. 완료된 건은 저장하지 않는다.
 
     Args:

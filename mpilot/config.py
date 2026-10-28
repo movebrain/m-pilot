@@ -142,7 +142,7 @@ def load_config(env_path: Path | None = None) -> AppConfig:
             llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS", "60")),
             demo_accounts={a.login_id: a for a in accounts},
         )
-    except ValueError as e:
+    except (ValueError, PydanticValidationError) as e:
         # pydantic 오류 문구는 입력값(비밀번호 등)을 담을 수 있어 필드 위치만 알린다.
         if isinstance(e, PydanticValidationError):
             fields = ", ".join(".".join(map(str, err["loc"])) for err in e.errors())

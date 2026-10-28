@@ -18,7 +18,7 @@
     - 화면에 보여 줄 오류 문구는 정하지 않는다. 예외 종류만 구분해 던지고 문구는 `ui/common`이 맡는다.
 
 화면–서비스 연결(spec §2.3.3):
-    로그인 → `login` / 고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
+    고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
     고객 신고 상세 → `get_customer_case`, `get_citation_text` / 엔지니어 대시보드 → `list_engineer_cases` /
     장애 분석 대화 → `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` /
     이력 저장 → `get_engineer_case`, `confirm_resolution`
@@ -29,47 +29,84 @@
 
 from __future__ import annotations
 
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
 from mpilot.config import AppConfig
+from mpilot.db import parser, rdb, vectordb
 from mpilot.models import (
+    Answer,
+    CaseContext,
     CaseDetail,
     CaseInput,
     CaseStatus,
     ChatTurn,
+    Chunk,
     Citation,
     CustomerCaseResult,
+    DependencyError,
     Equipment,
     ErrorCode,
+    GuideFailure,
+    NotFoundError,
     Resolution,
-    Role,
+    Source,
+    ValidationError,
+    Verdict,
+    has_customer_procedure,
+    is_self_guide_candidate,
 )
+from mpilot.rag import pipeline
+
+
+def _to_customer_result(detail: CaseDetail) -> CustomerCaseResult:
+    """`CaseDetail`에서 고객 공개 필드만 꺼낸다. 원인·`guide_failure`는 빼고 넘긴다."""
+    case = detail.service_case
+    resolution = detail.resolution
+    return CustomerCaseResult(
+        case_id=case.case_id, equipment=case.equipment, code=case.code,
+        error_name=detail.error_code.name, memo=case.memo, status=case.status,
+        created_at=case.created_at, guidance_answer=case.guidance_answer,
+        action=resolution.action if resolution else None,
+        result=resolution.result if resolution else None,
+    )
+
+
+def _sorted_newest(details: list[CaseDetail]) -> list[CaseDetail]:
+    """신고를 최신순으로 정렬한다."""
+    return sorted(details, key=lambda d: d.service_case.created_at, reverse=True)
+
+
+# `set_config`가 보관한 앱 설정. 앱 시작 전에는 `None`이다.
+_config: AppConfig | None = None
 
 
 def set_config(config: AppConfig) -> None:
     """앱 설정을 보관한다.
 
     Args:
-        config: `config.load_config`가 만든 앱 설정. 데모 계정, 경로, 검색 설정, 모델 제한 시간을 여기서 읽는다.
+        config: `config.load_config`가 만든 앱 설정. 경로, 검색 설정, 모델 제한 시간을 여기서 읽는다.
 
     Returns:
         None: 모듈 안에 설정을 보관한다. 다른 함수는 이 설정을 쓴다.
     """
-    ...
+    global _config
+    _config = config
 
 
-def login(login_id: str, password: str) -> Role:
-    """데모 계정을 확인해 역할을 알려준다.
-
-    Args:
-        login_id: 입력한 로그인 ID.
-        password: 입력한 비밀번호.
+def _require_config() -> AppConfig:
+    """보관한 앱 설정을 돌려준다.
 
     Returns:
-        Role: 계정에 정해진 역할(`customer` 또는 `engineer`). 화면은 이 값으로 첫 화면을 고른다.
+        AppConfig: `set_config`로 보관한 설정.
 
     Raises:
-        ValidationError: 계정이 없거나 비밀번호가 틀렸을 때.
+        DependencyError: `set_config` 전에 불렀을 때.
     """
-    ...
+    if _config is None:
+        raise DependencyError("set_config 전에 호출됨")
+    return _config
 
 
 def list_customer_cases(status: CaseStatus | None = None) -> list[CustomerCaseResult]:
@@ -87,7 +124,8 @@ def list_customer_cases(status: CaseStatus | None = None) -> list[CustomerCaseRe
         ValidationError: 허용되지 않은 상태 값일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    details = rdb.fetch_cases(status, Source.REPORTED)
+    return [_to_customer_result(d) for d in _sorted_newest(details)]
 
 
 def get_customer_case(case_id: str) -> CustomerCaseResult:
@@ -104,7 +142,10 @@ def get_customer_case(case_id: str) -> CustomerCaseResult:
         NotFoundError: 접수번호가 없거나 고객이 접근할 수 없는 건(시드 이력)일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    detail = rdb.fetch_case_detail(case_id)
+    if detail.service_case.source != Source.REPORTED:
+        raise NotFoundError(case_id)  # 고객은 시드 이력을 볼 수 없다
+    return _to_customer_result(detail)
 
 
 def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -120,7 +161,7 @@ def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
         ValidationError: 허용되지 않은 설비일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    return rdb.fetch_error_codes(equipment)
 
 
 def submit_case(data: CaseInput) -> str:
@@ -139,7 +180,75 @@ def submit_case(data: CaseInput) -> str:
         ValidationError: 미등록 코드이거나 메모가 2,000자를 넘을 때.
         DependencyError: DB 저장에 실패했을 때. 가이드 생성 실패는 예외가 아니라 엔지니어 접수로 처리한다.
     """
-    ...
+    error_code = _find_error_code(data)
+    case_id = _new_case_id()
+
+    if not is_self_guide_candidate(error_code):
+        # 심각도 상이거나 엔지니어 필요 코드: 처음부터 엔지니어 처리 건이다.
+        rdb.save_support_case(case_id, data, None)
+        return case_id
+    if not has_customer_procedure(error_code):
+        # 허용 절차가 없으면 가이드를 만들 근거가 없다. pipeline도 같은 경우를 보류로 돌려주므로 held로 맞춘다.
+        rdb.save_support_case(case_id, data, GuideFailure.HELD)
+        return case_id
+
+    answer = _run_guidance_within_limit(CaseContext(error_code=error_code, memo=data.memo))
+    if answer is None:
+        rdb.save_support_case(case_id, data, GuideFailure.GENERATION_FAILED)
+    elif answer.verdict == Verdict.ANSWERED:
+        rdb.save_self_guide_case(case_id, data, answer)
+    else:
+        rdb.save_support_case(case_id, data, GuideFailure.HELD)
+    return case_id
+
+
+def _new_case_id() -> str:
+    """새 접수번호 `SC-<UUID 앞 8자리>`를 만든다. 충돌은 `rdb`가 오류로 알린다(재시도하지 않는다)."""
+    return f"SC-{uuid.uuid4().hex[:8]}"
+
+
+def _find_error_code(data: CaseInput) -> ErrorCode:
+    """신고한 `(설비, 코드)`의 에러코드 표 행을 찾는다. 비슷한 코드로 대체하지 않는다.
+
+    Args:
+        data: 고객이 제출한 신고 입력.
+
+    Returns:
+        ErrorCode: 정확히 같은 코드의 행.
+
+    Raises:
+        ValidationError: 표에 없는 코드일 때.
+        DependencyError: DB 조회에 실패했을 때.
+    """
+    for row in rdb.fetch_error_codes(data.equipment):
+        if row.code == data.code:
+            return row
+    raise ValidationError("미등록 코드")
+
+
+def _run_guidance_within_limit(context: CaseContext) -> Answer | None:
+    """고객 안내를 제한 시간(`llm_timeout_seconds`) 안에 만든다.
+
+    Args:
+        context: 신고한 에러코드와 증상 메모.
+
+    Returns:
+        Answer | None: 만든 안내(보류 판정 포함). 장애·검증 실패·시간 초과면 `None`이다.
+            가이드를 만들지 못한 것은 오류가 아니라 엔지니어 접수로 처리하므로 예외를 올리지 않는다.
+
+    Raises:
+        DependencyError: `set_config` 전에 불렀을 때.
+    """
+    timeout = _require_config().llm_timeout_seconds
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        return executor.submit(pipeline.run_customer_guidance, context).result(timeout=timeout)
+    except FutureTimeoutError:
+        return None  # 시간 초과: 늦게 끝난 결과는 쓰지 않는다
+    except Exception:
+        return None  # 모델·검색 장애와 검증 실패(DependencyError)를 포함해 신고는 엔지니어 접수로 넘긴다
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
@@ -157,6 +266,7 @@ def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
         ValidationError: 허용되지 않은 상태 값일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
+    # TODO: 실제 호출로 교체 (rdb.fetch_cases(status))
     ...
 
 
@@ -173,6 +283,7 @@ def get_engineer_case(case_id: str) -> CaseDetail:
         NotFoundError: 접수번호가 없을 때.
         DependencyError: DB 조회에 실패했을 때.
     """
+    # TODO: 실제 호출로 교체 (rdb.fetch_case_detail)
     ...
 
 
@@ -189,13 +300,14 @@ def list_chat_turns(case_id: str) -> list[ChatTurn]:
         NotFoundError: 접수번호가 없을 때.
         DependencyError: DB 조회에 실패했을 때.
     """
+    # TODO: 실제 호출로 교체 (rdb.fetch_chat_turns)
     ...
 
 
 def send_chat_question(case_id: str, question: str) -> None:
     """엔지니어 질문에 답하고 대화를 저장한다.
 
-    저장된 대화와 함께 답변을 만들고, 보류 판정(근거 부족·적용 대상 아님)도 대화로 저장한다.
+    저장된 대화와 함께 답변을 만들고, 보류 판정(근거 부족)도 대화로 저장한다.
     첫 질문이면 신고가 `in_progress`가 된다. 답변이 `DependencyError`로 실패하면 저장하지 않는다.
 
     Args:
@@ -211,6 +323,7 @@ def send_chat_question(case_id: str, question: str) -> None:
         InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
         DependencyError: 모델·검색·DB 장애나 제한 시간 초과일 때.
     """
+    # TODO: 실제 호출로 교체 (pipeline.run_engineer_answer, rdb.save_chat_turn)
     ...
 
 
@@ -231,6 +344,7 @@ def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bo
         InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
         DependencyError: 조치 결과 저장(DB)에 실패했을 때.
     """
+    # TODO: 실제 호출로 교체 (rdb.save_confirmed_resolution, vectordb.index_history)
     ...
 
 
@@ -247,14 +361,14 @@ def get_citation_text(citation: Citation) -> str:
         NotFoundError: 그 ID의 원문이 없을 때.
         DependencyError: 검색 저장소 조회에 실패했을 때.
     """
-    ...
+    return vectordb.get_document(citation.kind, citation.ref_id).page_content
 
 
 def prepare_search_index() -> None:
     """검색 색인을 원자료로 새로 만든다.
 
     매뉴얼 PDF를 청킹하고 설비 4종의 에러코드 표와 확정 이력(`rdb.fetch_resolved_cases`)을 읽어
-    `vectordb.rebuild_search_index`로 두 컬렉션을 다시 만든다. 앱 시작 때 로그인 화면을 열기 전에 끝나야 한다.
+    `vectordb.rebuild_search_index`로 두 컬렉션을 다시 만든다. 앱 시작 때 첫 화면을 열기 전에 끝나야 한다.
 
     Returns:
         None: 색인이 준비된다.
@@ -263,4 +377,36 @@ def prepare_search_index() -> None:
         ValidationError: 문서 ID 구성이나 허용 절차 ID 검증에 실패했을 때.
         DependencyError: PDF·DB·임베딩·저장소 장애일 때. 이 경우 앱 시작을 중단한다.
     """
-    ...
+    config = _require_config()
+    chunks = parser.parse_manuals(config.manuals_dir)
+    codes = [row for equipment in Equipment for row in rdb.fetch_error_codes(equipment)]
+    _check_customer_procedure_ids(codes, {_chunk_ref_id(chunk) for chunk in chunks})
+    histories = rdb.fetch_resolved_cases()
+    vectordb.rebuild_search_index(chunks, codes, histories)
+
+
+def _chunk_ref_id(chunk: Chunk) -> str:
+    """매뉴얼 청크의 검색 문서 ID(`manual:<manual_id>:<쪽>:<chunk_no>`, spec §3.4)를 만든다."""
+    return f"manual:{chunk.manual_id}:{chunk.page}:{chunk.chunk_no}"
+
+
+def _check_customer_procedure_ids(codes: list[ErrorCode], chunk_ids: set[str]) -> None:
+    """에러코드 표의 허용 절차 ID가 모두 매뉴얼 청크에 있는지 확인한다.
+
+    Args:
+        codes: 설비 4종의 에러코드 표 행.
+        chunk_ids: 매뉴얼 청크의 문서 ID 모음.
+
+    Returns:
+        None: 모두 있으면 아무 일도 하지 않는다.
+
+    Raises:
+        ValidationError: 청크에 없는 허용 절차 ID가 하나라도 있을 때. 어느 코드인지만 알리고 고치지 않는다.
+    """
+    missing = [
+        f"{row.equipment}:{row.code}"
+        for row in codes
+        if any(ref_id not in chunk_ids for ref_id in row.customer_procedure_ref_ids)
+    ]
+    if missing:
+        raise ValidationError(f"매뉴얼에 없는 허용 절차 ID: {', '.join(missing)}")

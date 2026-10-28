@@ -3,15 +3,14 @@
 역할:
     retriever와 generator를 순서대로 엮어, 신고 한 건 또는 질문 하나를 `Answer` 하나로 만든다.
 
-처리 순서(spec §2.6): 범위 확인 → 근거 확보 → 생성 → 검증.
+처리 순서(spec §2.6): 근거 확보 → 생성 → 검증.
     - 고객 안내: 근거는 허용 절차를 직접 조회한다(검색하지 않는다).
     - 엔지니어 답변: 근거는 `manual`·`history` 검색으로 얻는다. 시작값은 각 3건(`manual_k`, `history_k`).
 
 책임:
-    - 범위 밖·근거 부족은 예외가 아니라 조치 단계가 없는(`steps=[]`) `Answer`로 돌려준다.
-      범위 밖 설비 질문은 `not_applicable`, 근거 없이 다른 주제·다른 코드를 묻는 질문은 `insufficient_evidence`다.
+    - 근거 부족은 예외가 아니라 조치 단계가 없는(`steps=[]`) `insufficient_evidence` `Answer`로 돌려준다.
+      4종 밖 설비·다른 설비를 말한 질문도 신고 설비 자료만 검색하고, 근거가 없으면 같은 판정이다.
     - 모델·검색 장애와 검증 실패는 `DependencyError`로 올린다.
-    - 범위 밖 키워드 상수 `OUT_OF_SCOPE_EQUIPMENT_KEYWORDS`와 4종 설비 별칭을 이 모듈에서 관리한다.
     - 대상 코드는 신고한 코드로 고정한다.
     - 결과를 DB에 저장하지 않는다. 저장은 `service`가 맡는다.
 
@@ -22,15 +21,57 @@
 
 from __future__ import annotations
 
-from mpilot.models import Answer, CaseContext, ChatRequest, SearchSettings
+from mpilot.models import Answer, CaseContext, ChatRequest, DependencyError, SearchSettings, ValidationError, Verdict
+from mpilot.rag import generator, retriever
 
+MAX_QUESTION_LEN = 2000  # 질문 최대 길이: 공백 제거 후 1~2,000자
+
+
+def _make_hold_answer(notice: str) -> Answer:
+    """보류 답변을 만든다. 보류는 예외가 아니라 조치 단계가 없는 Answer다.
+     
+    Args:
+        notice: 화면에 보여줄 한국어 안내 문구.
+         
+    Returns:
+        Answer: `steps=[]`인 근거 부족(`insufficient_evidence`) 답변.
+    """
+    return Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice=notice)
+
+
+def _is_valid_hold(answer: Answer) -> bool:
+    """`answered`가 아닌 답변이 보류 모양(`steps=[]`, 비지 않은 `notice`)인지 확인한다."""
+    return not answer.steps and bool(answer.notice and answer.notice.strip())
+
+
+def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> str:
+    """질문과 검색 설정을 검사하고, 공백을 정리한 질문을 돌려준다.
+
+    Args:
+        request: 현재 질문과 저장된 대화 이력.
+        settings: 검색 설정. `manual_k`, `history_k`, `evidence_threshold`.
+
+    Returns:
+        str: 앞뒤 공백을 지운 질문.
+
+    Raises:
+        ValidationError: 질문이 비었거나 `MAX_QUESTION_LEN`자를 넘을 때,
+            또는 `manual_k`·`history_k`가 1보다 작을 때. `evidence_threshold`의 범위는 `SearchSettings`가 막는다.
+    """
+    question = request.question.strip()
+    if not question or len(question) > MAX_QUESTION_LEN:
+        raise ValidationError("질문은 공백 제외 1~2,000자여야 합니다.")
+    if settings.manual_k < 1 or settings.history_k < 1:
+        raise ValidationError("검색 설정 값이 허용 범위를 벗어났습니다.")
+    return question
+   
 
 def run_customer_guidance(context: CaseContext) -> Answer:
     """고객 안내 처리 흐름을 실행한다.
 
-    허용 절차 직접 조회 → 생성 → (`answered`일 때만) 인용·안전 문구 검증 순으로 진행한다. 허용 절차가
-    없거나 생성 결과의 `verdict`가 `answered`가 아니면(근거 부족·적용 대상 아님) 추측하지 않고
-    `passes_guidance_check`를 부르지 않은 채 그 보류 `Answer`를 그대로 돌려준다.
+    허용 절차 직접 조회 → 생성 → 검증 순으로 진행한다. `answered`이면 인용·안전 문구를 검증한다. 허용 절차가
+    없거나 생성 결과의 `verdict`가 `answered`가 아니면(근거 부족) 추측하지 않고
+    `passes_guidance_check`를 부르지 않은 채, 보류 모양(`steps=[]`, `notice` 있음)만 확인해 그 `Answer`를 돌려준다.
 
     Args:
         context: 신고 맥락. 대상 에러코드의 상세(허용 절차 ID, 필수 안전 문구 포함)와 증상 메모.
@@ -41,10 +82,22 @@ def run_customer_guidance(context: CaseContext) -> Answer:
             `verdict`만 보고 엔지니어 접수(`held`)로 바꾼다.
 
     Raises:
-        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패일 때
+        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패, 보류 판정 형식 오류일 때
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
-    ...
+    error_code = context.error_code
+    hits = retriever.fetch_customer_procedures(error_code)
+    if not hits:
+        return _make_hold_answer("고객이 직접 조치할 수 있는 절차가 없어 엔지니어가 접수합니다.")
+
+    answer = generator.generate_customer_guidance(context, hits)
+    if answer.verdict != Verdict.ANSWERED:
+        if not _is_valid_hold(answer):
+            raise DependencyError("고객 안내의 보류 판정 형식 검증에 실패했습니다.")
+        return answer
+    if not generator.passes_guidance_check(answer, hits, error_code):
+        raise DependencyError("고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.")
+    return answer
 
 
 def run_engineer_answer(
@@ -52,8 +105,9 @@ def run_engineer_answer(
 ) -> Answer:
     """엔지니어 답변 처리 흐름을 실행한다.
 
-    범위 확인(대상 설비 밖이면 `not_applicable`) → 매뉴얼·이력 검색 → 근거 충분성 판단(부족하면
-    `insufficient_evidence`) → 생성 → 인용 검증 순으로 진행한다.
+    매뉴얼·이력 검색(신고 설비 필터) → 근거 충분성 판단(부족하면 `insufficient_evidence`) → 생성 →
+    검증 순으로 진행한다. `answered`이면 인용을 검증하고, 아니면 보류 모양
+    (`steps=[]`, `notice` 있음)을 확인한다.
 
     Args:
         context: 신고 맥락. 신고한 에러코드로 대상 설비와 코드를 고정한다.
@@ -61,11 +115,27 @@ def run_engineer_answer(
         settings: 검색 설정. `manual_k`, `history_k`, `evidence_threshold`.
 
     Returns:
-        Answer: `answered`이면 출처가 붙은 단계. 범위 밖이거나 근거가 부족하면 조치 없이 안내 문구만 있는
-            보류 판정(`steps=[]`).
+        Answer: `answered`이면 출처가 붙은 단계. 근거가 부족하면 조치 없이 안내 문구만 있는
+            `insufficient_evidence`(`steps=[]`).
 
     Raises:
         ValidationError: 질문이 비었거나 설정 값이 허용 범위를 벗어났을 때.
-        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용 검증 실패일 때.
+        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용 검증 실패, 보류 판정 형식 오류일 때.
     """
-    ...
+    question = _validate_engineer_input(request, settings)
+
+    equipment = context.error_code.equipment  # 대상 설비·코드는 신고 코드로 고정
+    manual_hits = retriever.search_manual(equipment, question, settings.manual_k)
+    history_hits = retriever.search_history(equipment, question, settings.history_k)
+    hits = manual_hits + history_hits
+    if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
+        return _make_hold_answer("신고한 설비의 매뉴얼·이력에서 관련 근거를 찾지 못했습니다.")
+
+    answer = generator.generate_engineer_answer(context, hits, request)
+    if answer.verdict != Verdict.ANSWERED:
+        if not _is_valid_hold(answer):
+            raise DependencyError("답변의 보류 판정 형식 검증에 실패했습니다.")
+        return answer
+    if not generator.passes_answer_check(answer, hits, equipment):
+        raise DependencyError("답변의 인용 검증에 실패했습니다.")
+    return answer

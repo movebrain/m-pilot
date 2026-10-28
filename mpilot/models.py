@@ -118,7 +118,6 @@ class Verdict(StrEnum):
 
     ANSWERED = "answered"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
-    NOT_APPLICABLE = "not_applicable"
 
 
 class CitationKind(StrEnum):
@@ -184,10 +183,10 @@ class AnswerStep(_Model):
 class Answer(_Model):
     """RAG 답변의 판정·단계·안내 문구를 담는 구조화 출력.
 
-    보류 판정(`insufficient_evidence`, `not_applicable`)이면 `steps`는 빈 목록이다.
+    보류 판정(`insufficient_evidence`)이면 `steps`는 빈 목록이다.
 
     Attributes:
-        verdict: 답변됨·근거 부족·적용 대상 아님 중 하나.
+        verdict: 답변됨·근거 부족 중 하나.
         steps: 조치 단계 목록. 보류 판정이면 `[]`.
         notice: `answered`가 아닐 때의 한국어 안내 문구. `answered`이면 `None`.
     """
@@ -418,12 +417,12 @@ class SearchSettings(_Model):
     Attributes:
         manual_k: 매뉴얼 근거로 가져올 상위 건수. 처음에는 3으로 시작한다.
         history_k: 이력 근거로 가져올 상위 건수. 처음에는 3으로 시작한다.
-        evidence_threshold: 근거 충분성 임계값. 사람이 평가 결과를 보고 정한다.
+        evidence_threshold: 근거 충분성 임계값. 0 이상의 유한한 실수다. 사람이 평가 결과를 보고 정한다.
     """
 
     manual_k: int
     history_k: int
-    evidence_threshold: float
+    evidence_threshold: float = Field(ge=0, allow_inf_nan=False)
 
 
 class Chunk(_Model):
