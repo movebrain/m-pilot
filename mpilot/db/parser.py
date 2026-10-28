@@ -421,7 +421,7 @@ def _extract_page_texts(pdf_path: Path, tables: list[RawTable]) -> list[PageText
                 lines = [TextLine(top=line["top"], text=line["text"]) for line in raw_lines]  # pdfplumber 줄 dict를 TextLine으로 바꾼다
                 if lines and _parse_footer(lines[-1].text) is not None:  # 맨 아래 줄이 꼬리글이면
                     lines.pop()  # 본문에서 버린다(값은 위에서 이미 읽음)
-                if lines and _HEADER_PATTERN.match(lines[0].text):  # 맨 위 줄이 머리글이면
+                if lines and _HEADER_PATTERN.match(lines[0].text.strip()):  # 맨 위 줄이 머리글이면
                     lines.pop(0)  # 본문에서 버린다
                 page_texts.append(  # 이 쪽의 결과를 쌓는다
                     PageText(manual_id=footer.manual_id, version=footer.version, page=footer.page, lines=lines)  # 꼬리글 출처 + 본문 줄
