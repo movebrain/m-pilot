@@ -100,7 +100,7 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
         # 심각도(상/중/하)
         severity=error_code.severity.value,
         # 고객이 쓴 메모. 너무 길거나 위험한 글자는 다듬어서 넣는다.
-        memo=_format_memo_for_prompt (context.memo),
+        memo=_format_memo_for_prompt(context.memo),
         # 안전 문구를 줄줄이 적는다. 하나도 없으면 "(없음)"을 넣는다.
         safety_rules=_bullet_lines(safety_rules) or prompts.NO_SAFETY_RULES,
         # 근거 자료(매뉴얼 절차)를 AI가 읽기 좋은 모양으로 넣는다.
@@ -143,7 +143,7 @@ def generate_engineer_answer(
         # 에러코드 표에 적힌 조치(참고용)
         action=error_code.action,
         # 고객이 쓴 메모. 너무 길거나 위험한 글자는 다듬어서 넣는다.
-        memo=_format_memo_for_prompt (context.memo),
+        memo=_format_memo_for_prompt(context.memo),
         # 지난 대화를 최근 것만 골라서 글로 만든다.
         history=_format_history(request.turns),
         # 근거 자료(매뉴얼 + 과거 이력)를 AI가 읽기 좋은 모양으로 넣는다.
@@ -219,7 +219,18 @@ def passes_answer_check(
 
 
 
-def _invoke(messages: list[BaseMessage]) -> Answer:    # ← 여기부터 새로 넣는 것    """모델을 호출해 구조화된 `Answer`를 받는다. 실패는 `DependencyError`로 바꾼다."""
+def _invoke(messages: list[BaseMessage]) -> Answer:
+    """모델을 호출해 구조화된 `Answer`를 받는다. 실패는 `DependencyError`로 바꾼다.
+
+    Args:
+        messages: 모델에 보낼 시스템·사용자 메시지.
+
+    Returns:
+        Answer: 모델이 구조화해 돌려준 답변. 인용 검증은 하지 않는다.
+
+    Raises:
+        DependencyError: 모델이 설정되지 않았거나 호출이 실패했을 때.
+    """
     if _chat_model is None:
         raise DependencyError("답변 생성 모델이 설정되지 않았습니다(set_chat_model 호출 필요).")
     try:
@@ -293,7 +304,7 @@ def _collapse_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
-def _format_memo_for_prompt (memo: str | None) -> str:
+def _format_memo_for_prompt(memo: str | None) -> str:
     """고객이 쓴 메모를 프롬프트에 넣기 좋게 다듬는다. 길이를 자르고 태그 글자를 `_escape_tag_text`로 바꾼다."""
     # 메모가 없거나 공백뿐이라면
     if not memo or not memo.strip():
