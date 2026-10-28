@@ -1,11 +1,13 @@
 """매뉴얼 파싱 조립 테스트: `parse_manuals`(#116).
 
 조립 순서·같은 설비 중복·ID 중복은 PDF를 읽는 함수만 가짜로 바꿔 확인하고,
-재현성과 ID 유일성은 실제 매뉴얼 PDF 4종으로 확인한다. 실제 PDF 파싱은 오래 걸려 모듈에서 두 번만 한다.
+재현성과 ID 유일성은 실제 매뉴얼 PDF로 확인한다. 실제 PDF 파싱은 오래 걸려(합본 4종에 3분 가까이) 표 추출은 세션에서
+한 번만 하고(conftest), 재현성은 가장 작은 PDF 하나를 처음부터 다시 파싱해 확인한다.
 """
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -110,8 +112,11 @@ def test_parse_manuals_raises_when_folder_has_no_pdf(tmp_path):
 
 
 @pytest.fixture(scope="module")
-def real_chunks() -> list[Chunk]:
-    return parse_manuals(MANUALS_DIR)
+def real_chunks(real_tables) -> list[Chunk]:
+    # 표 추출은 다른 테스트가 읽은 것을 나눠 쓴다(4종에 1분 넘게 걸린다). 나머지는 실제 `parse_manuals`가 그대로 한다.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(parser, "_extract_tables", lambda path: real_tables(Path(path).name))
+        return parse_manuals(MANUALS_DIR)
 
 
 def test_real_manuals_cover_four_equipment_with_unique_ids(real_chunks):
@@ -121,5 +126,8 @@ def test_real_manuals_cover_four_equipment_with_unique_ids(real_chunks):
     assert all(c.section.strip() and c.text.strip() for c in real_chunks)
 
 
-def test_real_manuals_are_reproducible(real_chunks):
-    assert parse_manuals(MANUALS_DIR) == real_chunks
+def test_real_manuals_are_reproducible(real_chunks, tmp_path):
+    # 가장 작은 매뉴얼 하나를 캐시 없이 처음부터 다시 파싱해 같은 청크가 나오는지 본다(4종을 다시 읽으면 3분 가까이 걸린다).
+    shutil.copy(MANUALS_DIR / "mini_loader_spec_sheet_dummy_rev1_1.pdf", tmp_path)
+
+    assert parse_manuals(tmp_path) == [c for c in real_chunks if c.equipment is Equipment.MINI_LOADER]

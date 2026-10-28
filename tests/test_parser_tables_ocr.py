@@ -7,7 +7,6 @@ set_vision_model)는 parser의 OCR 코드와 함께 주석으로 보류해 두�
 from __future__ import annotations
 
 import csv
-import logging
 import re
 from pathlib import Path
 
@@ -31,10 +30,9 @@ SRM_PDF = MANUALS / "srm_spec_sheet_dummy_rev1_2.pdf"
 
 
 @pytest.fixture(scope="module")
-def manual_tables():
-    """매뉴얼 4종의 표를 한 번만 추출해 테스트끼리 나눠 쓴다(PDF 4종 추출에 수십 초 걸린다)."""
-    logging.getLogger("pdfminer").setLevel(logging.ERROR)  # 글꼴 경고가 많아 줄인다.
-    return {name: parser._extract_tables(MANUALS / name) for name in MANUAL_EQUIPMENT}
+def manual_tables(real_tables):
+    """매뉴얼 4종의 표. 세션에서 한 번만 추출해(conftest) 다른 테스트와 나눠 쓴다(PDF 4종 추출에 1분 넘게 걸린다)."""
+    return {name: real_tables(name) for name in MANUAL_EQUIPMENT}
 
 
 def error_codes_in(tables: list[RawTable]) -> list[str]:

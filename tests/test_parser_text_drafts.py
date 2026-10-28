@@ -14,7 +14,6 @@ from mpilot.db.parser import (
     PageText,
     Section,
     TextLine,
-    _extract_page_texts,
     _list_pdf_files,
     _read_section_titles,
     _split_sections,
@@ -181,23 +180,23 @@ def test_to_text_drafts_skips_empty_text():
 # ---------------------------------------------------------------------------
 
 
-def test_agv_loto_numbered_list_stays_in_one_draft():
-    drafts = _to_text_drafts(_split_sections(_extract_page_texts(AGV_PDF, [])))
+def test_agv_loto_numbered_list_stays_in_one_draft(real_page_texts):
+    drafts = _to_text_drafts(_split_sections(real_page_texts(AGV_PDF.name)))
     [loto] = [d for d in drafts if d.section == "7.4 LOTO (Lock-Out / Tag-Out) 절차"]
     assert loto.page == 22  # 합본은 목차가 5쪽으로 늘어 원본(19쪽)보다 3쪽 뒤에 있다
     for step in range(1, 7):
         assert f"\n{step}. " in loto.text
 
 
-def test_title_keeps_error_codes_printed_in_other_font():
+def test_title_keeps_error_codes_printed_in_other_font(real_page_texts):
     # 괄호 속 코드는 다른 글꼴이라 몇 pt 아래에 찍혀 있어도 제목과 같은 줄로 읽혀야 한다.
-    titles = {d.section for d in _to_text_drafts(_split_sections(_extract_page_texts(MINI_LOADER_PDF, [])))}
+    titles = {d.section for d in _to_text_drafts(_split_sections(real_page_texts(MINI_LOADER_PDF.name)))}
     assert "11.1 정지 위치 불량 (M405 / M413 반복)" in titles
 
 
 @pytest.mark.parametrize("pdf_path", _list_pdf_files(MANUALS_DIR), ids=lambda path: path.stem)
-def test_real_manual_drafts_are_bounded_and_reproducible(pdf_path):
-    page_texts = _extract_page_texts(pdf_path, [])
+def test_real_manual_drafts_are_bounded_and_reproducible(pdf_path, real_page_texts):
+    page_texts = real_page_texts(pdf_path.name)
     drafts = _to_text_drafts(_split_sections(page_texts))
     assert drafts
     assert all(0 < len(draft.text) <= MAX_CHARS and draft.text.strip() == draft.text for draft in drafts)

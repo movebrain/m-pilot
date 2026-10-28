@@ -154,8 +154,8 @@ def test_equipment_from_manual_id_rejects_unknown_code(manual_id):
         ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.3", Equipment.SRM),
     ],
 )
-def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, equipment):
-    pages = _extract_page_texts(MANUALS_DIR / file_name, tables=[])
+def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, equipment, real_page_texts):
+    pages = real_page_texts(file_name)  # PDF를 읽는 데 오래 걸려 세션에서 한 번만 읽는다(conftest)
 
     # 표지는 빠지고 인쇄 쪽 번호가 1부터 이어진다.
     assert [page.page for page in pages] == list(range(1, len(pages) + 1))
@@ -173,8 +173,8 @@ def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, eq
         assert tops == sorted(tops)
 
 
-def test_extract_page_texts_removes_text_inside_table_bbox():
-    without_table = _extract_page_texts(AGV_PDF, tables=[])
+def test_extract_page_texts_removes_text_inside_table_bbox(real_page_texts):
+    without_table = real_page_texts(AGV_PDF.name)
     page3 = next(page for page in without_table if page.page == 3)
     target, following = page3.lines[1], page3.lines[2]
     # 둘째 줄만 덮는 표 영역. 같은 영역이 다른 쪽에 있으면 3쪽에는 영향이 없어야 한다.

@@ -105,3 +105,48 @@ def rdb_db():
     # 다음 테스트가 연결 전 상태에서 시작하도록 연결을 닫는다.
     rdb._engine.dispose()
     rdb._engine = None
+
+
+MANUALS_DIR = ROOT / "data" / "manuals"
+
+
+@pytest.fixture(scope="session")
+def real_page_texts():
+    """실제 매뉴얼 PDF의 쪽별 본문(표 영역을 빼지 않은 것)을 PDF 이름으로 돌려주는 함수. PDF마다 처음 한 번만 읽는다.
+
+    합본 PDF는 한 번 읽는 데 AGV만 30초 가까이 걸려서, 테스트마다 다시 읽으면 CI 제한 시간(10분)을 넘는다.
+    돌려주는 목록은 여러 테스트가 나눠 쓰므로 고치지 않는다.
+    """
+    import logging
+
+    from mpilot.db import parser
+
+    logging.getLogger("pdfminer").setLevel(logging.ERROR)  # 글꼴 경고가 수천 줄 나온다
+    extract = parser._extract_page_texts  # 모듈 함수를 바꿔 끼우는 테스트가 있어도 진짜 함수를 부른다
+    cache: dict[str, list] = {}
+
+    def get(pdf_name: str) -> list:
+        if pdf_name not in cache:
+            cache[pdf_name] = extract(MANUALS_DIR / pdf_name, tables=[])
+        return cache[pdf_name]
+
+    return get
+
+
+@pytest.fixture(scope="session")
+def real_tables():
+    """실제 매뉴얼 PDF의 표를 PDF 이름으로 돌려주는 함수. PDF마다 처음 한 번만 읽는다(`real_page_texts`와 같은 이유)."""
+    import logging
+
+    from mpilot.db import parser
+
+    logging.getLogger("pdfminer").setLevel(logging.ERROR)
+    extract = parser._extract_tables  # 다른 테스트가 모듈 함수를 이 캐시로 바꿔 끼워도(재귀) 진짜 함수를 부르도록 미리 잡아 둔다
+    cache: dict[str, list] = {}
+
+    def get(pdf_name: str) -> list:
+        if pdf_name not in cache:
+            cache[pdf_name] = extract(MANUALS_DIR / pdf_name)
+        return cache[pdf_name]
+
+    return get
