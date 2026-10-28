@@ -222,7 +222,7 @@ def format_answer_markdown(answer: Answer, show_notice: bool = False) -> str:
     """답변을 화면용 Markdown으로 바꾼다. 고객 안내와 엔지니어 대화가 같이 쓴다.
 
     `answered`이면 번호 붙은 단계와 단계별 출처를, 보류 판정이면 판정 라벨과 안내 문구만 보인다.
-    출처 원문은 이 문자열에 넣지 않는다(화면이 펼치기로 따로 보인다).
+    출처 원문은 이 문자열에 넣지 않는다(엔지니어 화면만 펼치기로 따로 보이고, 고객 화면은 표기만 보인다).
 
     Args:
         answer: RAG 답변.

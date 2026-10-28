@@ -23,9 +23,11 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pandas as pd
 from sqlalchemy import create_engine, insert, select, update
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 
@@ -43,6 +45,7 @@ from mpilot.models import (
     InvalidStateError,
     NotFoundError,
     Resolution,
+    Route,
     ServiceCase,
     Source,
     ValidationError,
@@ -348,7 +351,58 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
         ValidationError: 필수값 누락, 중복 키, 허용 밖 설비, 출처 누락 등 CSV 오류가 있을 때.
         DependencyError: 파일을 읽거나 DB에 쓰는 데 실패했을 때.
     """
-    ...
+    engine = _get_engine()  # connect 전이면 여기서 DependencyError
+    columns = error_codes.c.keys()  # CSV 열 = error_codes 컬럼(spec §3.4)
+    try:
+        # dtype=str·keep_default_na=False: 숫자·빈칸을 pandas가 바꾸지 않게 글자 그대로 읽는다(자동 보정 금지).
+        df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise DependencyError(f"파일을 읽을 수 없습니다({type(e).__name__}): {path}") from None
+    except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        raise ValidationError(f"{Path(path).name}: CSV 형식이 올바르지 않습니다: {e}") from None
+    if set(df.columns) != set(columns) or df.empty:
+        raise ValidationError(f"{Path(path).name}: 머리글이 {list(columns)}와 다르거나 데이터가 없습니다.")
+    rows = df.to_dict("records")
+
+    codes, seen = [], set()
+    for no, row in enumerate(rows, start=1):
+        # 모든 값이 채워져야 한다(공백뿐이면 빈 값, 열이 모자란 행은 NaN). 값은 고치지 않는다.
+        if not all(isinstance(row[c], str) and row[c].strip() for c in columns):
+            raise ValidationError(f"{no}번째 행: 필수값이 비었거나 열 개수가 다릅니다.")
+        # VARCHAR(n) 칸은 n자를 넘으면 MySQL이 거부한다. DB 오류가 되기 전에 CSV 오류로 알린다.
+        for c in columns:
+            limit = getattr(error_codes.c[c].type, "length", None)  # TEXT·INTEGER는 None
+            if limit and len(row[c]) > limit:
+                raise ValidationError(f"{no}번째 행: {c}는 {limit}자 이하여야 합니다.")
+        try:
+            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. 목록 열 2개는 JSON 배열 문자열이다.
+            code = ErrorCode(**{
+                **row,
+                "customer_procedure_ref_ids": json.loads(row["customer_procedure_ref_ids"]),
+                "required_safety_rules": json.loads(row["required_safety_rules"]),
+            })
+        except ValueError as e:  # JSON 오류, pydantic 오류 모두 ValueError
+            raise ValidationError(f"{no}번째 행 값이 올바르지 않습니다: {e}") from None
+        if (code.equipment, code.code) in seen:
+            raise ValidationError(f"{no}번째 행: (equipment, code) 중복 {code.equipment}/{code.code}")
+        seen.add((code.equipment, code.code))
+        codes.append(code)
+
+    # 검증을 통과한 값을 저장한다. 목록 열은 공통 도구로 JSON 문자열로 되돌린다.
+    values = [
+        {
+            **c.model_dump(mode="json"),
+            "customer_procedure_ref_ids": _to_json_list(c.customer_procedure_ref_ids),
+            "required_safety_rules": _to_json_list(c.required_safety_rules),
+        }
+        for c in codes
+    ]
+    try:
+        with engine.begin() as conn:  # 한 트랜잭션: 실패하면 아무것도 남지 않는다
+            conn.execute(insert(error_codes), values)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"에러코드를 DB에 저장하지 못했습니다({type(e).__name__}).") from None
+    return codes
 
 
 def fetch_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -364,7 +418,20 @@ def fetch_error_codes(equipment: Equipment) -> list[ErrorCode]:
         ValidationError: 허용되지 않은 설비일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    try:
+        equipment = Equipment(equipment)
+    except ValueError:
+        raise ValidationError(f"허용되지 않은 설비입니다: {equipment}") from None
+    try:
+        with _get_engine().connect() as conn:
+            rows = conn.execute(
+                select(error_codes)
+                .where(error_codes.c.equipment == equipment.value)
+                .order_by(error_codes.c.code)  # 선택지 순서가 매번 같게
+            ).all()
+    except SQLAlchemyError as e:
+        raise DependencyError(f"에러코드를 조회하지 못했습니다({type(e).__name__}).") from None
+    return [_row_to_error_code(row) for row in rows]
 
 
 def load_seed_history_from_csv(path: Path) -> int:
@@ -385,7 +452,70 @@ def load_seed_history_from_csv(path: Path) -> int:
         ValidationError: 에러코드 표에 없는 코드, 필수값 누락, 건수 불일치, 완료 시각이 신고 시각보다 빠를 때.
         DependencyError: 파일을 읽거나 DB에 쓰는 데 실패했을 때.
     """
-    ...
+    engine = _get_engine()  # connect 전이면 여기서 DependencyError
+    columns = ["case_id", "equipment", "code", "memo", "cause", "action", "result",
+               "created_at", "completed_at"]  # spec §3.4 history_seed.csv
+    try:
+        # dtype=str·keep_default_na=False: 숫자·빈칸을 pandas가 바꾸지 않게 글자 그대로 읽는다(자동 보정 금지).
+        df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise DependencyError(f"파일을 읽을 수 없습니다({type(e).__name__}): {path}") from None
+    except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        raise ValidationError(f"{Path(path).name}: CSV 형식이 올바르지 않습니다: {e}") from None
+    if set(df.columns) != set(columns) or df.empty:
+        raise ValidationError(f"{Path(path).name}: 머리글이 {columns}와 다르거나 데이터가 없습니다.")
+    rows = df.to_dict("records")
+
+    known_codes = {(c.equipment, c.code) for e in Equipment for c in fetch_error_codes(e)}
+
+    cases, records = [], []
+    for no, row in enumerate(rows, start=1):
+        case_id = row["case_id"]
+        # 메모 밖의 값이 모두 채워져야 한다(공백뿐이면 빈 값, 열이 모자란 행은 NaN).
+        if not all(isinstance(row[c], str) and (c == "memo" or row[c].strip()) for c in columns):
+            raise ValidationError(f"{no}번째 행: 필수값이 비었거나 열 개수가 다릅니다.")
+        if ":" in case_id:  # 문서 ID history:<case_id>의 구분자(spec §3.4)
+            raise ValidationError(f"{no}번째 행: case_id에 ':'가 있습니다: {case_id}")
+        if len(case_id) > service_cases.c.case_id.type.length:  # VARCHAR(64), 넘으면 MySQL이 거부
+            raise ValidationError(f"{no}번째 행: case_id가 너무 깁니다: {case_id}")
+        if any(c["case_id"] == case_id for c in cases):
+            raise ValidationError(f"{no}번째 행: case_id 중복 {case_id}")
+        try:
+            # 설비 4종·메모 2,000자·원인/조치/결과 1~5,000자는 models 규칙으로 검증한다.
+            data = CaseInput(equipment=row["equipment"], code=row["code"],
+                             memo=row["memo"] if row["memo"].strip() else None)
+            record = Resolution(cause=row["cause"], action=row["action"], result=row["result"])
+            # 공통 도구: UTC로 바꾸고 시간대를 뗀다. 시간대가 없으면 짐작하지 않고 ValidationError.
+            created_at = _to_db_time(datetime.fromisoformat(row["created_at"]))
+            completed_at = _to_db_time(datetime.fromisoformat(row["completed_at"]))
+        except (ValueError, ValidationError) as e:
+            raise ValidationError(f"{no}번째 행 값이 올바르지 않습니다: {e}") from None
+        if (data.equipment, data.code) not in known_codes:
+            raise ValidationError(f"{no}번째 행: 에러코드 표에 없는 코드 {data.equipment}/{data.code}")
+        if completed_at < created_at:
+            raise ValidationError(f"{no}번째 행: 완료 시각이 신고 시각보다 빠릅니다.")
+
+        # 시드 고정값(spec §3.4). 컬럼 이름은 최종 ERD를 따른다(#61).
+        cases.append({"case_id": case_id, "equipment": data.equipment.value, "code": data.code,
+                      "customer_memo": data.memo,
+                      "source": Source.SEED.value, "status": CaseStatus.COMPLETED.value,
+                      "route": Route.SUPPORT.value, "guide_failure": None, "self_guide_answer": None,
+                      "created_at": created_at, "completed_at": completed_at})
+        records.append({"case_id": case_id, **record.model_dump()})
+
+    per_equipment = 50  # 설비당 50건, 총 200건(spec §3.4)
+    count = Counter(c["equipment"] for c in cases)
+    if any(count[e.value] != per_equipment for e in Equipment):
+        raise ValidationError(f"건수 불일치: 설비당 {per_equipment}건이어야 합니다. "
+                              f"현재 { {e.value: count[e.value] for e in Equipment} }")
+
+    try:
+        with engine.begin() as conn:  # 신고 건 → 조치 기록 순(FK), 한 트랜잭션
+            conn.execute(insert(service_cases), cases)
+            conn.execute(insert(resolutions), records)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"시드 이력을 DB에 저장하지 못했습니다({type(e).__name__}).") from None
+    return len(cases)
 
 
 def fetch_cases(
@@ -703,4 +833,23 @@ def fetch_resolved_cases() -> list[CaseDetail]:
     Raises:
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    codes = {(c.equipment, c.code): c for e in Equipment for c in fetch_error_codes(e)}
+    try:
+        with _get_engine().connect() as conn:
+            # resolutions와 내부 조인 → 조치 기록이 없는 건(셀프 가이드·미완료)은 빠진다.
+            rows = conn.execute(
+                select(service_cases, resolutions.c.cause, resolutions.c.action, resolutions.c.result)
+                .join(resolutions, resolutions.c.case_id == service_cases.c.case_id)
+                .order_by(service_cases.c.case_id)  # 색인 재생성이 매번 같은 순서가 되도록
+            ).all()
+    except SQLAlchemyError as e:
+        raise DependencyError(f"조치 기록이 있는 신고를 조회하지 못했습니다({type(e).__name__}).") from None
+    # 컬럼 이름 바꾸기(customer_memo → memo 등)와 UTC 붙이기는 공통 도구가 한다.
+    return [
+        CaseDetail(
+            service_case=_row_to_service_case(row),
+            error_code=codes[(row.equipment, row.code)],
+            resolution=_row_to_resolution(row),
+        )
+        for row in rows
+    ]

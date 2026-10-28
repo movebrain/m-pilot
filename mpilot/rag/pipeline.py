@@ -132,9 +132,19 @@ def run_engineer_answer(
     """
     question = _validate_engineer_input(request, settings)
 
-    equipment = context.error_code.equipment  # 대상 설비·코드는 신고 코드로 고정
-    manual_hits = retriever.search_manual(equipment, question, settings.manual_k)
-    history_hits = retriever.search_history(equipment, question, settings.history_k)
+    error_code = context.error_code
+    equipment = error_code.equipment
+
+    search_query = f"{error_code.code} {error_code.name} {question}"
+
+    manual_hits = retriever.search_manual(
+        equipment, search_query, settings.manual_k
+    )
+    history_hits = retriever.search_history(
+        equipment, search_query, settings.history_k
+    )
+
+
     hits = manual_hits + history_hits
     cross_equipment = False
     if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
