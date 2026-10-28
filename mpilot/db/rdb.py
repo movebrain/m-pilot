@@ -26,6 +26,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pandas as pd
 from sqlalchemy import create_engine, insert, select, update
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 
@@ -348,7 +349,58 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
         ValidationError: 필수값 누락, 중복 키, 허용 밖 설비, 출처 누락 등 CSV 오류가 있을 때.
         DependencyError: 파일을 읽거나 DB에 쓰는 데 실패했을 때.
     """
-    ...
+    engine = _get_engine()  # connect 전이면 여기서 DependencyError
+    columns = error_codes.c.keys()  # CSV 열 = error_codes 컬럼(spec §3.4)
+    try:
+        # dtype=str·keep_default_na=False: 숫자·빈칸을 pandas가 바꾸지 않게 글자 그대로 읽는다(자동 보정 금지).
+        df = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as e:
+        raise DependencyError(f"파일을 읽을 수 없습니다({type(e).__name__}): {path}") from None
+    except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        raise ValidationError(f"{Path(path).name}: CSV 형식이 올바르지 않습니다: {e}") from None
+    if set(df.columns) != set(columns) or df.empty:
+        raise ValidationError(f"{Path(path).name}: 머리글이 {list(columns)}와 다르거나 데이터가 없습니다.")
+    rows = df.to_dict("records")
+
+    codes, seen = [], set()
+    for no, row in enumerate(rows, start=1):
+        # 모든 값이 채워져야 한다(공백뿐이면 빈 값, 열이 모자란 행은 NaN). 값은 고치지 않는다.
+        if not all(isinstance(row[c], str) and row[c].strip() for c in columns):
+            raise ValidationError(f"{no}번째 행: 필수값이 비었거나 열 개수가 다릅니다.")
+        # VARCHAR(n) 칸은 n자를 넘으면 MySQL이 거부한다. DB 오류가 되기 전에 CSV 오류로 알린다.
+        for c in columns:
+            limit = getattr(error_codes.c[c].type, "length", None)  # TEXT·INTEGER는 None
+            if limit and len(row[c]) > limit:
+                raise ValidationError(f"{no}번째 행: {c}는 {limit}자 이하여야 합니다.")
+        try:
+            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. 목록 열 2개는 JSON 배열 문자열이다.
+            code = ErrorCode(**{
+                **row,
+                "customer_procedure_ref_ids": json.loads(row["customer_procedure_ref_ids"]),
+                "required_safety_rules": json.loads(row["required_safety_rules"]),
+            })
+        except ValueError as e:  # JSON 오류, pydantic 오류 모두 ValueError
+            raise ValidationError(f"{no}번째 행 값이 올바르지 않습니다: {e}") from None
+        if (code.equipment, code.code) in seen:
+            raise ValidationError(f"{no}번째 행: (equipment, code) 중복 {code.equipment}/{code.code}")
+        seen.add((code.equipment, code.code))
+        codes.append(code)
+
+    # 검증을 통과한 값을 저장한다. 목록 열은 공통 도구로 JSON 문자열로 되돌린다.
+    values = [
+        {
+            **c.model_dump(mode="json"),
+            "customer_procedure_ref_ids": _to_json_list(c.customer_procedure_ref_ids),
+            "required_safety_rules": _to_json_list(c.required_safety_rules),
+        }
+        for c in codes
+    ]
+    try:
+        with engine.begin() as conn:  # 한 트랜잭션: 실패하면 아무것도 남지 않는다
+            conn.execute(insert(error_codes), values)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"에러코드를 DB에 저장하지 못했습니다({type(e).__name__}).") from None
+    return codes
 
 
 def fetch_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -364,7 +416,20 @@ def fetch_error_codes(equipment: Equipment) -> list[ErrorCode]:
         ValidationError: 허용되지 않은 설비일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    try:
+        equipment = Equipment(equipment)
+    except ValueError:
+        raise ValidationError(f"허용되지 않은 설비입니다: {equipment}") from None
+    try:
+        with _get_engine().connect() as conn:
+            rows = conn.execute(
+                select(error_codes)
+                .where(error_codes.c.equipment == equipment.value)
+                .order_by(error_codes.c.code)  # 선택지 순서가 매번 같게
+            ).all()
+    except SQLAlchemyError as e:
+        raise DependencyError(f"에러코드를 조회하지 못했습니다({type(e).__name__}).") from None
+    return [_row_to_error_code(row) for row in rows]
 
 
 def load_seed_history_from_csv(path: Path) -> int:
