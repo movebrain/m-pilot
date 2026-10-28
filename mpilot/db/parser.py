@@ -297,6 +297,10 @@ def _read_manual_identity(footers: list[Footer]) -> tuple[str, str]:
 # 표지를 뺀 모든 쪽 맨 위 머리글. 예: `HYUNDAI MOVEX · AGV (Automated Guided Vehicle) — DUMMY DATA`
 _HEADER_PATTERN = re.compile(r"^HYUNDAI MOVEX · .+ — DUMMY DATA$")
 
+# 글자를 한 줄로 묶는 세로 위치 허용 오차(pt). pdfplumber 기본값 3pt로는 다른 글꼴로 찍힌 에러 코드(약 3.5pt 아래)가
+# 별도 줄로 떨어진다(예: `11.1 … ( 반복)` + `A316`). 일반 줄 간격은 12pt 이상이라 5pt로 넓혀도 다른 줄이 섞이지 않는다.
+_LINE_Y_TOLERANCE = 5
+
 # 문서번호 `HMX-<설비 코드>-...`의 설비 코드 → 설비.
 _EQUIPMENT_CODES = {
     "AGV": Equipment.AGV,
@@ -400,7 +404,7 @@ def _extract_page_texts(pdf_path: Path, tables: list[RawTable]) -> list[PageText
     try:  # 쪽을 읽다가 나는 pdfplumber 오류를 잡기 위한 범위
         with pdf:  # 다 읽으면(오류가 나도) PDF 파일을 닫는다
             for index, page in enumerate(pdf.pages):  # PDF 쪽 순서대로 돈다. index 0이 첫 쪽(표지 후보)
-                raw_lines = page.extract_text_lines()  # 표 영역을 빼기 전, 쪽 전체의 줄(위에서부터 정렬, top 포함)
+                raw_lines = page.extract_text_lines(y_tolerance=_LINE_Y_TOLERANCE)  # 표 영역을 빼기 전, 쪽 전체의 줄(위에서부터 정렬, top 포함)
                 footer = _parse_footer(raw_lines[-1]["text"]) if raw_lines else None  # 맨 아래 줄을 꼬리글로 읽는다. 빈 쪽이면 None
                 if footer is None:  # 꼬리글이 없는 쪽
                     if index == 0:  # 첫 쪽이면
@@ -416,7 +420,7 @@ def _extract_page_texts(pdf_path: Path, tables: list[RawTable]) -> list[PageText
                         lambda pdf_object: pdf_object["object_type"] != "char"  # 글자가 아닌 객체는 남긴다
                         or not _is_char_in_table_area(pdf_object, table_boxes)  # 글자는 표 영역 밖일 때만 남긴다
                     )  # filter 호출 끝
-                    raw_lines = page.extract_text_lines()  # 표 글자를 지운 쪽에서 줄을 다시 뽑는다
+                    raw_lines = page.extract_text_lines(y_tolerance=_LINE_Y_TOLERANCE)  # 표 글자를 지운 쪽에서 줄을 다시 뽑는다
 
                 lines = [TextLine(top=line["top"], text=line["text"]) for line in raw_lines]  # pdfplumber 줄 dict를 TextLine으로 바꾼다
                 if lines and _parse_footer(lines[-1].text) is not None:  # 맨 아래 줄이 꼬리글이면
