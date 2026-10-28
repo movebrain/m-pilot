@@ -262,8 +262,9 @@ def test_1차_근거가_충분하면_폴백하지_않는다(fakes):
 def test_1차_근거가_부족하면_필터_없이_질문_원문으로_다시_찾는다(fakes):
     fakes.enough_seq = [False, True]
     ask(QUESTION, equipment="AGV")
+    first_query = f"S-104 주행 위치 편차 {QUESTION}"  # 1차는 신고 코드·이름을 붙이고, 폴백은 원문만 쓴다
     assert fakes.searches == [
-        ("manual", "AGV", QUESTION, 3), ("history", "AGV", QUESTION, 3),
+        ("manual", "AGV", first_query, 3), ("history", "AGV", first_query, 3),
         ("manual", None, QUESTION, 3), ("history", None, QUESTION, 3),
     ]
 
