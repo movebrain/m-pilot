@@ -4,7 +4,7 @@ MySQL·docker 없이, 로컬에서 고객·엔지니어 앱을 띄워 UI부터 R
 
 ## 빠른 시작 (OpenAI 키 없이 5분)
 
-Python 3.12와 sqlite3 3.35 이상이 필요하다(macOS·Ubuntu 22.04 이상은 대개 충족). 저장소 루트에서 실행한다.
+Python 3.12와 sqlite3 3.35 이상이 필요하다(macOS·Ubuntu 22.04 이상은 대개 충족, 아니면 7번의 "sqlite3가 낮은 환경"을 본다). 저장소 루트에서 실행한다.
 
 ```bash
 git fetch origin && git switch feat/fake-db           # PR #76 머지 뒤에는 develop
@@ -137,20 +137,19 @@ cp .env.example .env     # .env는 커밋하지 않는다(.gitignore)
 
 | 증상 | 원인과 대응 |
 | --- | --- |
-| `앱을 시작하지 못했습니다. … (DependencyError)` | `--offline`이면 대개 sqlite3가 3.35 미만이다(Chroma를 못 불러온다). 1번의 확인 명령으로 버전을 보고, 새 sqlite를 쓰는 환경(macOS, Ubuntu 22.04 이상 등)에서 실행한다. Oracle Linux·RHEL처럼 낮은 배포판이면 아래 `uv` 방법이 가장 빠르다. 실제 모드면 OpenAI 키 오류나 네트워크도 확인한다 |
+| `앱을 시작하지 못했습니다. … (DependencyError)` | `--offline`이면 대개 sqlite3가 3.35 미만이다(Chroma를 못 불러온다). 1번의 확인 명령으로 버전을 보고, 새 sqlite를 쓰는 환경(macOS, Ubuntu 22.04 이상 등)에서 실행한다. Oracle Linux·RHEL처럼 낮은 배포판이면 아래 "sqlite3가 낮은 환경" 절차로 venv를 다시 만든다. 실제 모드면 OpenAI 키 오류나 네트워크도 확인한다 |
 | `앱을 시작하지 못했습니다. … (ValidationError)` | `.env`의 필수 값이 비었거나 형식이 틀렸다. 실제 모드에서 `OPENAI_API_KEY`가 비어 있는 경우가 흔하다. 키를 채우거나 `--offline`으로 실행한다 |
 | `ModuleNotFoundError: No module named 'app'`(또는 `fake`) | 저장소 루트가 아닌 곳에서 실행했다. 루트에서 `python -m fake.run`으로 실행한다 |
 | 포트 사용 중 | 7860·7861을 쓰는 이전 프로세스를 종료한다 |
 
-### sqlite3가 낮은 환경: `uv`로 새 Python 받기
+### sqlite3가 낮은 환경: 새 sqlite를 쓰는 Python으로 venv 다시 만들기
 
-`uv`가 내려받는 독립 Python은 새 sqlite를 포함한다(우리 환경에서 3.53.1). 시스템 Python은 바꾸지 않는다.
+시스템 Python의 sqlite가 3.35 미만이면, sqlite 3.35 이상을 쓰는 Python 3.12를 따로 설치한 뒤(OS 패키지, 공식 설치 파일, Homebrew 등 방법은 자유) 그 Python으로 `venv`를 다시 만든다. 이미 만든 `venv`가 있으면 `--clear`로 덮어쓴다. 시스템 Python은 바꾸지 않는다.
 
 ```bash
-pip install uv                       # 또는 uv 공식 설치 방법
-uv python install 3.12
-uv venv --python 3.12 venv && source venv/bin/activate
-uv pip install --python venv/bin/python -r requirements.txt
+deactivate 2>/dev/null                                      # 켜져 있는 venv가 있으면 끈다
+/path/to/python3.12 -m venv --clear venv && source venv/bin/activate   # 새 sqlite를 쓰는 python3.12의 경로
+pip install -r requirements.txt
 python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.35 이상인지 확인
 ```
 
