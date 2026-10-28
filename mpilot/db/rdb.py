@@ -22,20 +22,254 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import create_engine, insert, select, update
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
+
+from mpilot.db.schemas import chat_turns, error_codes, metadata, resolutions, service_cases
 from mpilot.models import (
     Answer,
     CaseDetail,
     CaseInput,
     CaseStatus,
     ChatTurn,
+    DependencyError,
     ErrorCode,
     Equipment,
     GuideFailure,
+    InvalidStateError,
+    NotFoundError,
     Resolution,
+    ServiceCase,
     Source,
+    ValidationError,
+    raise_if_case_completed,
 )
+
+# ---------------------------------------------------------------------------
+# 공통 도구(DB 파트 3명이 함께 쓴다. 바꿀 때는 DB 파트에 먼저 알린다.)
+#
+#   _get_engine()            connect가 만든 엔진 꺼내기
+#   _now_for_db()            지금 시각을 DATETIME 저장용 값으로
+#   _to_db_time(value)       시간대가 있는 시각을 DATETIME 저장용 값으로(시드 적재 등)
+#   _from_db_time(value)     DATETIME에서 꺼낸 값에 UTC 시간대 붙이기
+#   _to_json_list(values)    문자열 목록을 JSON 배열 문자열로
+#   _row_to_error_code(row)  error_codes 행 → ErrorCode
+#   _row_to_service_case(row) service_cases 행 → ServiceCase
+#   _row_to_resolution(row)  resolutions 행 → Resolution
+#   _load_case_detail(conn, case_id)  접수번호 한 건 → CaseDetail(없으면 NotFoundError)
+#
+# 저장된 값(JSON, 열거형 값)이 깨져 업무 객체로 바꿀 수 없으면 행 변환 함수가 DependencyError를 낸다.
+# ---------------------------------------------------------------------------
+
+_engine = None  # connect()가 만든 SQLAlchemy 엔진. 아직 연결 전이면 None
+
+
+def _get_engine():
+    """`connect`로 만든 엔진을 돌려준다.
+
+    Returns:
+        Engine: 이 모듈이 보관 중인 SQLAlchemy 엔진.
+
+    Raises:
+        DependencyError: `connect`를 부르기 전일 때.
+    """
+    if _engine is None:
+        raise DependencyError("DB가 연결되지 않았습니다. connect를 먼저 호출하세요.")
+    return _engine
+
+
+def _now_for_db() -> datetime:
+    """지금 시각을 DATETIME 컬럼에 넣을 값으로 돌려준다(UTC 기준, 시간대 없음, 초 단위).
+
+    Returns:
+        datetime: 시간대와 마이크로초를 뗀 현재 UTC 시각.
+    """
+    now = datetime.now(UTC)
+    return now.replace(microsecond=0, tzinfo=None)
+
+
+def _to_db_time(value: datetime) -> datetime:
+    """시간대가 있는 시각을 DATETIME 컬럼에 넣을 값으로 바꾼다(UTC 기준, 시간대 없음, 초 단위).
+
+    Args:
+        value: 바꿀 시각. 시간대가 있어야 한다(예: CSV의 `2026-03-02T09:15:00+09:00`).
+
+    Returns:
+        datetime: UTC로 바꾼 뒤 시간대와 마이크로초를 뗀 시각.
+
+    Raises:
+        ValidationError: 시간대가 없는 시각일 때(어느 시간대인지 추측하지 않는다).
+    """
+    if value.tzinfo is None:
+        raise ValidationError("시간대가 없는 시각은 저장할 수 없습니다.")
+    utc_value = value.astimezone(UTC)
+    return utc_value.replace(microsecond=0, tzinfo=None)
+
+
+def _from_db_time(value: datetime | None) -> datetime | None:
+    """DATETIME 컬럼에서 꺼낸 값에 UTC 시간대를 붙인다.
+
+    Args:
+        value: DB에서 꺼낸 시간대 없는 UTC 시각. NULL이면 `None`.
+
+    Returns:
+        datetime | None: UTC 시간대가 붙은 시각. 입력이 `None`이면 `None`.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC)
+
+
+def _to_json_list(values: list[str]) -> str:
+    """문자열 목록을 JSON 배열 문자열로 바꾼다(한글은 그대로 둔다).
+
+    Args:
+        values: 저장할 문자열 목록(예: `customer_procedure_ref_ids`).
+
+    Returns:
+        str: JSON 배열 문자열. 빈 목록이면 `[]`.
+    """
+    return json.dumps(values, ensure_ascii=False)
+
+
+def _row_to_error_code(row) -> ErrorCode:
+    """`error_codes` 한 행을 `ErrorCode`로 바꾼다.
+
+    Args:
+        row: `select(error_codes)` 결과 행.
+
+    Returns:
+        ErrorCode: 목록 열 2개를 JSON에서 되돌린 에러코드 표 한 행.
+
+    Raises:
+        DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
+    """
+    try:
+        return ErrorCode(
+            equipment=row.equipment,
+            code=row.code,
+            name=row.name,
+            severity=row.severity,
+            action_owner=row.action_owner,
+            cause=row.cause,
+            action=row.action,
+            manual_id=row.manual_id,
+            page=row.page,
+            section=row.section,
+            customer_procedure_ref_ids=json.loads(row.customer_procedure_ref_ids),
+            required_safety_rules=json.loads(row.required_safety_rules),
+        )
+    except ValueError:  # json 오류와 pydantic 검증 오류는 모두 ValueError다
+        raise DependencyError(
+            f"저장된 에러코드의 형식이 올바르지 않습니다: {row.equipment}:{row.code}"
+        ) from None
+
+
+def _row_to_service_case(row) -> ServiceCase:
+    """`service_cases` 한 행을 `ServiceCase`로 바꾼다.
+
+    DB 컬럼 `customer_memo`는 `memo`로, `self_guide_answer`는 `guidance_answer`로 바꿔 담는다.
+
+    Args:
+        row: `select(service_cases)` 결과 행.
+
+    Returns:
+        ServiceCase: 시각에 UTC 시간대를 붙이고 셀프 가이드를 `Answer`로 되돌린 신고 건.
+
+    Raises:
+        DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
+    """
+    try:
+        guidance_answer = None
+        if row.self_guide_answer is not None:
+            guidance_answer = Answer.model_validate_json(row.self_guide_answer)
+        return ServiceCase(
+            case_id=row.case_id,
+            equipment=row.equipment,
+            code=row.code,
+            memo=row.customer_memo,
+            source=row.source,
+            status=row.status,
+            route=row.route,
+            guide_failure=row.guide_failure,
+            guidance_answer=guidance_answer,
+            created_at=_from_db_time(row.created_at),
+            completed_at=_from_db_time(row.completed_at),
+        )
+    except ValueError:
+        raise DependencyError(f"저장된 신고의 형식이 올바르지 않습니다: {row.case_id}") from None
+
+
+def _row_to_resolution(row) -> Resolution | None:
+    """`resolutions` 한 행을 `Resolution`으로 바꾼다.
+
+    Args:
+        row: `select(resolutions)` 결과 행. 조치 기록이 없으면 `None`.
+
+    Returns:
+        Resolution | None: 조치 기록. 입력이 `None`이면 `None`.
+
+    Raises:
+        DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
+    """
+    if row is None:
+        return None
+    try:
+        return Resolution(cause=row.cause, action=row.action, result=row.result)
+    except ValueError:
+        raise DependencyError(f"저장된 조치 기록의 형식이 올바르지 않습니다: {row.case_id}") from None
+
+
+def _load_case_detail(conn, case_id: str) -> CaseDetail:
+    """열린 연결에서 접수번호 한 건의 신고·에러코드·조치 기록을 읽어 묶는다.
+
+    목록·상세 조회와 저장 뒤 반환에서 같은 모양의 `CaseDetail`을 만들 때 쓴다.
+
+    Args:
+        conn: 사용 중인 DB 연결(`engine.connect()`나 `engine.begin()`으로 연 것).
+        case_id: 접수번호.
+
+    Returns:
+        CaseDetail: 신고 건, 신고한 에러코드 행, 조치 기록(없으면 `None`).
+
+    Raises:
+        NotFoundError: 그 접수번호의 신고가 없을 때.
+        DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
+    """
+    # 1) 신고 건
+    case_row = conn.execute(
+        select(service_cases).where(service_cases.c.case_id == case_id)
+    ).first()
+    if case_row is None:
+        raise NotFoundError(f"접수번호 {case_id}의 신고가 없습니다.")
+
+    # 2) 신고한 에러코드 행. 외래키가 있어 반드시 있다.
+    code_row = conn.execute(
+        select(error_codes).where(
+            error_codes.c.equipment == case_row.equipment,
+            error_codes.c.code == case_row.code,
+        )
+    ).first()
+
+    # 3) 조치 기록. 현장 조치로 완료된 건에만 있다.
+    resolution_row = conn.execute(
+        select(resolutions).where(resolutions.c.case_id == case_id)
+    ).first()
+
+    return CaseDetail(
+        service_case=_row_to_service_case(case_row),
+        error_code=_row_to_error_code(code_row),
+        resolution=_row_to_resolution(resolution_row),
+    )
+
+
+# ---------------------------------------------------------------------------
+# spec §2.3.1 함수
+# ---------------------------------------------------------------------------
 
 
 def connect(db_url: str) -> None:
@@ -52,7 +286,30 @@ def connect(db_url: str) -> None:
         ValidationError: URL 형식이 틀렸을 때.
         DependencyError: DB에 연결할 수 없을 때.
     """
-    ...
+    global _engine
+
+    # 1) 엔진을 만든다. URL 형식이나 드라이버 이름이 틀리면 여기서 오류가 난다.
+    #    URL에는 비밀번호가 있으므로 오류 문구에 원문을 넣지 않는다.
+    try:
+        # pool_pre_ping: 오래 쉬어서 끊긴 연결을 쓰기 전에 다시 잇는다(시연 중 끊김 방지).
+        engine = create_engine(db_url, pool_pre_ping=True)
+    except (ArgumentError, ValueError):
+        raise ValidationError("DB 접속 URL 형식이 올바르지 않습니다.") from None
+
+    # 2) 실제로 접속되는지 한 번 확인한다.
+    try:
+        with engine.connect():
+            pass
+    except SQLAlchemyError as e:
+        engine.dispose()
+        raise DependencyError(
+            f"DB에 연결할 수 없습니다({type(e).__name__}). 접속 정보와 DB 실행 상태를 확인하세요."
+        ) from None
+
+    # 3) 다시 연결하는 경우 이전 연결은 닫고 새 엔진을 보관한다.
+    if _engine is not None:
+        _engine.dispose()
+    _engine = engine
 
 
 def reset_schema() -> None:
@@ -66,7 +323,13 @@ def reset_schema() -> None:
     Raises:
         DependencyError: 테이블 삭제·생성에 실패했을 때.
     """
-    ...
+    engine = _get_engine()
+    try:
+        # 외래키 순서(지울 때 자식 → 부모, 만들 때 부모 → 자식)는 SQLAlchemy가 맞춘다.
+        metadata.drop_all(engine)
+        metadata.create_all(engine)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"테이블을 다시 만들지 못했습니다({type(e).__name__}).") from None
 
 
 def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
@@ -207,6 +470,66 @@ def save_support_case(
     ...
 
 
+# ---------------------------------------------------------------------------
+# 대화·조치 저장(담당: 이재서)
+# ---------------------------------------------------------------------------
+
+QUESTION_MAX_CHARS = 2000  # 질문 최대 글자 수(앞뒤 공백 제거 후)
+RESOLUTION_MAX_CHARS = 5000  # 조치 기록 각 필드 최대 글자 수(앞뒤 공백 제거 후)
+
+
+def _row_to_chat_turn(row) -> ChatTurn:
+    """`chat_turns` 한 행을 `ChatTurn`으로 바꾼다.
+
+    Args:
+        row: `select(chat_turns)` 결과 행.
+
+    Returns:
+        ChatTurn: 답변을 `Answer`로 되돌리고 시각에 UTC 시간대를 붙인 대화 한 턴.
+
+    Raises:
+        DependencyError: 저장된 답변 JSON이 깨져 업무 객체로 바꿀 수 없을 때.
+    """
+    try:
+        return ChatTurn(
+            turn_id=row.turn_id,
+            case_id=row.case_id,
+            question=row.question,
+            answer=Answer.model_validate_json(row.answer),
+            created_at=_from_db_time(row.created_at),
+        )
+    except ValueError:
+        raise DependencyError(f"저장된 대화의 형식이 올바르지 않습니다: turn_id={row.turn_id}") from None
+
+
+def _lock_open_case(conn, case_id: str) -> ServiceCase:
+    """신고 한 건을 잠그고 읽은 뒤, 아직 완료되지 않았는지 확인한다.
+
+    `SELECT ... FOR UPDATE`로 읽으므로, 같은 건에 대한 다른 저장·완료 처리는 이 트랜잭션이
+    끝날 때까지 기다린다. 그래서 "확인한 뒤 저장하기 전에 다른 사람이 완료하는" 일이 생기지 않는다.
+
+    Args:
+        conn: `engine.begin()`으로 연 트랜잭션 연결.
+        case_id: 접수번호.
+
+    Returns:
+        ServiceCase: 잠근 신고 건(상태 `received` 또는 `in_progress`).
+
+    Raises:
+        NotFoundError: 그 접수번호의 신고가 없을 때.
+        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+    """
+    row = conn.execute(
+        select(service_cases).where(service_cases.c.case_id == case_id).with_for_update()
+    ).first()
+    if row is None:
+        raise NotFoundError(f"접수번호 {case_id}의 신고가 없습니다.")
+    case = _row_to_service_case(row)
+    # 셀프 가이드 건은 접수 때 곧바로 completed라서 같은 규칙으로 막힌다.
+    raise_if_case_completed(case)
+    return case
+
+
 def fetch_chat_turns(case_id: str) -> list[ChatTurn]:
     """신고의 대화 이력을 조회한다.
 
@@ -219,7 +542,21 @@ def fetch_chat_turns(case_id: str) -> list[ChatTurn]:
     Raises:
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    query = (
+        select(chat_turns)
+        .where(chat_turns.c.case_id == case_id)
+        .order_by(chat_turns.c.turn_id)
+    )
+    try:
+        with _get_engine().connect() as conn:
+            rows = conn.execute(query).all()
+    except SQLAlchemyError as e:
+        raise DependencyError(f"대화 기록을 조회하지 못했습니다({type(e).__name__}).") from None
+
+    turns = []
+    for row in rows:
+        turns.append(_row_to_chat_turn(row))
+    return turns
 
 
 def save_chat_turn(case_id: str, question: str, answer: Answer) -> ChatTurn:
@@ -242,7 +579,47 @@ def save_chat_turn(case_id: str, question: str, answer: Answer) -> ChatTurn:
         InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
         DependencyError: DB 저장에 실패했을 때.
     """
-    ...
+    # 1) 질문 길이를 확인한다. 앞뒤 공백은 지우고 저장한다.
+    question = question.strip()
+    if not question or len(question) > QUESTION_MAX_CHARS:
+        raise ValidationError(f"질문은 앞뒤 공백을 빼고 1~{QUESTION_MAX_CHARS:,}자여야 합니다.")
+
+    engine = _get_engine()
+    now = _now_for_db()
+    try:
+        # engine.begin(): 블록이 무사히 끝나면 커밋하고, 중간에 오류가 나면 모두 되돌린다.
+        with engine.begin() as conn:
+            # 2) 신고를 잠그고 읽는다. 없거나 이미 완료된 건이면 여기서 멈춘다.
+            case = _lock_open_case(conn, case_id)
+
+            # 3) 대화 한 턴을 저장한다. turn_id는 DB가 자동으로 매긴다.
+            result = conn.execute(
+                insert(chat_turns).values(
+                    case_id=case_id,
+                    question=question,
+                    answer=answer.model_dump_json(),
+                    created_at=now,
+                )
+            )
+            turn_id = result.inserted_primary_key[0]
+
+            # 4) 첫 질문이면 received → in_progress로 바꾼다.
+            if case.status == CaseStatus.RECEIVED:
+                conn.execute(
+                    update(service_cases)
+                    .where(service_cases.c.case_id == case_id)
+                    .values(status=CaseStatus.IN_PROGRESS.value)
+                )
+    except SQLAlchemyError as e:
+        raise DependencyError(f"대화를 저장하지 못했습니다({type(e).__name__}).") from None
+
+    return ChatTurn(
+        turn_id=turn_id,
+        case_id=case_id,
+        question=question,
+        answer=answer,
+        created_at=_from_db_time(now),
+    )
 
 
 def save_confirmed_resolution(case_id: str, record: Resolution) -> CaseDetail:
@@ -265,7 +642,53 @@ def save_confirmed_resolution(case_id: str, record: Resolution) -> CaseDetail:
         InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
         DependencyError: DB 저장에 실패했을 때.
     """
-    ...
+    # 1) 세 필드의 길이를 확인한다. Resolution을 만들 때 이미 검사하지만 저장 직전에 한 번 더 본다.
+    cause = record.cause.strip()
+    action = record.action.strip()
+    result_text = record.result.strip()
+    for text in [cause, action, result_text]:
+        if not text or len(text) > RESOLUTION_MAX_CHARS:
+            raise ValidationError(
+                f"원인·조치·결과는 앞뒤 공백을 빼고 각각 1~{RESOLUTION_MAX_CHARS:,}자여야 합니다."
+            )
+
+    engine = _get_engine()
+    try:
+        with engine.begin() as conn:
+            # 2) 신고를 잠그고 읽는다. 없거나 이미 완료된 건이면 여기서 멈춘다.
+            case = _lock_open_case(conn, case_id)
+
+            # 완료 시각은 지금이다. 다만 신고 시각보다 빠를 수는 없게 맞춘다(서버 시계가 어긋난 경우).
+            completed_at = _now_for_db()
+            created_at = case.created_at.replace(tzinfo=None)
+            if completed_at < created_at:
+                completed_at = created_at
+
+            # 3) 조건부 UPDATE: 아직 완료되지 않은 건만 completed로 바꾼다.
+            #    바뀐 행이 없으면 다른 요청이 먼저 완료한 것이므로 '이미 완료'로 알린다.
+            changed = conn.execute(
+                update(service_cases)
+                .where(
+                    service_cases.c.case_id == case_id,
+                    service_cases.c.status != CaseStatus.COMPLETED.value,
+                )
+                .values(status=CaseStatus.COMPLETED.value, completed_at=completed_at)
+            )
+            if changed.rowcount == 0:
+                raise InvalidStateError("이미 완료")
+
+            # 4) 조치 기록을 저장한다. 3)과 같은 트랜잭션이라 둘 중 하나만 저장되는 일은 없다.
+            conn.execute(
+                insert(resolutions).values(
+                    case_id=case_id, cause=cause, action=action, result=result_text
+                )
+            )
+
+            # 5) 저장한 결과를 다시 읽어 돌려준다.
+            detail = _load_case_detail(conn, case_id)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"조치 결과를 저장하지 못했습니다({type(e).__name__}).") from None
+    return detail
 
 
 def fetch_resolved_cases() -> list[CaseDetail]:
