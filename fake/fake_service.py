@@ -526,8 +526,13 @@ def _filter_by_status(cases, status: CaseStatus | None) -> list[ServiceCase]:
 
 
 def _latest_first(cases: list[ServiceCase]) -> list[ServiceCase]:
-    """신고 시각 최신순으로 정렬한다."""
-    return sorted(cases, key=lambda c: c.created_at, reverse=True)
+    """신고 시각 최신순으로 정렬한다. 시각이 같으면 나중에 저장한 신고가 먼저 온다.
+
+    Windows는 시각이 약 15ms 단위로 찍혀 연달아 저장한 신고의 시각이 같을 수 있다.
+    저장 순서(저장소에 들어간 순서)를 두 번째 기준으로 써서 결과가 운영체제에 따라 달라지지 않게 한다.
+    """
+    ordered = sorted(enumerate(cases), key=lambda pair: (pair[1].created_at, pair[0]), reverse=True)
+    return [case for _, case in ordered]
 
 
 def _get_case(store: _Store, case_id: str) -> ServiceCase:
