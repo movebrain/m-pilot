@@ -12,7 +12,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25  # 합본 매뉴얼 PDF를 읽는 파서 테스트가 길다(약 10분)
     services:
       # 시연용 DB와 분리된 테스트 DB. 러너가 헬스체크 통과를 기다리고 job이 끝나면 정리한다.
       # shortcut: 서비스 컨테이너는 실행 인자를 못 줘 서버 콜레이션이 MySQL 기본값(utf8mb4_0900_ai_ci)이다.
