@@ -108,45 +108,93 @@ def rdb_db():
 
 
 MANUALS_DIR = ROOT / "data" / "manuals"
+PARSE_CACHE_DIR = ROOT / ".pytest_parse_cache"
+
+
+class _DiskParse:
+    """실제 매뉴얼 PDF를 읽는 두 함수(표 추출, 쪽별 본문 추출)에 디스크 캐시를 씌운다.
+
+    합본 PDF는 4종을 읽는 데 3분 가까이 걸려, 캐시 없이는 CI(GitHub Actions)가 10분 넘게 걸린다.
+    캐시 파일 이름의 해시에 PDF·`parser.py`·`pdfplumber` 버전이 들어 있어 어느 하나라도 바뀌면 새로 읽는다.
+    캐시 파일이 없거나 깨졌으면(모델 필드가 바뀐 경우 포함) 조용히 새로 읽는다. 캐시가 테스트를 막지는 않는다.
+    """
+
+    def __init__(self) -> None:
+        import logging
+
+        import pdfplumber
+        from pydantic import TypeAdapter
+
+        from mpilot.db import parser
+
+        logging.getLogger("pdfminer").setLevel(logging.ERROR)  # 글꼴 경고가 수천 줄 나온다
+        # 다른 테스트가 모듈 함수를 이 캐시로 바꿔 끼워도(재귀) 진짜 함수를 부르도록 미리 잡아 둔다
+        self._extract_tables = parser._extract_tables
+        self._extract_page_texts = parser._extract_page_texts
+        self._tables = TypeAdapter(list[parser.RawTable])
+        self._page_texts = TypeAdapter(list[parser.PageText])
+        self._salt = Path(parser.__file__).read_bytes() + pdfplumber.__version__.encode()
+
+    def tables(self, path: Path) -> list:
+        return self._cached("tables", path, b"", self._tables, lambda: self._extract_tables(path))
+
+    def page_texts(self, path: Path, tables: list) -> list:
+        extra = self._tables.dump_json(tables)  # 본문에서 뺄 표 영역이 달라지면 결과도 다르다
+        return self._cached("texts", path, extra, self._page_texts, lambda: self._extract_page_texts(path, tables))
+
+    def _cached(self, kind: str, path: Path, extra: bytes, adapter, compute):
+        import hashlib
+
+        key = hashlib.sha256(path.read_bytes() + self._salt + extra).hexdigest()[:16]
+        variant = hashlib.sha256(extra).hexdigest()[:8]  # 본문 추출은 표 목록마다 따로 남긴다(서로의 캐시를 지우지 않도록)
+        stem = f"{kind}-{path.stem}-{variant}"
+        file = PARSE_CACHE_DIR / f"{stem}-{key}.json"
+        try:
+            return adapter.validate_json(file.read_bytes())
+        except (OSError, ValueError):  # 파일이 없거나 깨짐. pydantic 검증 오류도 ValueError다
+            pass
+        result = compute()
+        try:
+            PARSE_CACHE_DIR.mkdir(exist_ok=True)
+            for old in PARSE_CACHE_DIR.glob(f"{stem}-*.json"):  # 입력이 바뀌어 못 쓰게 된 것
+                if old != file:
+                    old.unlink()
+            file.write_bytes(adapter.dump_json(result))
+        except OSError:  # 읽기 전용 디스크 등. 캐시만 못 남기고 테스트는 계속한다
+            pass
+        return result
 
 
 @pytest.fixture(scope="session")
-def real_page_texts():
+def disk_parse() -> _DiskParse:
+    """PDF를 읽는 두 함수의 디스크 캐시판. 이 세션에서 PDF 하나당 한 번만 읽고, CI는 이전 실행의 캐시를 이어 쓴다."""
+    return _DiskParse()
+
+
+@pytest.fixture(scope="session")
+def real_page_texts(disk_parse):
     """실제 매뉴얼 PDF의 쪽별 본문(표 영역을 빼지 않은 것)을 PDF 이름으로 돌려주는 함수. PDF마다 처음 한 번만 읽는다.
 
-    합본 PDF는 한 번 읽는 데 AGV만 30초 가까이 걸려서, 테스트마다 다시 읽으면 CI 제한 시간(10분)을 넘는다.
     돌려주는 목록은 여러 테스트가 나눠 쓰므로 고치지 않는다.
     """
-    import logging
-
-    from mpilot.db import parser
-
-    logging.getLogger("pdfminer").setLevel(logging.ERROR)  # 글꼴 경고가 수천 줄 나온다
-    extract = parser._extract_page_texts  # 모듈 함수를 바꿔 끼우는 테스트가 있어도 진짜 함수를 부른다
-    cache: dict[str, list] = {}
+    memo: dict[str, list] = {}
 
     def get(pdf_name: str) -> list:
-        if pdf_name not in cache:
-            cache[pdf_name] = extract(MANUALS_DIR / pdf_name, tables=[])
-        return cache[pdf_name]
+        if pdf_name not in memo:
+            memo[pdf_name] = disk_parse.page_texts(MANUALS_DIR / pdf_name, [])
+        return memo[pdf_name]
 
     return get
 
 
 @pytest.fixture(scope="session")
-def real_tables():
+def real_tables(disk_parse):
     """실제 매뉴얼 PDF의 표를 PDF 이름으로 돌려주는 함수. PDF마다 처음 한 번만 읽는다(`real_page_texts`와 같은 이유)."""
-    import logging
-
-    from mpilot.db import parser
-
-    logging.getLogger("pdfminer").setLevel(logging.ERROR)
-    extract = parser._extract_tables  # 다른 테스트가 모듈 함수를 이 캐시로 바꿔 끼워도(재귀) 진짜 함수를 부르도록 미리 잡아 둔다
-    cache: dict[str, list] = {}
+    memo: dict[str, list] = {}
 
     def get(pdf_name: str) -> list:
-        if pdf_name not in cache:
-            cache[pdf_name] = extract(MANUALS_DIR / pdf_name)
-        return cache[pdf_name]
+        if pdf_name not in memo:
+            memo[pdf_name] = disk_parse.tables(MANUALS_DIR / pdf_name)
+        return memo[pdf_name]
 
     return get

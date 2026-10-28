@@ -112,10 +112,11 @@ def test_parse_manuals_raises_when_folder_has_no_pdf(tmp_path):
 
 
 @pytest.fixture(scope="module")
-def real_chunks(real_tables) -> list[Chunk]:
-    # 표 추출은 다른 테스트가 읽은 것을 나눠 쓴다(4종에 1분 넘게 걸린다). 나머지는 실제 `parse_manuals`가 그대로 한다.
+def real_chunks(disk_parse) -> list[Chunk]:
+    # PDF를 읽는 두 함수(표, 표를 뺀 본문)만 캐시판으로 바꾼다(4종에 3분 가까이 걸린다). 나머지는 실제 `parse_manuals`가 그대로 한다.
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(parser, "_extract_tables", lambda path: real_tables(Path(path).name))
+        patch.setattr(parser, "_extract_tables", lambda path: disk_parse.tables(Path(path)))
+        patch.setattr(parser, "_extract_page_texts", lambda path, tables: disk_parse.page_texts(Path(path), tables))
         return parse_manuals(MANUALS_DIR)
 
 

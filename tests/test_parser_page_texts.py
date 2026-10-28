@@ -173,15 +173,15 @@ def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, eq
         assert tops == sorted(tops)
 
 
-def test_extract_page_texts_removes_text_inside_table_bbox(real_page_texts):
+def test_extract_page_texts_removes_text_inside_table_bbox(real_page_texts, disk_parse):
     without_table = real_page_texts(AGV_PDF.name)
     page3 = next(page for page in without_table if page.page == 3)
     target, following = page3.lines[1], page3.lines[2]
     # 둘째 줄만 덮는 표 영역. 같은 영역이 다른 쪽에 있으면 3쪽에는 영향이 없어야 한다.
     bbox = (0.0, target.top - 1, 600.0, following.top - 1)
 
-    with_table = _extract_page_texts(AGV_PDF, tables=[fake_table(3, bbox)])
-    with_other_page_table = _extract_page_texts(AGV_PDF, tables=[fake_table(4, bbox)])
+    with_table = disk_parse.page_texts(AGV_PDF, [fake_table(3, bbox)])  # 실제 추출 결과를 디스크 캐시로 받는다
+    with_other_page_table = disk_parse.page_texts(AGV_PDF, [fake_table(4, bbox)])
 
     page3_with_table = next(page for page in with_table if page.page == 3)
     assert page3_with_table.lines == [line for line in page3.lines if line != target]
