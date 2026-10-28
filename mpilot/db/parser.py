@@ -52,6 +52,10 @@ from mpilot.models import Chunk, DependencyError, Equipment, MpilotError, Valida
 def parse_manuals(directory: Path) -> list[Chunk]:
     """매뉴얼 PDF를 출처가 붙은 검색 단위로 분해한다.
 
+    PDF마다(파일 이름순) 표 추출 → 표 영역을 뺀 쪽별 본문 → 절 나누기 → 텍스트·표 초안 → 번호 매기기 순으로 잇는다.
+    `manual_id`·`version`은 꼬리글에서 읽은 `PageText`에서, 설비는 문서번호의 설비 코드로 정한다.
+    이미지 페이지 OCR 초안은 OCR을 보류한 동안 넣지 않는다(파일 끝 주석을 풀 때 여기에 더한다).
+
     Args:
         directory: 매뉴얼 PDF(설비 4종)가 들어 있는 폴더. `AppConfig.manuals_dir`의 값.
 
@@ -60,10 +64,28 @@ def parse_manuals(directory: Path) -> list[Chunk]:
             같은 PDF를 넣으면 순서와 ID 구성이 항상 같다.
 
     Raises:
-        ValidationError: 폴더에 PDF가 없거나 설비를 알 수 없을 때, ID 구성 요소에 `:`가 있을 때.
+        ValidationError: 폴더에 PDF가 없거나 설비를 알 수 없을 때, 같은 설비 매뉴얼이 두 개일 때,
+            ID 구성 요소에 `:`가 있을 때, 청크 ID가 겹칠 때.
         DependencyError: PDF를 읽거나 파싱하는 데 실패했을 때.
     """
-    ...
+    chunks: list[Chunk] = []  # 돌려줄 청크(매뉴얼 파일 이름순, 매뉴얼 안에서는 위치순)
+    files_by_equipment: dict[Equipment, str] = {}  # 설비 → 그 설비 매뉴얼 파일 이름. 같은 설비 중복 확인용
+    for pdf_path in _list_pdf_files(directory):  # 파일 이름순이라 늘 같은 순서로 돈다
+        tables = _extract_tables(pdf_path)  # 표를 먼저 뽑아야 본문에서 표 영역을 뺄 수 있다
+        page_texts = _extract_page_texts(pdf_path, tables)  # 표지를 뺀 쪽별 본문. 꼬리글이 하나도 없으면 여기서 ValidationError
+        manual_id, version = page_texts[0].manual_id, page_texts[0].version  # 모든 쪽이 같은 값임을 _extract_page_texts가 확인했다
+        equipment = _equipment_from_manual_id(manual_id)  # 파일명이 아니라 문서번호의 설비 코드로 정한다
+        if equipment in files_by_equipment:  # 같은 설비 매뉴얼이 이미 있으면(예: 구 Rev 파일이 남아 있음)
+            raise ValidationError(  # 어느 쪽을 써야 할지 추측하지 않고 적재 오류로 낸다
+                f"같은 설비({equipment.value}) 매뉴얼이 두 개입니다: {files_by_equipment[equipment]}, {pdf_path.name}"
+            )  # raise 끝
+        files_by_equipment[equipment] = pdf_path.name  # 이 설비의 매뉴얼로 기록한다
+        drafts = _to_text_drafts(_split_sections(page_texts))  # 목차 기준으로 절을 나눈 텍스트 초안
+        for table in tables:  # 표마다
+            drafts += _table_to_drafts(table)  # 캡션과 마크다운 표로 된 표 초안을 더한다
+        chunks += _number_chunks(drafts, manual_id, version, equipment)  # 위치순 정렬, 절 채우기, 쪽마다 번호
+    _check_unique_chunk_ids(chunks)  # 매뉴얼 사이에서도 ID가 겹치지 않는지 마지막으로 확인한다
+    return chunks  # 매뉴얼 4종의 청크
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +745,31 @@ def _number_chunks(drafts: list[ChunkDraft], manual_id: str, version: str, equip
         chunks.append(chunk)  # 위치순 그대로 쌓는다
         previous = section  # 다음 초안이 이어받을 절
     return chunks  # 쪽 순서, 쪽 안에서는 위에서부터의 순서
+
+
+def _check_unique_chunk_ids(chunks: list[Chunk]) -> None:
+    """청크 ID `manual:<manual_id>:<page>:<chunk_no>`가 겹치지 않는지 확인한다.
+
+    ID가 겹치면 색인에서 한 청크가 다른 청크를 덮어써 인용 출처가 틀어지므로 적재 오류로 낸다.
+
+    Args:
+        chunks: 매뉴얼 전체의 청크.
+
+    Returns:
+        None: 겹치는 ID가 없으면 아무것도 돌려주지 않는다.
+
+    Raises:
+        ValidationError: 같은 ID가 두 번 이상 나올 때. 겹친 ID를 메시지에 담는다.
+    """
+    seen: set[str] = set()  # 이미 나온 ID
+    duplicates: list[str] = []  # 두 번째로 나온 ID(나온 순서대로)
+    for chunk in chunks:  # 청크 순서대로
+        chunk_id = f"manual:{chunk.manual_id}:{chunk.page}:{chunk.chunk_no}"  # 검색 문서 ID와 같은 형식
+        if chunk_id in seen:  # 앞에서 이미 나왔으면
+            duplicates.append(chunk_id)  # 겹친 ID로 모은다
+        seen.add(chunk_id)  # 나온 ID로 기록한다
+    if duplicates:  # 하나라도 겹치면
+        raise ValidationError(f"청크 ID가 겹칩니다: {duplicates[:5]}")  # 앞 5개만 보여 준다
 # 표 추출·초안(담당: 이재서)
 #
 # 흐름: PDF → `_extract_tables`(쪽마다 표 찾기) → `RawTable` → `_table_to_drafts`(마크다운 표) → `ChunkDraft`
