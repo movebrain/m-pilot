@@ -19,7 +19,7 @@
 
 화면–서비스 연결(spec §2.3.3):
     고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
-    고객 신고 상세 → `get_customer_case`, `get_citation_text` / 엔지니어 대시보드 → `list_engineer_cases` /
+    고객 신고 상세 → `get_customer_case` / 엔지니어 대시보드 → `list_engineer_cases` /
     장애 분석 대화 → `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` /
     이력 저장 → `get_engineer_case`, `confirm_resolution`
 

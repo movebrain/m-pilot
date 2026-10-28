@@ -122,6 +122,15 @@ def test_customer_cases_exclude_seed_and_are_latest_first():
     assert [c.created_at for c in cases] == sorted((c.created_at for c in cases), reverse=True)
 
 
+def test_same_time_cases_put_later_saved_first():
+    # Windows처럼 두 신고의 시각이 같게 찍혀도 나중에 저장한 신고가 먼저 온다
+    first, second = open_case_id(), open_case_id()
+    store = fake_service._get_store()
+    store.cases[second] = store.cases[second].model_copy(update={"created_at": store.cases[first].created_at})
+    ids = [d.service_case.case_id for d in fake_service.list_engineer_cases()]
+    assert ids.index(second) < ids.index(first)
+
+
 def test_customer_cannot_open_seed_case():
     seed = next(d for d in fake_service.list_engineer_cases() if d.service_case.source == Source.SEED)
     with pytest.raises(NotFoundError):

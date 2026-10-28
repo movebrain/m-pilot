@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import gradio as gr
+
 from mpilot.models import (
     Answer,
     AnswerStep,
@@ -12,7 +14,9 @@ from mpilot.models import (
     CitationKind,
     CustomerCaseResult,
     Equipment,
+    Role,
 )
+from mpilot.ui import common
 from mpilot.ui import customer_report_detail as detail
 
 C1 = Citation(kind=CitationKind.MANUAL, ref_id="manual:agv_rev1_1:8:2", locator="p.8 · 2.4 배터리")
@@ -41,10 +45,17 @@ def test_summary_shows_basic_fields():
         assert part in text
 
 
-def test_self_guide_shows_steps_and_new_report_notice():
-    text = detail.result_markdown(_case(status=CaseStatus.COMPLETED, guidance_answer=GUIDE))
+def test_self_guide_box_shows_steps_citations_and_notice():
+    case = _case(status=CaseStatus.COMPLETED, guidance_answer=GUIDE)
+    text = detail.guide_markdown(case)
     assert "충전 스테이션으로 복귀시킨다." in text
+    assert "p.8 · 2.4 배터리" in text  # 출처는 표기로만 보인다
     assert detail.SELF_GUIDE_NOTICE in text
+    assert detail.result_markdown(case) == ""  # 안내는 박스에만 보인다
+
+
+def test_engineer_case_has_no_guide_box():
+    assert detail.guide_markdown(_case()) == ""
 
 
 def test_engineer_case_before_completion_shows_waiting():
@@ -56,6 +67,30 @@ def test_engineer_case_after_completion_shows_action_and_result():
     assert "휠 교체" in text and "정상 주행" in text
 
 
-def test_citations_are_unique_in_order():
-    assert detail.citations_of(_case(guidance_answer=GUIDE)) == [C1, C2]
-    assert detail.citations_of(_case()) == []
+def _build(monkeypatch, case: CustomerCaseResult):
+    """화면을 Blocks에 조립하고 화면 전환 핸들러를 꺼낸다."""
+    monkeypatch.setattr(detail.service, "get_customer_case", lambda case_id: case)
+    with gr.Blocks() as demo:
+        detail.build_customer_report_detail_screen(
+            gr.State(Role.CUSTOMER), gr.State("SC-1"), gr.State(common.SCREEN_CUSTOMER_LIST),
+        )
+    handlers = {f.fn.__name__: f.fn for f in demo.fns.values()}
+    return demo, handlers["on_screen_change"]
+
+
+def test_screen_has_no_source_viewer(monkeypatch):
+    demo, _ = _build(monkeypatch, _case())
+    kinds = {type(b).__name__ for b in demo.blocks.values()}
+    assert not kinds & {"Dropdown", "Accordion", "Textbox"}  # 원문 보기 컴포넌트가 없다
+
+
+def test_self_guide_case_opens_box(monkeypatch):
+    _, on_screen_change = _build(monkeypatch, _case(guidance_answer=GUIDE))
+    _, _, box, guide, body, _ = on_screen_change(detail.SCREEN, "SC-1")
+    assert box.visible and "충전 스테이션으로 복귀시킨다." in guide and body == ""
+
+
+def test_engineer_case_hides_box(monkeypatch):
+    _, on_screen_change = _build(monkeypatch, _case())
+    _, _, box, guide, body, _ = on_screen_change(detail.SCREEN, "SC-1")
+    assert not box.visible and guide == "" and body == detail.WAITING_NOTICE

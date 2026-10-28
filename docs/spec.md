@@ -192,7 +192,7 @@
 | ------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | ui/customer_dashboard     | `build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`     | 고객 본인의 신고 목록을 최신순·상태별로 보여 준다                                | —                                                                  |
 | ui/customer_report_form   | `build_customer_report_form_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`   | 설비·에러코드·증상 메모를 입력받아 신고를 제출한다                               | —                                                                  |
-| ui/customer_report_detail | `build_customer_report_detail_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None` | 신고의 진행 상태와 셀프 가이드 또는 조치 결과를 보여 주고 출처 원문을 펼친다     | —                                                                  |
+| ui/customer_report_detail | `build_customer_report_detail_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None` | 신고의 진행 상태와 셀프 가이드 박스 또는 조치 결과를 보여 준다(출처 원문은 펼치지 않는다) | —                                                                  |
 | ui/engineer_dashboard     | `build_engineer_dashboard_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`     | 시드 이력을 포함한 전체 신고를 상태별로 보여 주고 대응할 건을 선택받는다         | —                                                                  |
 | ui/engineer_chat          | `build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`          | 신고 정보와 대화를 보여 주고 질문 전송·출처 원문 확인을 처리한다                 | —                                                                  |
 | ui/engineer_resolution    | `build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`    | 원인·실제 조치·결과를 입력받아 조치 완료로 등록한다                              | —                                                                  |
@@ -216,7 +216,7 @@
 | ----------------- | --------------------------------------------------------------------------------- |
 | 고객 신고 목록    | `list_customer_cases`                                                             |
 | 고객 신고 작성    | `list_error_codes`, `submit_case`                                                 |
-| 고객 신고 상세    | `get_customer_case`, `get_citation_text`                                          |
+| 고객 신고 상세    | `get_customer_case`                                                               |
 | 엔지니어 대시보드 | `list_engineer_cases`                                                             |
 | 장애 분석 대화    | `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` |
 | 이력 저장         | `get_engineer_case`, `confirm_resolution`                                         |
