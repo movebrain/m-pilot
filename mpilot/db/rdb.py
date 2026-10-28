@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, insert, select, update
-from sqlalchemy.exc import ArgumentError, SQLAlchemyError
+from sqlalchemy.exc import ArgumentError, IntegrityError, SQLAlchemyError
 
 from mpilot.db.schemas import chat_turns, error_codes, metadata, resolutions, service_cases
 from mpilot.models import (
@@ -49,8 +49,11 @@ from mpilot.models import (
     ServiceCase,
     Source,
     ValidationError,
+    Verdict,
     raise_if_case_completed,
 )
+
+MEMO_MAX_CHARS = 2000  # 증상 메모 최대 글자 수(spec §3.3 customer_memo)
 
 # ---------------------------------------------------------------------------
 # 공통 도구(DB 파트 3명이 함께 쓴다. 바꿀 때는 DB 파트에 먼저 알린다.)
@@ -614,7 +617,17 @@ def save_self_guide_case(
         ValidationError: 미등록 코드, 메모 길이 초과, `answered`가 아닌 안내일 때.
         DependencyError: DB 저장에 실패했을 때(접수번호 충돌 포함).
     """
-    ...
+    # 보류 판정 안내를 고객 가이드로 남기면 근거 없는 안내가 되므로 DB에 가기 전에 막는다.
+    if guidance_answer.verdict != Verdict.ANSWERED:
+        raise ValidationError("셀프 가이드로 저장할 수 있는 안내는 answered 판정뿐입니다.")
+    return _insert_reported_case(
+        case_id,
+        data,
+        route=Route.SELF_GUIDE,
+        status=CaseStatus.COMPLETED,
+        guide_failure=None,
+        guidance_answer=guidance_answer,
+    )
 
 
 def save_support_case(
@@ -637,7 +650,93 @@ def save_support_case(
         ValidationError: 미등록 코드나 메모 길이 초과일 때.
         DependencyError: DB 저장에 실패했을 때(접수번호 충돌 포함).
     """
-    ...
+    try:
+        guide_failure = GuideFailure(guide_failure) if guide_failure is not None else None
+    except ValueError:
+        raise ValidationError(f"허용되지 않은 guide_failure 값입니다: {guide_failure}") from None
+    return _insert_reported_case(
+        case_id,
+        data,
+        route=Route.SUPPORT,
+        status=CaseStatus.RECEIVED,
+        guide_failure=guide_failure,
+        guidance_answer=None,
+    )
+
+
+def _insert_reported_case(
+    case_id: str,
+    data: CaseInput,
+    *,
+    route: Route,
+    status: CaseStatus,
+    guide_failure: GuideFailure | None,
+    guidance_answer: Answer | None,
+) -> CaseDetail:
+    """앱에서 접수한 신고 한 건을 저장하고 다시 읽어 돌려준다(두 저장 함수의 공통 부분).
+
+    `source`는 `reported`로 고정한다. 완료 상태로 저장하면 `completed_at`을 신고 시각과 같게 둔다.
+
+    Args:
+        case_id: 새 접수번호.
+        data: 고객이 제출한 설비·에러코드·증상 메모.
+        route: 처리 경로.
+        status: 접수 직후 상태(`self_guide`면 `completed`, `support`면 `received`).
+        guide_failure: 가이드 실패 사유. 해당이 없으면 `None`.
+        guidance_answer: 셀프 가이드 안내. `support`면 `None`.
+
+    Returns:
+        CaseDetail: 저장한 신고 건과 신고한 에러코드 행(조치 기록은 없다).
+
+    Raises:
+        ValidationError: 미등록 코드나 메모 길이 초과일 때.
+        DependencyError: DB 저장에 실패했을 때(접수번호 충돌 포함).
+    """
+    # 1) 메모 길이를 확인한다. CaseInput이 이미 검사하지만 저장 직전에 한 번 더 본다.
+    if data.memo is not None and len(data.memo) > MEMO_MAX_CHARS:
+        raise ValidationError(f"증상 메모는 {MEMO_MAX_CHARS:,}자 이하여야 합니다.")
+
+    engine = _get_engine()
+    now = _now_for_db()
+    try:
+        with engine.begin() as conn:
+            # 2) 신고한 코드가 에러코드 표에 있어야 한다. 외래키 오류로 두면 DB 장애처럼 보이므로 먼저 확인한다.
+            known = conn.execute(
+                select(error_codes.c.code).where(
+                    error_codes.c.equipment == data.equipment.value,
+                    error_codes.c.code == data.code,
+                )
+            ).first()
+            if known is None:
+                raise ValidationError(f"에러코드 표에 없는 코드입니다: {data.equipment}/{data.code}")
+
+            # 3) 신고 건을 저장한다. 모델 필드 memo·guidance_answer를 DB 컬럼 이름으로 바꿔 넣는다.
+            conn.execute(
+                insert(service_cases).values(
+                    case_id=case_id,
+                    equipment=data.equipment.value,
+                    code=data.code,
+                    customer_memo=data.memo,
+                    source=Source.REPORTED.value,
+                    status=status.value,
+                    route=route.value,
+                    guide_failure=guide_failure.value if guide_failure is not None else None,
+                    self_guide_answer=(
+                        guidance_answer.model_dump_json() if guidance_answer is not None else None
+                    ),
+                    created_at=now,
+                    completed_at=now if status == CaseStatus.COMPLETED else None,
+                )
+            )
+
+            # 4) 저장한 결과를 다시 읽어 돌려준다.
+            detail = _load_case_detail(conn, case_id)
+    except IntegrityError:
+        # 접수번호(PK) 충돌. 재시도는 하지 않는다(spec §2.3.1).
+        raise DependencyError(f"접수번호가 이미 있어 저장하지 못했습니다: {case_id}") from None
+    except SQLAlchemyError as e:
+        raise DependencyError(f"신고를 저장하지 못했습니다({type(e).__name__}).") from None
+    return detail
 
 
 # ---------------------------------------------------------------------------
