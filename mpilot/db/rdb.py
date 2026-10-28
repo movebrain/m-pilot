@@ -768,4 +768,23 @@ def fetch_resolved_cases() -> list[CaseDetail]:
     Raises:
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    codes = {(c.equipment, c.code): c for e in Equipment for c in fetch_error_codes(e)}
+    try:
+        with _get_engine().connect() as conn:
+            # resolutions와 내부 조인 → 조치 기록이 없는 건(셀프 가이드·미완료)은 빠진다.
+            rows = conn.execute(
+                select(service_cases, resolutions.c.cause, resolutions.c.action, resolutions.c.result)
+                .join(resolutions, resolutions.c.case_id == service_cases.c.case_id)
+                .order_by(service_cases.c.case_id)  # 색인 재생성이 매번 같은 순서가 되도록
+            ).all()
+    except SQLAlchemyError as e:
+        raise DependencyError(f"조치 기록이 있는 신고를 조회하지 못했습니다({type(e).__name__}).") from None
+    # 컬럼 이름 바꾸기(customer_memo → memo 등)와 UTC 붙이기는 공통 도구가 한다.
+    return [
+        CaseDetail(
+            service_case=_row_to_service_case(row),
+            error_code=codes[(row.equipment, row.code)],
+            resolution=_row_to_resolution(row),
+        )
+        for row in rows
+    ]
