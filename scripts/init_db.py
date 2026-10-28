@@ -17,6 +17,12 @@
 
 from __future__ import annotations
 
+import sys
+
+from mpilot.config import load_config
+from mpilot.db import rdb
+from mpilot.models import MpilotError
+
 
 def main() -> int:
     """DB 초기화와 초기 자료 적재를 실행하고 성공 0·실패 1을 반환한다.
@@ -25,4 +31,20 @@ def main() -> int:
         int: 모든 적재가 성공하면 `0`, 검증 오류나 DB 장애 등 앱 예외가 났으면 `1`.
             앱 예외는 밖으로 던지지 않고 안내를 출력한 뒤 `1`로 바꿔 돌려준다.
     """
-    ...
+    try:
+        config = load_config()
+        # 접속 URL에는 비밀번호가 있으므로 출력하지 않는다. 예외 문구에도 rdb가 URL을 넣지 않는다.
+        rdb.connect(config.db_url.get_secret_value())
+        rdb.reset_schema()
+        codes = rdb.load_error_codes_from_csv(config.codes_path)
+        seed_count = rdb.load_seed_history_from_csv(config.history_seed_path)
+    except MpilotError as e:
+        print(f"DB 초기화에 실패했습니다({type(e).__name__}): {e}", file=sys.stderr)
+        return 1
+
+    print(f"DB 초기화 완료: 에러코드 {len(codes)}건, 시드 이력 {seed_count}건을 적재했습니다.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
