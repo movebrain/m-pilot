@@ -37,9 +37,10 @@ import re
 from pathlib import Path
 from typing import Literal
 
+import pdfplumber
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from mpilot.models import Chunk, ValidationError
+from mpilot.models import Chunk, DependencyError, Equipment, MpilotError, ValidationError
 
 
 def parse_manuals(directory: Path) -> list[Chunk]:
@@ -284,3 +285,151 @@ def _read_manual_identity(footers: list[Footer]) -> tuple[str, str]:
     if len(identities) > 1:
         raise ValidationError(f"한 매뉴얼 안에서 꼬리글의 문서번호·버전이 다릅니다: {sorted(identities)}")
     return identities.pop()
+
+
+# ---------------------------------------------------------------------------
+# 쪽별 본문 추출(#79)
+#
+# 흐름: 폴더 → PDF 목록 → PDF마다 쪽을 돌며 꼬리글로 출처를 읽고, 표 영역·머리글·꼬리글을 뺀 줄로 `PageText`를 만든다.
+# 설비는 `PageText`에 담지 않고, 읽어 낸 `manual_id`로 PDF마다 한 번 정한다.
+# ---------------------------------------------------------------------------
+
+# 표지를 뺀 모든 쪽 맨 위 머리글. 예: `HYUNDAI MOVEX · AGV (Automated Guided Vehicle) — DUMMY DATA`
+_HEADER_PATTERN = re.compile(r"^HYUNDAI MOVEX · .+ — DUMMY DATA$")
+
+# 문서번호 `HMX-<설비 코드>-...`의 설비 코드 → 설비.
+_EQUIPMENT_CODES = {
+    "AGV": Equipment.AGV,
+    "MLD": Equipment.MINI_LOADER,
+    "RTV": Equipment.RTV,
+    "SRM": Equipment.SRM,
+}
+
+
+def _list_pdf_files(directory: Path) -> list[Path]:
+    """폴더 안의 매뉴얼 PDF를 이름순으로 모은다.
+
+    이름순으로 고정해야 같은 폴더에서 늘 같은 순서로 청크가 나온다. 하위 폴더는 보지 않는다.
+
+    Args:
+        directory: 매뉴얼 PDF가 들어 있는 폴더.
+
+    Returns:
+        list[Path]: 확장자가 `.pdf`(대소문자 무시)인 파일 경로. 파일 이름순이다.
+
+    Raises:
+        ValidationError: 폴더가 없거나 PDF가 하나도 없을 때.
+    """
+    if not directory.is_dir():
+        raise ValidationError(f"매뉴얼 폴더가 없습니다: {directory}")
+    files = sorted(
+        (path for path in directory.iterdir() if path.is_file() and path.suffix.lower() == ".pdf"),
+        key=lambda path: path.name,
+    )
+    if not files:
+        raise ValidationError(f"매뉴얼 폴더에 PDF가 없습니다: {directory}")
+    return files
+
+
+def _equipment_from_manual_id(manual_id: str) -> Equipment:
+    """문서번호의 설비 코드로 설비를 정한다.
+
+    파일명은 바뀔 수 있어 쓰지 않고, 꼬리글에서 읽은 문서번호만 본다.
+
+    Args:
+        manual_id: 꼬리글의 문서번호(예: `HMX-MLD-TSM-001`).
+
+    Returns:
+        Equipment: 설비 코드(`AGV`, `MLD`, `RTV`, `SRM`)에 맞는 설비.
+
+    Raises:
+        ValidationError: 설비 코드를 모를 때.
+    """
+    parts = manual_id.split("-")
+    code = parts[1] if len(parts) > 1 else ""
+    if code not in _EQUIPMENT_CODES:
+        raise ValidationError(f"문서번호의 설비 코드를 알 수 없습니다: {manual_id}")
+    return _EQUIPMENT_CODES[code]
+
+
+def _is_char_in_table_area(char: dict, table_boxes: list[tuple[float, float, float, float]]) -> bool:
+    """글자 하나가 표 영역 안에 있는지 본다.
+
+    글자 상자의 중심으로 판단한다. 경계에 걸친 글자 때문에 표 테두리 바로 옆 본문 글자가 함께 지워지지 않게 하기 위해서다.
+
+    Args:
+        char: pdfplumber의 글자 객체(`page.chars`의 원소, `object_type == "char"`).
+            글자 상자 `x0`, `x1`, `top`, `bottom`(pt, 원점은 쪽 왼쪽 위)을 쓴다.
+        table_boxes: 같은 쪽 표들의 영역 `RawTable.bbox` 목록. 각각 `(x0, top, x1, bottom)`.
+
+    Returns:
+        bool: 글자 중심이 어느 한 표 영역 안(경계 포함)에 있으면 True.
+    """
+    center_x = (char["x0"] + char["x1"]) / 2
+    center_y = (char["top"] + char["bottom"]) / 2
+    return any(x0 <= center_x <= x1 and top <= center_y <= bottom for x0, top, x1, bottom in table_boxes)
+
+
+def _extract_page_texts(pdf_path: Path, tables: list[RawTable]) -> list[PageText]:
+    """매뉴얼 PDF 하나를 쪽마다 본문 줄만 담은 `PageText`로 바꾼다.
+
+    - 쪽마다 맨 아래 줄을 꼬리글로 읽어 `manual_id`·`version`·`page`를 채운다.
+    - 첫 쪽에 꼬리글이 없으면 표지로 보고 건너뛴다. 첫 쪽이 아닌데 꼬리글이 없으면 적재 오류다.
+    - 그 쪽(인쇄 쪽 번호 기준) 표 영역 안의 글자를 지운 뒤 줄을 다시 뽑고, 머리글·꼬리글 줄을 버린다.
+    - 끝으로 모든 쪽의 문서번호·버전이 같은지 `_read_manual_identity`로 확인한다.
+
+    Args:
+        pdf_path: 매뉴얼 PDF 경로.
+        tables: 이 PDF에서 찾은 표. `RawTable.page`는 인쇄 쪽 번호이며, 다른 쪽 표는 무시한다.
+
+    Returns:
+        list[PageText]: 표지를 뺀 쪽들. PDF 쪽 순서대로이고, 각 `lines`는 위에서부터 순서대로다.
+
+    Raises:
+        ValidationError: 표지가 아닌 쪽에 꼬리글이 없을 때, 꼬리글이 하나도 없을 때,
+            쪽마다 문서번호나 Rev가 다를 때.
+        DependencyError: PDF를 열거나 읽지 못했을 때.
+    """
+    try:  # PDF 열기 실패만 따로 잡는다
+        pdf = pdfplumber.open(pdf_path)  # PDF 파일을 연다(쪽 내용은 아직 읽지 않음)
+    except Exception as error:  # 파일 없음, PDF 형식 아님 등 열기 실패 전부
+        raise DependencyError(f"매뉴얼 PDF를 열지 못했습니다: {pdf_path.name}") from error  # 외부 의존 실패로 바꿔 올린다
+
+    page_texts: list[PageText] = []  # 돌려줄 쪽 목록(표지 제외)
+    footers: list[Footer] = []  # 쪽마다 읽은 꼬리글. 끝에서 문서번호·버전 일치 확인에 쓴다
+    try:  # 쪽을 읽다가 나는 pdfplumber 오류를 잡기 위한 범위
+        with pdf:  # 다 읽으면(오류가 나도) PDF 파일을 닫는다
+            for index, page in enumerate(pdf.pages):  # PDF 쪽 순서대로 돈다. index 0이 첫 쪽(표지 후보)
+                raw_lines = page.extract_text_lines()  # 표 영역을 빼기 전, 쪽 전체의 줄(위에서부터 정렬, top 포함)
+                footer = _parse_footer(raw_lines[-1]["text"]) if raw_lines else None  # 맨 아래 줄을 꼬리글로 읽는다. 빈 쪽이면 None
+                if footer is None:  # 꼬리글이 없는 쪽
+                    if index == 0:  # 첫 쪽이면
+                        continue  # 표지로 보고 청킹 대상에서 뺀다
+                    raise ValidationError(f"{pdf_path.name} {index + 1}번째 쪽에 꼬리글이 없습니다")  # 첫 쪽이 아니면 출처를 정할 수 없어 적재 오류
+                footers.append(footer)  # 문서번호·버전 일치 확인용으로 모은다
+
+                table_boxes = [table.bbox for table in tables if table.page == footer.page]  # 이 쪽(인쇄 쪽 번호 기준) 표들의 영역만 고른다
+                if table_boxes:  # 이 쪽에 표가 있을 때만 다시 뽑는다
+                    # 줄이 아니라 글자 단위로 지워야 표 옆에 나란히 놓인 본문이 살아남는다.
+                    # filter에는 글자 말고 선·사각형 등도 들어오는데, 본문 줄에는 영향이 없어 그대로 둔다.
+                    page = page.filter(  # 조건이 참인 객체만 남긴 새 쪽을 만든다
+                        lambda pdf_object: pdf_object["object_type"] != "char"  # 글자가 아닌 객체는 남긴다
+                        or not _is_char_in_table_area(pdf_object, table_boxes)  # 글자는 표 영역 밖일 때만 남긴다
+                    )  # filter 호출 끝
+                    raw_lines = page.extract_text_lines()  # 표 글자를 지운 쪽에서 줄을 다시 뽑는다
+
+                lines = [TextLine(top=line["top"], text=line["text"]) for line in raw_lines]  # pdfplumber 줄 dict를 TextLine으로 바꾼다
+                if lines and _parse_footer(lines[-1].text) is not None:  # 맨 아래 줄이 꼬리글이면
+                    lines.pop()  # 본문에서 버린다(값은 위에서 이미 읽음)
+                if lines and _HEADER_PATTERN.match(lines[0].text.strip()):  # 맨 위 줄이 머리글이면
+                    lines.pop(0)  # 본문에서 버린다
+                page_texts.append(  # 이 쪽의 결과를 쌓는다
+                    PageText(manual_id=footer.manual_id, version=footer.version, page=footer.page, lines=lines)  # 꼬리글 출처 + 본문 줄
+                )  # append 호출 끝
+    except MpilotError:  # 위에서 낸 ValidationError 등 우리 오류는
+        raise  # DependencyError로 바꾸지 않고 그대로 올린다
+    except Exception as error:  # 쪽 내용을 읽다가 난 pdfplumber·pdfminer 오류
+        raise DependencyError(f"매뉴얼 PDF를 읽지 못했습니다: {pdf_path.name}") from error  # 외부 의존 실패로 바꿔 올린다
+
+    _read_manual_identity(footers)  # 모든 쪽의 문서번호·버전이 같은지 확인한다. 다르거나 꼬리글이 하나도 없으면 ValidationError
+    return page_texts  # 표지를 뺀 쪽들을 PDF 쪽 순서대로 돌려준다
