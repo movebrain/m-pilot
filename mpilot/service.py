@@ -51,6 +51,7 @@ from mpilot.models import (
     ErrorCode,
     GuideFailure,
     MpilotError,
+    NotFoundError,
     Resolution,
     Source,
     ValidationError,
@@ -147,8 +148,10 @@ def get_customer_case(case_id: str) -> CustomerCaseResult:
         NotFoundError: 접수번호가 없거나 고객이 접근할 수 없는 건(시드 이력)일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.fetch_case_detail)
-    ...
+    detail = rdb.fetch_case_detail(case_id)
+    if detail.service_case.source != Source.REPORTED:
+        raise NotFoundError(case_id)  # 고객은 시드 이력을 볼 수 없다
+    return _to_customer_result(detail)
 
 
 def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -269,8 +272,7 @@ def list_engineer_cases(status: CaseStatus | None = None) -> list[CaseDetail]:
         ValidationError: 허용되지 않은 상태 값일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (rdb.fetch_cases(status))
-    ...
+    return _sorted_newest(rdb.fetch_cases(status))
 
 
 def get_engineer_case(case_id: str) -> CaseDetail:
@@ -402,8 +404,7 @@ def get_citation_text(citation: Citation) -> str:
         NotFoundError: 그 ID의 원문이 없을 때.
         DependencyError: 검색 저장소 조회에 실패했을 때.
     """
-    # TODO: 실제 호출로 교체 (vectordb.get_document)
-    ...
+    return vectordb.get_document(citation.kind, citation.ref_id).page_content
 
 
 def prepare_search_index() -> None:
