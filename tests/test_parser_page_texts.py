@@ -54,7 +54,7 @@ class FakePage:
             ]
         self.objects = objects
 
-    def extract_text_lines(self) -> list[dict]:
+    def extract_text_lines(self, **kwargs) -> list[dict]:
         return list(self.objects)
 
     def filter(self, keep) -> FakePage:
@@ -271,7 +271,7 @@ def test_extract_page_texts_rejects_pdf_with_only_cover(open_fake_pdf):
 
 def test_extract_page_texts_wraps_read_failure(open_fake_pdf):
     class BrokenPage(FakePage):
-        def extract_text_lines(self):
+        def extract_text_lines(self, **kwargs):
             raise RuntimeError("깨진 쪽")
 
     open_fake_pdf([BrokenPage()])
