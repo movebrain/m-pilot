@@ -23,3 +23,7 @@ engineer_chat,AGV,A383,현장 와이파이 AP 모델명이랑 관리자 접속 �
 engineer_chat,RTV,R214,"스테이션에 반입할 때 R214로 자꾸 서요. 화물은 멀쩡한데, 반복되면 어디를 봐야 하나요?",answered,"RTV 13.14절 원인 후보(센서 오염·정지 위치 편차 등)와 이력 RTV-H-0004~0008(반복 후 센서 브래킷 풀림, 0008)에 근거가 있음."
 engineer_chat,RTV,R201,"배터리를 교환한 직후에 주행이 막히는 에러가 있다던데, 훅 체결 쪽을 확인하는 게 맞나요?",answered,RTV 자료엔 없고 AGV 13.52절 A352(교환 후 훅 미체결)와 이력 AGV-H-0033·0036에 있음. 타 설비 재검색 후 고지하고 답하는 설계라 answered.
 engineer_chat,RTV,R201,이번 달 야간 근무 수당은 어디서 신청해요?,insufficient_evidence,근무·수당 등 인사 문의로 설비 자료에 전혀 없는 오프토픽 문항.
+customer_guidance,Mini Loader,M413,,insufficient_evidence,"엔지니어 필요 코드(중). Mini Loader 13.13절(PDF p.52)은 고객사 절차가 ""위 절차 전체가 연락 절차다""이고 복구는 4항 엔지니어 조치(LOTO 후 반사판 청소, 벨트 장력 Hz 측정·조정, 수동 티칭)뿐임."
+customer_guidance,SRM,S141,,insufficient_evidence,"엔지니어 필요 코드(하). SRM 13.41절(PDF p.99)은 ""운영자는 집전자·레일에 접근하거나 청소하지 않는다""이고 복구는 4항 엔지니어 조치(LOTO·무전압 확인, 카본 브러시 8 mm 이하 교체, 접촉압 측정)뿐임."
+customer_guidance,AGV,A314,,insufficient_evidence,"엔지니어 필요 코드(중). AGV 13.14절(PDF p.68)은 ""고객사는 복구를 시도하지 않는다""이고 복구는 4항 엔지니어 조치(LOTO, 브래킷 6 N·m 체결, 교정 지그로 스캐너 간 교정)뿐임."
+customer_guidance,RTV,R245,,insufficient_evidence,"엔지니어 필요 코드(하). RTV 13.45절(PDF p.106~107)은 고객사가 기록·MCCB OFF 보류·연락만 하고 복구는 4항 엔지니어 조치(파라미터 백업, LOTO 후 RT-BAT-36 교체)뿐임."

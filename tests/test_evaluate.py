@@ -146,24 +146,12 @@ def test_엔지니어_문항은_질문을_넘기고_고객_문항은_코드만_�
 
 
 @pytest.mark.parametrize("rows, message", [
-    (make_rows()[:9] + make_rows()[12:], "10문항"),  # 고객 안내 9문항
-    (make_rows()[:12] + make_rows(normal_hits=12, holds=0)[12:], "모두 포함"),  # 엔지니어 채팅에 근거 부족 문항이 없다
-    (make_rows(normal_hits=0, holds=12), "모두 포함"),  # 정상 문항이 없다
+    (make_rows(normal_hits=9, holds=0)[:9] + make_rows()[12:], "10문항"),  # 고객 안내 9문항
+    (make_rows(normal_hits=12, holds=0), "두 판정"),  # 근거 부족 문항이 없다
 ])
 def test_목적별_문항_수와_구성이_모자라면_ValidationError(env, tmp_path, rows, message):
     with pytest.raises(ValidationError, match=message):
         run(tmp_path, rows)
-
-
-def test_고객_안내에_보류_문항이_없으면_보류_정확도는_측정_불가로_기록한다(env, tmp_path):
-    customer = make_rows(normal_hits=12, holds=0)[:12]
-    engineer = [r for r in make_rows() if r["purpose"] == "engineer_chat"]
-    env.answers = [answered()] * 12 + [answered()] * 8 + [HOLD] * 4
-    summary = run(tmp_path, customer + engineer)["summary"]
-    assert summary["customer_guidance"]["rates"]["hold_accuracy"] is None
-    assert summary["customer_guidance"]["passed"]["hold_accuracy"] is None
-    assert summary["customer_guidance"]["passed"]["normal_answer"] is True
-    assert summary["engineer_chat"]["rates"]["hold_accuracy"] == 1.0
 
 
 def test_열이_다르면_ValidationError(env, tmp_path):

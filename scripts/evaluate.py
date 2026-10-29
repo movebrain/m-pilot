@@ -10,9 +10,9 @@
       문항은 데이터를 만든 사람이 아닌 다른 사람이 쓴다. AI가 쓴 초안이면 사람이 검토한다.
     - 지표와 합격선: 인용 검증 100%(공개된 답변의 인용이 모두 확보한 근거에 있고 설비가 일치),
       정상 답변율 80% 이상(초기 목표이며 실측값이 아니다), 보류 정확도 90% 이상.
-      정상 문항의 분모가 0이거나 엔지니어 채팅에 근거 부족 문항이 없으면 평가 미완료로 보고 `ValidationError`로 멈춘다.
-      고객 안내는 평가 대상 코드 모두에 매뉴얼의 고객 절차가 있어 근거 부족 문항이 없을 수 있으며, 이때 보류 정확도는
-      측정 불가(`null`)로 기록한다.
+      정상 문항이나 근거 부족 문항의 분모가 0이면 평가 미완료로 보고 `ValidationError`로 멈춘다.
+      고객 안내의 근거 부족 문항은 조치 구분이 엔지니어 필요인 코드를 고객 안내 흐름에 직접 넣어 만든다(운영에서는 경로
+      분기가 먼저 엔지니어에게 접수하므로, 고객에게 엔지니어 조치를 안내하지 않는 안전 장치를 시험한다).
     - 기록 항목: `versions`(모델·프롬프트·문항 파일 버전), `settings`(검색 설정), `results`(질문별 판정·인용),
       `summary`(목적별 지표). 합격선을 바꾸면 이유를 평가 결과에 남긴다.
     - 인용 검증은 이 스크립트가 다시 검사한다. 색인에서 인용 문서를 다시 읽어 있는지와 설비가 신고 설비인지를
@@ -53,12 +53,6 @@ _ROOT = Path(__file__).resolve().parent.parent
 _PURPOSES = ("customer_guidance", "engineer_chat")
 _COLUMNS = ("purpose", "equipment", "code", "question", "expected", "note")
 _MIN_QUESTIONS = 10  # 목적별 최소 문항 수
-# 목적별로 문항에 꼭 들어 있어야 하는 기대 판정. 고객 안내는 평가 대상 코드 전부에 매뉴얼의 고객 절차가 있어
-# 근거 부족 문항을 만들 수 없으므로 정상 답변만 요구한다(보류 정확도는 측정 불가).
-_REQUIRED = {
-    "customer_guidance": {Verdict.ANSWERED},
-    "engineer_chat": {Verdict.ANSWERED, Verdict.INSUFFICIENT_EVIDENCE},
-}
 _PASS_LINES = {"citation_valid": 1.0, "normal_answer": 0.8, "hold_accuracy": 0.9}
 
 
@@ -119,10 +113,8 @@ def _read_questions(path: Path) -> list[dict[str, str]]:
             raise ValidationError(f"엔지니어 문항에 질문이 없습니다: {row}")
     for purpose in _PURPOSES:
         expected = [r["expected"] for r in rows if r["purpose"] == purpose]
-        if len(expected) < _MIN_QUESTIONS or not _REQUIRED[purpose] <= set(expected):
-            raise ValidationError(
-                f"{purpose}는 {_MIN_QUESTIONS}문항 이상이고 기대 판정 {sorted(_REQUIRED[purpose])}을 모두 포함해야 합니다."
-            )
+        if len(expected) < _MIN_QUESTIONS or len(set(expected)) < 2:
+            raise ValidationError(f"{purpose}는 {_MIN_QUESTIONS}문항 이상이고 두 판정을 모두 포함해야 합니다.")
     return rows
 
 
@@ -161,7 +153,7 @@ def _citation_exists(citation, equipment: Equipment, cross: bool) -> bool:
 
 
 def _summarize(results: list[dict[str, object]]) -> dict[str, object]:
-    """목적 하나의 지표 세 개와 합격 여부를 계산한다. 분모가 없는 지표는 `None`이다."""
+    """목적 하나의 지표 세 개와 합격 여부를 계산한다. 답한 건이 없으면 인용 검증은 `None`이다."""
     by_expected = defaultdict(list)
     for r in results:
         by_expected[r["expected"]].append(r)
@@ -170,9 +162,9 @@ def _summarize(results: list[dict[str, object]]) -> dict[str, object]:
     rates = {
         "citation_valid": sum(bool(r["citations_ok"]) for r in answered) / len(answered) if answered else None,
         "normal_answer": sum(r["verdict"] == Verdict.ANSWERED for r in normal) / len(normal),
-        "hold_accuracy": sum(r["verdict"] == Verdict.INSUFFICIENT_EVIDENCE for r in hold) / len(hold) if hold else None,
+        "hold_accuracy": sum(r["verdict"] == Verdict.INSUFFICIENT_EVIDENCE for r in hold) / len(hold),
     }
-    # 측정하지 못한 지표(None)는 합격으로 세지 않고 None으로 남긴다.
+    # 답한 건이 없어 측정하지 못한 인용 검증(None)은 합격으로 세지 않고 None으로 남긴다.
     passed = {name: None if rates[name] is None else rates[name] >= line for name, line in _PASS_LINES.items()}
     return {"counts": {"questions": len(results), "answered": len(answered), "errors": sum(r["verdict"] == "error" for r in results)},
             "rates": rates, "passed": passed}
