@@ -153,14 +153,22 @@ def test_근거_태그에_설비는_폴백일_때만_적는다():
     assert "equipment=" not in generator._format_evidence([make_other_equipment_hit()])
 
 
-def test_고객_안내_지시문은_짧게_쓰라고_하지_않고_단계를_풀어_쓰게_한다():
+def test_고객_안내_지시문은_짧게_쓰라고_하지_않고_문장_수를_제한하지_않는다():
     assert "쉬운 말로 짧게" not in prompts.CUSTOMER_SYSTEM
-    assert "2~3문장" in prompts.CUSTOMER_SYSTEM
-    assert "2~3문장" in prompts.CUSTOMER_HUMAN
+    assert "문장 수를 제한하지 않습니다" in prompts.CUSTOMER_SYSTEM
+    assert "2~3문장" not in prompts.CUSTOMER_SYSTEM + prompts.CUSTOMER_HUMAN
+
+
+def test_고객_안내_지시문은_주의_문구와_중단_조건을_옮기고_엔지니어_절차는_뺀다():
+    for text in ("주의", "중단하고 기술지원팀에 연락하는 경우"):
+        assert text in prompts.CUSTOMER_SYSTEM
+        assert text in prompts.CUSTOMER_HUMAN
+    assert "엔지니어 조치 절차" in prompts.CUSTOMER_SYSTEM
+    assert "엔지니어 조치 절차" in prompts.CUSTOMER_HUMAN
 
 
 def test_고객_안내_지시문은_근거_안의_이유와_기준값을_꺼내_쓰게_한다():
-    assert "왜 필요한지" in prompts.CUSTOMER_SYSTEM
+    assert "필요한 이유" in prompts.CUSTOMER_SYSTEM
     assert "기준값" in prompts.CUSTOMER_SYSTEM
     assert "기준값" in prompts.CUSTOMER_HUMAN
 
