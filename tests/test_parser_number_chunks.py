@@ -10,7 +10,8 @@ import random
 
 import pytest
 
-from mpilot.db.parser import ChunkDraft, _number_chunks
+from mpilot.db.parser.chunks import _number_chunks
+from mpilot.db.parser.types import ChunkDraft
 from mpilot.models import Equipment, ValidationError
 
 MANUAL_ID = "HMX-AGV-TSM-001"

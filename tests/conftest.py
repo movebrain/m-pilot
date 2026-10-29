@@ -117,7 +117,7 @@ class _DiskParse:
     """실제 매뉴얼 PDF를 읽는 두 함수(표 추출, 쪽별 본문 추출)에 디스크 캐시를 씌운다.
 
     합본 PDF는 4종을 읽는 데 3분 가까이 걸려, 캐시 없이는 CI(GitHub Actions)가 10분 넘게 걸린다.
-    캐시 파일 이름의 해시에 PDF·`parser.py`·`pdfplumber` 버전이 들어 있어 어느 하나라도 바뀌면 새로 읽는다.
+    캐시 파일 이름의 해시에 PDF·`parser` 패키지 소스·`pdfplumber` 버전이 들어 있어 어느 하나라도 바뀌면 새로 읽는다.
     캐시 파일이 없거나 깨졌으면(모델 필드가 바뀐 경우 포함) 조용히 새로 읽는다. 캐시가 테스트를 막지는 않는다.
     """
 
@@ -128,14 +128,16 @@ class _DiskParse:
         from pydantic import TypeAdapter
 
         from mpilot.db import parser
+        from mpilot.db.parser import tables, text, types
 
         logging.getLogger("pdfminer").setLevel(logging.ERROR)  # 글꼴 경고가 수천 줄 나온다
         # 다른 테스트가 모듈 함수를 이 캐시로 바꿔 끼워도(재귀) 진짜 함수를 부르도록 미리 잡아 둔다
-        self._extract_tables = parser._extract_tables
-        self._extract_page_texts = parser._extract_page_texts
-        self._tables = TypeAdapter(list[parser.RawTable])
-        self._page_texts = TypeAdapter(list[parser.PageText])
-        self._salt = Path(parser.__file__).read_bytes() + pdfplumber.__version__.encode()
+        self._extract_tables = tables._extract_tables
+        self._extract_page_texts = text._extract_page_texts
+        self._tables = TypeAdapter(list[types.RawTable])
+        self._page_texts = TypeAdapter(list[types.PageText])
+        sources = sorted(Path(parser.__file__).parent.glob("*.py"))  # 패키지의 어느 파일이 바뀌어도 새로 읽는다
+        self._salt = b"".join(p.read_bytes() for p in sources) + pdfplumber.__version__.encode()
 
     def tables(self, path: Path) -> list:
         return self._cached("tables", path, b"", self._tables, lambda: self._extract_tables(path))

@@ -105,7 +105,13 @@
 │   ├── models.py                      # [공통] 업무 데이터 정의와 순수 업무 규칙
 │   ├── service.py                     # [UI] 화면과 DB·RAG를 잇는 유즈케이즈(접수·질문·완료 등)
 │   ├── db/                            # [DB]
-│   │   ├── parser.py                  # 매뉴얼 PDF를 출처가 붙은 검색 단위로 분해
+│   │   ├── parser/                    # 매뉴얼 PDF를 출처가 붙은 검색 단위로 분해(밖에서는 parse_manuals만 쓴다)
+│   │   │   ├── __init__.py            # parse_manuals: 전체 흐름 조립
+│   │   │   ├── types.py               # 중간 자료(RawTable, ChunkDraft, TextLine, PageText, Section, Footer)
+│   │   │   ├── text.py                # 꼬리글 읽기, 쪽별 본문 추출, 절 나누기·텍스트 초안
+│   │   │   ├── tables.py              # 표 추출·검증·표 초안
+│   │   │   ├── chunks.py              # 청크 번호 매기기, 청크 ID 중복 검사
+│   │   │   └── ocr.py                 # [보류] 이미지 페이지 OCR(주석)
 │   │   ├── schemas.py                 # 관계형 DB 구조·연결 설정 정의
 │   │   ├── rdb/                       # 신고·대화·조치의 저장·조회
 │   │   │   ├── __init__.py            # 공개 함수를 다시 내보낸다(밖에서는 rdb.<함수>로 부른다)

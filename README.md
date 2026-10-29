@@ -131,7 +131,7 @@ flowchart TD
 │   ├── models.py           # [공통] 업무 데이터 정의와 순수 업무 규칙
 │   ├── service.py          # [UI] 화면과 DB·RAG를 잇는 유즈케이스(접수·질문·완료)
 │   ├── db/                 # [DB]
-│   │   ├── parser.py       #   매뉴얼 PDF를 출처가 붙은 검색 단위로 분해
+│   │   ├── parser/         #   매뉴얼 PDF를 출처가 붙은 검색 단위로 분해(types·text·tables·chunks·ocr)
 │   │   ├── schemas.py      #   관계형 DB 구조·연결 설정
 │   │   ├── rdb/            #   신고·대화·조치의 저장·조회
 │   │   │   ├── __init__.py #   공개 함수를 다시 내보낸다(밖에서는 rdb.<함수>로 부른다)

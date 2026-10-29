@@ -8,7 +8,7 @@ from __future__ import annotations
 import pydantic
 import pytest
 
-from mpilot.db.parser import ChunkDraft, Footer, PageText, RawTable, Section, TextLine
+from mpilot.db.parser.types import ChunkDraft, Footer, PageText, RawTable, Section, TextLine
 
 
 def raw_table(**overrides) -> RawTable:
