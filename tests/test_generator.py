@@ -159,6 +159,12 @@ def test_고객_안내_지시문은_짧게_쓰라고_하지_않고_단계를_풀
     assert "2~3문장" in prompts.CUSTOMER_HUMAN
 
 
+def test_고객_안내_지시문은_근거_안의_이유와_기준값을_꺼내_쓰게_한다():
+    assert "왜 필요한지" in prompts.CUSTOMER_SYSTEM
+    assert "기준값" in prompts.CUSTOMER_SYSTEM
+    assert "기준값" in prompts.CUSTOMER_HUMAN
+
+
 @pytest.mark.parametrize("cross_equipment", [False, True])
 def test_폴백일_때만_엔지니어_시스템_지시문에_다른_설비_규칙을_붙인다(monkeypatch, cross_equipment):
     sent = []
