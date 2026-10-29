@@ -51,12 +51,12 @@ def stores(monkeypatch):
         store.delete_collection()
 
 
-def chunk(manual_id="srm_spec", page=12, no=1, text="11.6 스테이션 인계 이상 조치 절차") -> Chunk:
+def chunk(manual_id="srm_spec", page=12, no=1, text="11.6 스테이션 인계 이상 조치 절차", section="11.6") -> Chunk:
     return Chunk(
         manual_id=manual_id,
         equipment=Equipment.SRM,
         page=page,
-        section="11.6",
+        section=section,
         chunk_no=no,
         version="rev1.2",
         text=text,
@@ -185,9 +185,49 @@ def test_rebuild_wraps_store_failure_as_dependency_error(stores, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("embedding api down")
 
-    monkeypatch.setattr(stores[CitationKind.MANUAL], "add_documents", boom)
+    # 매뉴얼 청크는 벡터를 직접 만들어 넣으므로 임베딩 생성에서 실패시킨다.
+    monkeypatch.setattr(type(stores[CitationKind.MANUAL].embeddings), "embed_documents", boom)
     with pytest.raises(DependencyError):
         vectordb.rebuild_search_index([chunk()], [code()], [])
+
+
+# --- 코드 절 메타데이터와 임베딩 텍스트 ------------------------------------
+
+
+CODE_SECTION = "13.1 S135 스테이션 인계 이상"
+
+
+def stored_vector(store, doc_id):
+    return store._collection.get(ids=[doc_id], include=["embeddings"])["embeddings"][0]
+
+
+def test_chunk_in_error_code_section_gets_code_metadata(stores):
+    vectordb.rebuild_search_index([chunk(section=CODE_SECTION), chunk(no=2)], [], [])
+    manual = stores[CitationKind.MANUAL].get(ids=["manual:srm_spec:12:1", "manual:srm_spec:12:2"])
+    by_id = dict(zip(manual["ids"], manual["metadatas"], strict=True))
+    assert by_id["manual:srm_spec:12:1"]["code"] == "S135"
+    assert "code" not in by_id["manual:srm_spec:12:2"]  # `11.6` 같은 절에는 코드가 없다
+
+
+def test_manual_chunk_is_embedded_with_section_but_stored_as_is(stores):
+    vectordb.rebuild_search_index([chunk(section=CODE_SECTION, text="원인 후보 표")], [], [])
+    store = stores[CitationKind.MANUAL]
+    doc_id = "manual:srm_spec:12:1"
+
+    assert store.get(ids=[doc_id])["documents"][0] == "원인 후보 표"  # 인용 원문은 그대로
+    vector = stored_vector(store, doc_id)
+    assert list(vector) == pytest.approx(store.embeddings.embed_documents([f"{CODE_SECTION}\n원인 후보 표"])[0])
+    assert list(vector) != pytest.approx(store.embeddings.embed_documents(["원인 후보 표"])[0])
+
+
+def test_error_rows_and_history_are_embedded_as_stored(stores):
+    vectordb.rebuild_search_index([chunk()], [code()], [case()])
+    manual, history = stores[CitationKind.MANUAL], stores[CitationKind.HISTORY]
+    row = manual.get(ids=["error:SRM:S135"])["documents"][0]
+    note = history.get(ids=["history:SRM-H-0010"])["documents"][0]
+
+    assert list(stored_vector(manual, "error:SRM:S135")) == pytest.approx(manual.embeddings.embed_documents([row])[0])
+    assert list(stored_vector(history, "history:SRM-H-0010")) == pytest.approx(history.embeddings.embed_documents([note])[0])
 
 
 # --- index_history -------------------------------------------------------

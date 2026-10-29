@@ -23,10 +23,23 @@
 
 from __future__ import annotations
 
-from mpilot.models import Answer, CaseContext, ChatRequest, DependencyError, SearchSettings, ValidationError, Verdict
+from mpilot.models import (
+    Answer,
+    CaseContext,
+    ChatRequest,
+    DependencyError,
+    Equipment,
+    SearchHit,
+    SearchSettings,
+    ValidationError,
+    Verdict,
+)
 from mpilot.rag import generator, retriever
 
 MAX_QUESTION_LEN = 2000  # 질문 최대 길이: 공백 제거 후 1~2,000자
+# 신고 코드의 매뉴얼 검색은 `manual_k`건보다 이 배수만큼 가져와 다른 코드의 청크를 거른 뒤 `manual_k`건을 남긴다.
+# 에러코드 절마다 구성이 비슷해 상위에 다른 코드의 청크가 많이 섞이기 때문이다.
+MANUAL_FETCH_FACTOR = 5
 CROSS_EQUIPMENT_NOTICE = (
     "신고한 설비의 자료만으로는 근거가 부족해 다른 설비의 매뉴얼·이력을 포함해 답했습니다. "
     "설비가 다르므로 출처의 설비를 확인한 뒤 적용하세요."
@@ -106,12 +119,38 @@ def run_customer_guidance(context: CaseContext) -> Answer:
     return answer
 
 
+def _search_manual_for_code(equipment: Equipment, query: str, k: int, code: str) -> list[SearchHit]:
+    """신고 코드의 매뉴얼 근거를 찾는다. 다른 에러코드 절의 청크는 뺀다.
+
+    에러코드 절마다 구성(원인 후보 표, 안전 확보 절차 등)이 비슷해서, 같은 질문에 다른 코드의 청크가 상위에
+    섞여 나온다. 그래서 `k`건보다 넉넉히 가져와 다른 코드의 매뉴얼 청크(`SearchHit.code`가 신고 코드와 다른
+    `manual:` 문서)를 걸러 내고 앞에서 `k`건을 남긴다. 코드가 없는 청크(공통 절)와 코드 표 행(`error:`)은 그대로 둔다.
+
+    Args:
+        equipment: 검색 대상 설비.
+        query: 검색 질의 문장.
+        k: 돌려줄 상위 건수(`SearchSettings.manual_k`).
+        code: 신고한 에러코드.
+
+    Returns:
+        list[SearchHit]: 가까운 순으로 최대 `k`건. 걸러내고 남은 것이 `k`건보다 적으면 그만큼만 돌려준다.
+
+    Raises:
+        ValidationError: 질의가 비었거나 `k`가 1보다 작을 때(`retriever.search_manual`이 낸다).
+        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때(`retriever.search_manual`이 낸다).
+    """
+    hits = retriever.search_manual(equipment, query, k * MANUAL_FETCH_FACTOR)
+    kept = [hit for hit in hits if not (hit.ref_id.startswith("manual:") and hit.code not in (None, code))]
+    return kept[:k]
+
+
 def run_engineer_answer(
     context: CaseContext, request: ChatRequest, settings: SearchSettings
 ) -> Answer:
     """엔지니어 답변 처리 흐름을 실행한다.
 
-    매뉴얼·이력 검색(신고 설비 필터) → 근거 충분성 판단 → 생성 → 검증 순으로 진행한다. 신고 설비 자료만으로
+    매뉴얼·이력 검색(신고 설비 필터) → 근거 충분성 판단 → 생성 → 검증 순으로 진행한다. 매뉴얼은 신고 코드와 다른
+    에러코드 절의 청크를 빼고 남긴다(`_search_manual_for_code`). 신고 설비 자료만으로
     근거가 부족하면 설비 필터 없이 질문 원문으로 다시 찾고(폴백), 그래도 부족하면 `insufficient_evidence`다.
     `answered`이면 인용을 검증하고, 아니면 보류 모양(`steps=[]`, `notice` 있음)을 확인한다.
     폴백 근거로 답한 `answered`는 인용의 설비가 신고 설비와 달라도 통과시키고 `notice`에 다른 설비 자료를
@@ -137,13 +176,10 @@ def run_engineer_answer(
 
     search_query = f"{error_code.code} {error_code.name} {question}"
 
-    manual_hits = retriever.search_manual(
-        equipment, search_query, settings.manual_k
-    )
+    manual_hits = _search_manual_for_code(equipment, search_query, settings.manual_k, error_code.code)
     history_hits = retriever.search_history(
         equipment, search_query, settings.history_k
     )
-
 
     hits = manual_hits + history_hits
     cross_equipment = False

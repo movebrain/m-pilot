@@ -150,7 +150,8 @@ def _to_hit(doc: Document, distance: float | None) -> SearchHit:
         distance: 질의와의 벡터 거리. 직접 조회한 근거는 `None`.
 
     Returns:
-        SearchHit: 변환된 근거. `code`는 코드 표 행과 이력에만 있고 매뉴얼 본문은 `None`이다.
+        SearchHit: 변환된 근거. `code`는 코드 표 행·이력과 에러코드 절(`13.n <코드> ...`)의 매뉴얼 청크에 있고,
+            그 밖의 매뉴얼 본문은 `None`이다.
 
     Raises:
         DependencyError: 문서 ID가 없거나 필요한 메타데이터가 빠졌거나 설비 값이 4종 밖일 때

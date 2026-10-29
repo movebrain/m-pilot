@@ -13,7 +13,7 @@ pip install -r requirements.txt
 python -m fake.run --offline --both
 ```
 
-`initialized: offline, …`이 나오면 브라우저로 고객 앱 `http://127.0.0.1:7860`, 엔지니어 앱 `http://127.0.0.1:7861`을 연다. 첫 기동은 매뉴얼 PDF 파싱으로 20~40초 걸린다. 무엇을 눌러 볼지는 4번, 막히면 7번을 본다. 셀프 가이드와 엔지니어 답변까지 보려면 실제 모드(3번)가 필요하다.
+`initialized: offline, …`이 나오면 브라우저로 고객 앱 `http://127.0.0.1:7860`, 엔지니어 앱 `http://127.0.0.1:7861`을 연다. 첫 기동은 매뉴얼 PDF 파싱으로 2~3분 걸린다(합본 PDF 기준, 4코어에서 약 170초). 무엇을 눌러 볼지는 4번, 막히면 7번을 본다. 셀프 가이드와 엔지니어 답변까지 보려면 실제 모드(3번)가 필요하다.
 
 ## 무엇이 가짜이고 무엇이 진짜인가
 
@@ -62,7 +62,7 @@ python -m fake.run --both                    # 실제 모드(루트 .env 필요)
 python -m fake.run --both --evidence-threshold 1.2   # 엔지니어 근거 임계값을 바꿔 본다(기본 1.0, 5번 참고)
 ```
 
-- 첫 기동에 매뉴얼 PDF 파싱으로 20~40초가 걸린다. `initialized: offline, evidence_threshold=1.0`(또는 `initialized: real OpenAI models, …`)이 출력되면 브라우저에서 `http://127.0.0.1:7860`을 연다.
+- 첫 기동에 매뉴얼 PDF 파싱으로 2~3분이 걸린다. `initialized: offline, evidence_threshold=1.0`(또는 `initialized: real OpenAI models, …`)이 출력되면 브라우저에서 `http://127.0.0.1:7860`을 연다.
 - 종료는 `Ctrl+C`다. 접수 건·대화·조치는 메모리에만 있어 종료하면 사라지고, 시드 이력 200건은 기동 때마다 다시 올라온다.
 
 ### 실제 모드 설정
@@ -156,7 +156,7 @@ python -c "import sqlite3; print(sqlite3.sqlite_version)"   # 3.35 이상인지 
 ## 8. 테스트
 
 ```bash
-python -m pytest fake/        # 가짜 DB·가짜 service·fake.run 테스트. PDF 파싱으로 수십 초 걸린다
+python -m pytest fake/        # 가짜 DB·가짜 service·fake.run 테스트. PDF 파싱으로 몇 분 걸린다
 python -m pytest              # 전체(CI와 같다)
 ```
 
