@@ -117,7 +117,7 @@ def _to_hit(doc: Document, distance: float | None) -> SearchHit:
     Args:
         doc: 저장소가 돌려준 문서. `id`와 메타데이터 `equipment`를 읽고, 매뉴얼은 `manual_id`·`page`·`section`,
             이력은 `case_id`·`code`도 읽는다.
-        distance: 질의와의 벡터 거리. 직접 조회한 근거는 `None`.
+        distance: 질의와의 벡터 거리. 거리가 없으면 `None`.
 
     Returns:
         SearchHit: 변환된 근거. `code`는 코드 표 행·이력과 에러코드 절(`13.n <코드> ...`)의 매뉴얼 청크에 있고,

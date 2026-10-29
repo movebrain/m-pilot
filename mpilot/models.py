@@ -400,7 +400,7 @@ class SearchHit(_Model):
         code: 문서의 에러코드. 코드와 무관한 문서면 `None`.
         text: 문서 원문.
         locator: 화면에 보이는 출처 표기.
-        distance: 질의와의 벡터 거리. 직접 조회한 근거는 `None`.
+        distance: 질의와의 벡터 거리. 거리가 없으면 `None`.
     """
 
     ref_id: str
