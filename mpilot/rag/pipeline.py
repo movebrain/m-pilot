@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from mpilot.models import (
     Answer,
     CaseContext,
@@ -48,10 +50,10 @@ CROSS_EQUIPMENT_NOTICE = (
 
 def _make_hold_answer(notice: str) -> Answer:
     """보류 답변을 만든다. 보류는 예외가 아니라 조치 단계가 없는 Answer다.
-     
+
     Args:
         notice: 화면에 보여줄 한국어 안내 문구.
-         
+
     Returns:
         Answer: `steps=[]`인 근거 부족(`insufficient_evidence`) 답변.
     """
@@ -60,7 +62,35 @@ def _make_hold_answer(notice: str) -> Answer:
 
 def _is_valid_hold(answer: Answer) -> bool:
     """`answered`가 아닌 답변이 보류 모양(`steps=[]`, 비지 않은 `notice`)인지 확인한다."""
-    return not answer.steps and bool(answer.notice and answer.notice.strip())
+    if answer.steps:  # 조치 단계가 있으면 보류가 아니다
+        return False
+    if not answer.notice:  # 안내 문구가 없으면(None 또는 "") 보류 모양이 아니다
+        return False
+    return answer.notice.strip() != ""  # 공백만 있는 문구도 안 된다
+
+
+def _verify_generated(
+    answer: Answer, passes_check: Callable[[], bool], hold_error: str, check_error: str
+) -> None:
+    """생성 결과를 검증한다. 문제가 없으면 아무것도 돌려주지 않고, 문제가 있으면 예외를 낸다.
+
+    `answered`이면 `passes_check`로 인용(고객 안내는 안전 문구까지)을 검증한다. 아니면 검증 함수를
+    부르지 않고 보류 모양(`steps=[]`, 비지 않은 `notice`)만 확인한다.
+
+    Args:
+        answer: 생성 함수가 돌려준 답변.
+        passes_check: `answered`일 때만 부르는 검증 함수.
+        hold_error: 보류 모양이 틀렸을 때의 오류 문구.
+        check_error: 검증에 실패했을 때의 오류 문구.
+
+    Raises:
+        DependencyError: 보류 모양이 틀렸거나 검증에 실패했을 때.
+    """
+    if answer.verdict == Verdict.ANSWERED:
+        if not passes_check():
+            raise DependencyError(check_error)
+    elif not _is_valid_hold(answer):
+        raise DependencyError(hold_error)
 
 
 def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> str:
@@ -83,7 +113,7 @@ def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> 
     if settings.manual_k < 1 or settings.history_k < 1:
         raise ValidationError("검색 설정 값이 허용 범위를 벗어났습니다.")
     return question
-   
+
 
 def run_customer_guidance(context: CaseContext) -> Answer:
     """고객 안내 처리 흐름을 실행한다.
@@ -110,12 +140,12 @@ def run_customer_guidance(context: CaseContext) -> Answer:
         return _make_hold_answer("고객이 직접 조치할 수 있는 절차가 없어 엔지니어가 접수합니다.")
 
     answer = generator.generate_customer_guidance(context, hits)
-    if answer.verdict != Verdict.ANSWERED:
-        if not _is_valid_hold(answer):
-            raise DependencyError("고객 안내의 보류 판정 형식 검증에 실패했습니다.")
-        return answer
-    if not generator.passes_guidance_check(answer, hits, error_code):
-        raise DependencyError("고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.")
+    _verify_generated(
+        answer,
+        lambda: generator.passes_guidance_check(answer, hits, error_code),
+        hold_error="고객 안내의 보류 판정 형식 검증에 실패했습니다.",
+        check_error="고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.",
+    )
     return answer
 
 
@@ -173,14 +203,10 @@ def run_engineer_answer(
 
     error_code = context.error_code
     equipment = error_code.equipment
-
     search_query = f"{error_code.code} {error_code.name} {question}"
 
     manual_hits = _search_manual_for_code(equipment, search_query, settings.manual_k, error_code.code)
-    history_hits = retriever.search_history(
-        equipment, search_query, settings.history_k
-    )
-
+    history_hits = retriever.search_history(equipment, search_query, settings.history_k)
     hits = manual_hits + history_hits
     cross_equipment = False
     if not retriever.has_enough_evidence(hits, settings.evidence_threshold):
@@ -193,12 +219,13 @@ def run_engineer_answer(
         cross_equipment = True
 
     answer = generator.generate_engineer_answer(context, hits, request, cross_equipment=cross_equipment)
-    if answer.verdict != Verdict.ANSWERED:
-        if not _is_valid_hold(answer):
-            raise DependencyError("답변의 보류 판정 형식 검증에 실패했습니다.")
-        return answer
-    if not generator.passes_answer_check(answer, hits, equipment, allow_other_equipment=cross_equipment):
-        raise DependencyError("답변의 인용 검증에 실패했습니다.")
-    if cross_equipment:
+    _verify_generated(
+        answer,
+        lambda: generator.passes_answer_check(answer, hits, equipment, allow_other_equipment=cross_equipment),
+        hold_error="답변의 보류 판정 형식 검증에 실패했습니다.",
+        check_error="답변의 인용 검증에 실패했습니다.",
+    )
+    if cross_equipment and answer.verdict == Verdict.ANSWERED:
+        # 폴백 근거로 답했으면 다른 설비 자료가 섞였다는 고정 문구를 붙인다.
         return Answer(verdict=answer.verdict, steps=answer.steps, notice=CROSS_EQUIPMENT_NOTICE)
     return answer
