@@ -11,7 +11,8 @@ from pathlib import Path
 import pdfplumber
 import pytest
 
-from mpilot.db.parser import Footer, _parse_footer, _read_manual_identity
+from mpilot.db.parser.text import _parse_footer, _read_manual_identity
+from mpilot.db.parser.types import Footer
 from mpilot.models import ValidationError
 
 MANUALS_DIR = Path(__file__).resolve().parents[1] / "data" / "manuals"
