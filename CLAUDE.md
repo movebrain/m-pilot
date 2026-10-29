@@ -54,7 +54,8 @@
 
 ## 4. 사람이 정한다 (AI는 선택지와 근거만 정리)
 
-- 에러코드 표의 심각도·조치 구분 값과 `required_safety_rules`: 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다. `customer_procedure_ref_ids`는 `scripts.build_error_codes`가 조치 구분과 매뉴얼 표 청크로 만든다.
+- 에러코드 표의 심각도·조치 구분 값과 `required_safety_rules`: 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다.
+- `customer_procedure_ref_ids`의 생성 규칙: 사람이 정했다([#136](https://github.com/movebrain/m-pilot/pull/136), spec §3.4). 값은 `scripts.build_error_codes`가 만들며, AI가 CSV에서 직접 고치거나 규칙을 바꾸지 않는다.
 - 평가 문항은 데이터를 만든 사람이 쓴다. 인용·고객 안내 사람 검수와 `evidence_threshold` 확정도 사람이 한다(spec §2.7).
 - 계약 변경의 최종 판단, 범위(spec §4) 변경, PR 리뷰·머지, 충돌 해결 시 어느 쪽을 살릴지.
 
@@ -93,4 +94,4 @@ python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ## 8. 아직 어긋나 있는 곳 (PR #26 리뷰 포인트, 정리되면 지운다)
 
 - 위 spec 절 번호는 이 PR의 개정본 기준이다. 이 PR이 머지되기 전까지 `develop`의 spec은 개정 전 `src/` 구조다.
-- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `.env.example`의 `EVIDENCE_THRESHOLD=0.80`은 평가(#49) 전에 합본 매뉴얼을 실제 임베딩으로 잰 거리로 정한 임시 후보이며 사람이 정한다. 비어 있거나 음수·NaN·무한대면 앱이 시작되지 않는다.
+- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `.env.example`의 `EVIDENCE_THRESHOLD=1.0`은 평가(#49) 전에 가짜 DB 청크로 잰 거리로 정한 수동 테스트용 임시 값이며 사람이 정한다. 비어 있거나 음수·NaN·무한대면 앱이 시작되지 않는다.
