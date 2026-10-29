@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from mpilot.db import parser
-from mpilot.db.parser import PageText, RawTable, TextLine, parse_manuals
+from mpilot.db.parser import parse_manuals
+from mpilot.db.parser.types import PageText, RawTable, TextLine
 from mpilot.models import Chunk, Equipment, ValidationError
 
 MANUALS_DIR = Path(__file__).resolve().parents[1] / "data" / "manuals"

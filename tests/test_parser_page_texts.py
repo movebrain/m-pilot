@@ -10,15 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from mpilot.db import parser
-from mpilot.db.parser import (
-    RawTable,
+from mpilot.db.parser import text
+from mpilot.db.parser.text import (
     _equipment_from_manual_id,
     _extract_page_texts,
     _is_char_in_table_area,
     _list_pdf_files,
     _parse_footer,
 )
+from mpilot.db.parser.types import RawTable
 from mpilot.models import DependencyError, Equipment, ValidationError
 
 MANUALS_DIR = Path(__file__).resolve().parents[1] / "data" / "manuals"
@@ -77,7 +77,7 @@ def open_fake_pdf(monkeypatch):
     """`pdfplumber.open`이 주어진 쪽들로 된 가짜 PDF를 돌려주게 한다."""
 
     def install(pages: list[FakePage]) -> None:
-        monkeypatch.setattr(parser.pdfplumber, "open", lambda path: FakePdf(pages))
+        monkeypatch.setattr(text.pdfplumber, "open", lambda path: FakePdf(pages))
 
     return install
 
