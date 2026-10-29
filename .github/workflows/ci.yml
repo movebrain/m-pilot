@@ -50,13 +50,13 @@ jobs:
       - name: 의존성 설치
         run: pip install -r requirements.txt
 
-      # 합본 매뉴얼 PDF 읽기 결과(tests/conftest.py의 디스크 캐시). PDF·parser.py·의존성이 바뀌면 키가 달라져 새로 읽는다.
+      # 합본 매뉴얼 PDF 읽기 결과(tests/conftest.py의 디스크 캐시). PDF·parser 패키지·의존성이 바뀌면 키가 달라져 새로 읽는다.
       # PR 브랜치에서 만든 캐시는 그 PR만 쓰고, develop에서 만든 캐시는 모든 PR이 쓴다.
       - name: 파싱 캐시 복원
         uses: actions/cache@v4
         with:
           path: .pytest_parse_cache
-          key: parse-${{ hashFiles('data/manuals/*.pdf', 'mpilot/db/parser.py', 'tests/conftest.py', 'requirements.txt') }}
+          key: parse-${{ hashFiles('data/manuals/*.pdf', 'mpilot/db/parser/*.py', 'tests/conftest.py', 'requirements.txt') }}
 
       - name: 테스트 실행
         run: python -m pytest

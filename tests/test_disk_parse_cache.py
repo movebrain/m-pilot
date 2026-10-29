@@ -10,7 +10,7 @@ from pathlib import Path
 import conftest
 import pytest
 
-from mpilot.db.parser import RawTable
+from mpilot.db.parser.types import RawTable
 
 
 def table(caption: str) -> RawTable:

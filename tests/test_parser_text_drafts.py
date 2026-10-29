@@ -10,16 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from mpilot.db.parser import (
-    PageText,
-    Section,
-    TextLine,
+from mpilot.db.parser.text import (
     _list_pdf_files,
     _read_section_titles,
     _split_sections,
     _split_text,
     _to_text_drafts,
 )
+from mpilot.db.parser.types import PageText, Section, TextLine
 from mpilot.models import ValidationError
 
 MANUALS_DIR = Path(__file__).resolve().parents[1] / "data" / "manuals"
