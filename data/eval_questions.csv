@@ -1,0 +1,25 @@
+purpose,equipment,code,question,expected,note
+customer_guidance,Mini Loader,M404,,answered,Mini Loader 매뉴얼 13.4절(PDF p.38~39) 3항 고객사 조치 절차에 레일 육안 확인·정비 모드·LOTO 후 청소 단계가 있음.
+customer_guidance,Mini Loader,M420,,answered,Mini Loader 매뉴얼 13.20절(PDF p.61~62) 3항 고객사 조치 절차에 셀 내 용기 정렬·재출고 지령 단계가 있음.
+customer_guidance,Mini Loader,M431,,answered,Mini Loader 매뉴얼 13.31절(PDF p.77) 3항 고객사 조치 절차에 네트워크·WCS 상태 확인 단계가 있음.
+customer_guidance,SRM,S127,,answered,SRM 매뉴얼 13.27절(PDF p.78) 3항 고객사 조치 절차에 라벨·리더 창 확인과 수동 입력/재투입 단계가 있음.
+customer_guidance,SRM,S109,,answered,"SRM 매뉴얼 13.9절(PDF p.52) 3항 고객사 조치: 리셋 없이 대기, WCS·네트워크 담당 확인 요청 등 절차가 있음."
+customer_guidance,SRM,S134,,answered,SRM 매뉴얼 13.34절(PDF p.88) 3항 고객사 조치 절차에 스테이션 화물 재정렬 단계가 있음.
+customer_guidance,AGV,A364,,answered,AGV 매뉴얼 13.64절(PDF p.141) 3항 고객사 조치 절차에 스캐너 창 청소와 청소 주기 조정 단계가 있음.
+customer_guidance,AGV,A341,,answered,AGV 매뉴얼 13.41절(PDF p.108) 3항 고객사 조치 절차에 자동 충전 진입 확인과 관제 우선순위 조정이 있음.
+customer_guidance,AGV,A318,,answered,AGV 매뉴얼 13.18절(PDF p.74) 3항 고객사 조치 절차에 VCS 맵 버전 비교·재배포·작업 재지시가 있음.
+customer_guidance,RTV,R258,,answered,RTV 매뉴얼 13.58절(PDF p.124~125) 3항 고객사 조치 절차에 로그 백업 후 삭제 단계가 있음.
+customer_guidance,RTV,R222,,answered,RTV 매뉴얼 13.22절(PDF p.72) 3항 고객사 조치 절차에 화물 적재 상태 확인과 반입 거부 처리 단계가 있음.
+customer_guidance,RTV,R237,,answered,RTV 매뉴얼 13.37절(PDF p.94) 3항 고객사 조치 절차에 렌즈 청소·광축 확인 단계가 있음.
+engineer_chat,Mini Loader,M420,M420이 같은 호기에서 하루에 몇 번씩 뜨는데 용기나 셀 쪽은 다 멀쩡했어요. 그럼 뭘 의심해야 하나요?,answered,Mini Loader 13.20절 엔지니어 조치(핑거 동작 시간 0.5초 초과 시 교체)와 이력 MLD-H-0023(핑거 액추에이터 교체)에 근거가 있음.
+engineer_chat,Mini Loader,M427,휠 교체하고 기동했더니 위치 이중화가 안 맞는다고 바로 서는데 제가 뭘 빠뜨린 걸까요?,answered,Mini Loader 13.27절 원인(휠 직경 설정값과 실측 불일치)과 이력 MLD-H-0028(휠 직경 미입력)에 근거가 있음.
+engineer_chat,Mini Loader,M408,"고객사 쪽 일반 지게차가 유압 실린더 오일이 새면서 포크가 안 올라간다는데, 어디부터 점검하라고 안내하죠?",insufficient_evidence,일반 지게차 유압 계통은 4개 설비 매뉴얼·이력 어디에도 없음(AGV 포크형 리프트 에러는 유압 설명이 아님).
+engineer_chat,SRM,S136,RTV가 스테이션에서 멈춰 있으면 SRM 쪽에서는 어떻게 되나요? 전에 비슷한 경우 어떻게 풀었는지도 알고 싶어요.,answered,RTV를 언급하지만 SRM 13.36절(타 장비 구역 점유)과 이력 SRM-H-0005(RTV R214 정지 중 재배정)로 SRM 자료에 근거가 있음.
+engineer_chat,SRM,S117,"다른 얘긴데, 싱크로형 RTV는 이재하다가 두 대가 같이 서버리던데 보통 뭐가 원인이에요?",answered,"SRM 자료엔 없고 RTV 13.5절 R205(슬레이브 추종 오차, OBC 버전·동기 속도)와 이력 RTV-H-0044에 있음. 타 설비 재검색 후 고지하고 답하는 설계라 answered."
+engineer_chat,SRM,S111,SRM-SP-101 주행 휠 유닛 교체해야 하는데 단가랑 납기 좀 알 수 있을까요?,insufficient_evidence,SRM 자료에 예비품 번호는 있으나 단가·납기·견적 정보는 어떤 설비 자료에도 없음.
+engineer_chat,AGV,A385,"Mini Loader 쪽 입출고 컨베이어가 꽉 차서 AGV가 포트에서 안 움직이는데, 예전엔 어떻게 처리했어요?",answered,Mini Loader·컨베이어를 언급하지만 AGV 13.85절(상대 설비 미준비)과 이력 AGV-H-0046(Mini Loader 컨베이어 만재)에 근거가 있음.
+engineer_chat,AGV,A310,"서열 스탠드를 새 위치로 옮겼더니 AGV가 위치를 못 잡고 서는데, 맵 때문일까요?",answered,AGV 13.10절 원인(레이아웃 변경으로 맵 불일치)과 이력 AGV-H-0028(스탠드 이동 후 맵 미갱신)에 근거가 있음.
+engineer_chat,AGV,A383,현장 와이파이 AP 모델명이랑 관리자 접속 비밀번호 좀 알려주세요.,insufficient_evidence,AP 위치·음영 대응은 있으나 AP 모델명·접속 계정 정보는 어떤 설비 자료에도 없음.
+engineer_chat,RTV,R214,"스테이션에 반입할 때 R214로 자꾸 서요. 화물은 멀쩡한데, 반복되면 어디를 봐야 하나요?",answered,"RTV 13.14절 원인 후보(센서 오염·정지 위치 편차 등)와 이력 RTV-H-0004~0008(반복 후 센서 브래킷 풀림, 0008)에 근거가 있음."
+engineer_chat,RTV,R201,"배터리를 교환한 직후에 주행이 막히는 에러가 있다던데, 훅 체결 쪽을 확인하는 게 맞나요?",answered,RTV 자료엔 없고 AGV 13.52절 A352(교환 후 훅 미체결)와 이력 AGV-H-0033·0036에 있음. 타 설비 재검색 후 고지하고 답하는 설계라 answered.
+engineer_chat,RTV,R201,이번 달 야간 근무 수당은 어디서 신청해요?,insufficient_evidence,근무·수당 등 인사 문의로 설비 자료에 전혀 없는 오프토픽 문항.
