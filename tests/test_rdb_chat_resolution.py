@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import create_engine, insert, select, update
 
+from mpilot.db.rdb import _common, chat
 from mpilot.db.schemas import chat_turns, error_codes, resolutions, service_cases
 from mpilot.models import (
     Answer,
@@ -98,7 +99,7 @@ def db(rdb_db):
     - SC-DONE: 현장 조치 완료(completed, support)
     - SC-SELF: 셀프 가이드 완료(completed, self_guide)
     """
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
         add_case(conn, "SC-RECV")
         add_case(conn, "SC-PROG", status="in_progress")
@@ -109,7 +110,7 @@ def db(rdb_db):
 
 def read_status(rdb, case_id):
     """신고의 현재 상태 문자열을 읽는다."""
-    with rdb._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         row = conn.execute(
             select(service_cases.c.status).where(service_cases.c.case_id == case_id)
         ).first()
@@ -118,7 +119,7 @@ def read_status(rdb, case_id):
 
 def count_rows(rdb, table):
     """테이블의 행 수를 센다."""
-    with rdb._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         return len(conn.execute(select(table)).all())
 
 
@@ -154,7 +155,7 @@ def test_fetch_chat_turns_only_that_case(db):
 
 def test_fetch_chat_turns_broken_answer_is_dependency_error(db):
     db.save_chat_turn("SC-RECV", "질문", ANSWERED)
-    with db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         conn.execute(update(chat_turns).values(answer="깨진 JSON"))
     with pytest.raises(DependencyError):
         db.fetch_chat_turns("SC-RECV")
@@ -162,7 +163,7 @@ def test_fetch_chat_turns_broken_answer_is_dependency_error(db):
 
 def test_fetch_chat_turns_db_failure_is_dependency_error(db, monkeypatch):
     broken = create_engine("mysql+pymysql://user:pw@127.0.0.1:1/db?connect_timeout=2")
-    monkeypatch.setattr(db, "_engine", broken)
+    monkeypatch.setattr(_common, "_engine", broken)
     with pytest.raises(DependencyError):
         db.fetch_chat_turns("SC-RECV")
 
@@ -285,7 +286,7 @@ def test_second_resolution_is_rejected_and_first_is_kept(db):
     other = Resolution(cause="다른 원인", action="다른 조치", result="다른 결과")
     with pytest.raises(InvalidStateError, match="이미 완료"):
         db.save_confirmed_resolution("SC-PROG", other)
-    with db._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         rows = conn.execute(select(resolutions)).all()
     assert len(rows) == 1
     assert rows[0].cause == "센서 오염"
@@ -299,7 +300,7 @@ def test_question_after_resolution_is_rejected(db):
 
 def test_failed_insert_rolls_back_status(db, monkeypatch):
     # 조치 기록 저장이 실패하면 완료 처리도 되돌아가야 한다(한 트랜잭션).
-    with db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         conn.execute(
             insert(resolutions).values(case_id="SC-PROG", cause="미리", action="넣은", result="행")
         )
@@ -312,7 +313,7 @@ def test_conditional_update_blocks_completion_after_status_check(db, monkeypatch
     # 상태 확인을 통과한 뒤 다른 요청이 먼저 완료한 상황을 만든다.
     # 상태 확인을 일부러 끄면, 마지막 방어선인 조건부 UPDATE가 '이미 완료'로 막아야 한다.
     db.save_confirmed_resolution("SC-PROG", RECORD)
-    monkeypatch.setattr(db, "raise_if_case_completed", lambda case: None)
+    monkeypatch.setattr(chat, "raise_if_case_completed", lambda case: None)
     with pytest.raises(InvalidStateError, match="이미 완료"):
         db.save_confirmed_resolution("SC-PROG", RECORD)
     assert count_rows(db, resolutions) == 1
