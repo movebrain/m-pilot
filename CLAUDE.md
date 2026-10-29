@@ -82,6 +82,7 @@
 ```
 docker compose up -d           # 로컬 MySQL
 python -m scripts.build_error_codes  # 원자료 표 + 매뉴얼 표 → data/errorcodes.csv(init_db 전에)
+python -m scripts.build_history_seed # 원자료 이력 4종 → data/history_seed.csv(init_db 전에)
 python -m scripts.init_db      # 시연 전 한 번. 모든 테이블을 지우고 다시 적재
 python app_customer.py         # 고객 앱(7860). --fake면 DB·RAG 없이 가짜 데이터
 python app_engineer.py         # 엔지니어 앱(7861). --fake 동일
