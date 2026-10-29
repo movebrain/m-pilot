@@ -129,6 +129,7 @@
 ├── scripts/
 │   ├── init_db.py                     # [DB] DB 초기화·초기 자료 적재 실행
 │   ├── build_error_codes.py           # [DB] 원자료 표와 매뉴얼 표로 data/errorcodes.csv 생성
+│   ├── build_history_seed.py          # [DB] 원자료 이력 4종으로 data/history_seed.csv 생성
 │   └── evaluate.py                    # [RAG] RAG 품질 평가 실행·기록
 ├── prompts/                           # [RAG] 모델 지시문(고객 안내·엔지니어 대화)
 ├── tests/                             # 테스트
@@ -168,6 +169,7 @@
 | vectordb | `rebuild_search_index(chunks: list[Chunk], codes: list[ErrorCode], histories: list[CaseDetail]) -> None` | 검색 색인을 새로 만든다                                        | ValidationError, DependencyError                                   |
 | init_db  | `main() -> int`                                                                                          | DB 초기화와 초기 자료 적재를 실행하고 성공 0·실패 1을 반환한다 | — (앱 예외는 안내 후 종료 코드 1로 변환)                           |
 | build_error_codes | `main() -> int`                                                                                 | 원자료 표와 매뉴얼 표로 에러코드 정본 CSV를 만들고 성공 0·실패 1을 반환한다 | — (앱 예외는 안내 후 종료 코드 1로 변환)                  |
+| build_history_seed | `main() -> int`                                                                                | 원자료 이력 4종을 시드 이력 CSV로 바꾸고 성공 0·실패 1을 반환한다 | — (앱 예외는 안내 후 종료 코드 1로 변환)                  |
 
 #### 2.3.2 RAG 파트
 
@@ -574,6 +576,7 @@ erDiagram
 | `created_at`                | `service_cases.created_at`                                   |
 | `completed_at`              | `service_cases.completed_at`                                 |
 
+- `python -m scripts.build_history_seed`가 원자료 `data/raw/*_error_history_dummy.csv` 4종의 `이력ID`·`모델명`·`에러 코드`·`현장 증상`·`원인`·`조치 내용`·`결과`·`발생일시`·`복구일시`를 위 9열로 옮겨 `case_id` 순으로 만든다. 원자료 시각(`YYYY-MM-DD HH:MM`)은 한국 시간(`+09:00`)으로 본다. 값은 보정하지 않고, 필요한 열이 없거나 시각 형식이 다르면 파일을 쓰지 않는다.
 - 시간은 ISO 8601(시간대 포함)이고 UTC로 바꿔 적재한다. 완료 시각은 신고 시각보다 빠를 수 없다.
 - 고정값: `source=seed`, `route=support`, `guide_failure=NULL`, `self_guide_answer=NULL`, `status=completed`.
 - 설비당 50건·총 200건, 코드·필수값 오류면 적재를 중단한다. `init_db`는 실행할 때마다 DB를 비우고 다시 만든다(모든 테이블을 지운 뒤 만든다). 시연 중 다시 실행하면 새로 확정한 이력이 사라지므로 시연 전에 한 번만 실행한다. 색인은 앱을 다시 시작할 때 DB에서 새로 만든다.
