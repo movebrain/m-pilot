@@ -5,7 +5,7 @@
     `db`(parser·rdb·vectordb)와 `rag.pipeline`을 엮는다. 파트 사이를 잇는 유일한 곳이다.
 
 책임:
-    - 신고 접수: 접수번호(`SC-<UUID 앞 8자리>`)를 만들고, `models.is_self_guide_candidate`·`has_customer_procedure`로
+    - 신고 접수: 접수번호(`SC-<UUID 앞 8자리>`)를 만들고, `models.is_self_guide_candidate`로
       후보를 가린 뒤 후보이면 `pipeline.run_customer_guidance`를 제한 시간(`llm_timeout_seconds`) 안에 호출한다.
       결과에 따라 `answered`면 `save_self_guide_case`, 보류면 `save_support_case(..., held)`,
       장애·검증 실패면 `save_support_case(..., generation_failed)`로 저장한다(spec §2.10 경로 결정).
@@ -56,7 +56,6 @@ from mpilot.models import (
     Source,
     ValidationError,
     Verdict,
-    has_customer_procedure,
     is_self_guide_candidate,
     raise_if_case_completed,
 )
@@ -173,8 +172,9 @@ def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
 def submit_case(data: CaseInput) -> str:
     """신고를 접수하고 처리 경로를 확정한 뒤 접수번호를 반환한다.
 
-    심각도 `상`이거나 고객이 조치할 수 없는 코드, 허용 절차가 없는 코드는 바로 엔지니어에게 접수한다.
-    셀프 가이드 후보는 가이드를 만들어 보고, 만들 수 없으면 추측하지 않고 엔지니어에게 접수한다.
+    심각도 `상`이거나 고객이 조치할 수 없는 코드는 바로 엔지니어에게 접수한다.
+    셀프 가이드 후보는 매뉴얼 검색 근거로 가이드를 만들어 보고, 근거가 부족하거나 만들 수 없으면 추측하지 않고
+    엔지니어에게 접수한다.
 
     Args:
         data: 고객이 제출한 설비·에러코드·증상 메모.
@@ -192,10 +192,6 @@ def submit_case(data: CaseInput) -> str:
     if not is_self_guide_candidate(error_code):
         # 심각도 상이거나 엔지니어 필요 코드: 처음부터 엔지니어 처리 건이다.
         rdb.save_support_case(case_id, data, None)
-        return case_id
-    if not has_customer_procedure(error_code):
-        # 허용 절차가 없으면 가이드를 만들 근거가 없다. pipeline도 같은 경우를 보류로 돌려주므로 held로 맞춘다.
-        rdb.save_support_case(case_id, data, GuideFailure.HELD)
         return case_id
 
     answer = _run_guidance_within_limit(CaseContext(error_code=error_code, memo=data.memo))
@@ -245,10 +241,11 @@ def _run_guidance_within_limit(context: CaseContext) -> Answer | None:
     Raises:
         DependencyError: `set_config` 전에 불렀을 때.
     """
-    timeout = _require_config().llm_timeout_seconds
+    config = _require_config()
     executor = ThreadPoolExecutor(max_workers=1)
     try:
-        return executor.submit(pipeline.run_customer_guidance, context).result(timeout=timeout)
+        future = executor.submit(pipeline.run_customer_guidance, context, config.search)
+        return future.result(timeout=config.llm_timeout_seconds)
     except FutureTimeoutError:
         return None  # 시간 초과: 늦게 끝난 결과는 쓰지 않는다
     except Exception:
@@ -421,39 +418,11 @@ def prepare_search_index() -> None:
         None: 색인이 준비된다.
 
     Raises:
-        ValidationError: 문서 ID 구성이나 허용 절차 ID 검증에 실패했을 때.
+        ValidationError: 문서 ID 구성에 실패했을 때.
         DependencyError: PDF·DB·임베딩·저장소 장애일 때. 이 경우 앱 시작을 중단한다.
     """
     config = _require_config()
     chunks = parser.parse_manuals(config.manuals_dir)
     codes = [row for equipment in Equipment for row in rdb.fetch_error_codes(equipment)]
-    _check_customer_procedure_ids(codes, {_chunk_ref_id(chunk) for chunk in chunks})
     histories = rdb.fetch_resolved_cases()
     vectordb.rebuild_search_index(chunks, codes, histories)
-
-
-def _chunk_ref_id(chunk: Chunk) -> str:
-    """매뉴얼 청크의 검색 문서 ID(`manual:<manual_id>:<쪽>:<chunk_no>`, spec §3.4)를 만든다."""
-    return f"manual:{chunk.manual_id}:{chunk.page}:{chunk.chunk_no}"
-
-
-def _check_customer_procedure_ids(codes: list[ErrorCode], chunk_ids: set[str]) -> None:
-    """에러코드 표의 허용 절차 ID가 모두 매뉴얼 청크에 있는지 확인한다.
-
-    Args:
-        codes: 설비 4종의 에러코드 표 행.
-        chunk_ids: 매뉴얼 청크의 문서 ID 모음.
-
-    Returns:
-        None: 모두 있으면 아무 일도 하지 않는다.
-
-    Raises:
-        ValidationError: 청크에 없는 허용 절차 ID가 하나라도 있을 때. 어느 코드인지만 알리고 고치지 않는다.
-    """
-    missing = [
-        f"{row.equipment}:{row.code}"
-        for row in codes
-        if any(ref_id not in chunk_ids for ref_id in row.customer_procedure_ref_ids)
-    ]
-    if missing:
-        raise ValidationError(f"매뉴얼에 없는 허용 절차 ID: {', '.join(missing)}")

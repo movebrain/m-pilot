@@ -51,19 +51,19 @@ def stores(monkeypatch):
         store.delete_collection()
 
 
-def chunk(manual_id="srm_spec", page=12, no=1, text="11.6 스테이션 인계 이상 조치 절차") -> Chunk:
+def chunk(manual_id="srm_spec", page=12, no=1, text="11.6 스테이션 인계 이상 조치 절차", section="11.6") -> Chunk:
     return Chunk(
         manual_id=manual_id,
         equipment=Equipment.SRM,
         page=page,
-        section="11.6",
+        section=section,
         chunk_no=no,
         version="rev1.2",
         text=text,
     )
 
 
-def code(refs=(), equipment=Equipment.SRM, code_="S135") -> ErrorCode:
+def code(equipment=Equipment.SRM, code_="S135") -> ErrorCode:
     return ErrorCode(
         equipment=equipment,
         code=code_,
@@ -75,7 +75,6 @@ def code(refs=(), equipment=Equipment.SRM, code_="S135") -> ErrorCode:
         manual_id="srm_spec",
         page=12,
         section="11.6",
-        customer_procedure_ref_ids=list(refs),
     )
 
 
@@ -113,7 +112,7 @@ def ids_of(store) -> set[str]:
 def test_rebuild_fills_both_collections_with_spec_ids(stores):
     vectordb.rebuild_search_index(
         chunks=[chunk(no=1), chunk(no=2)],
-        codes=[code(refs=["manual:srm_spec:12:1"])],
+        codes=[code()],
         histories=[case()],
     )
     assert ids_of(stores[CitationKind.MANUAL]) == {
@@ -152,10 +151,10 @@ def test_rebuild_replaces_previous_index(stores):
     assert ids_of(stores[CitationKind.HISTORY]) == {"history:A-1"}
 
 
-def test_rebuild_rejects_missing_customer_procedure_without_touching_index(stores):
+def test_rebuild_rejects_invalid_ids_without_touching_index(stores):
     vectordb.rebuild_search_index([chunk()], [code()], [case()])
-    with pytest.raises(ValidationError, match="manual:srm_spec:99:1"):
-        vectordb.rebuild_search_index([chunk()], [code(refs=["manual:srm_spec:99:1"])], [case()])
+    with pytest.raises(ValidationError):
+        vectordb.rebuild_search_index([chunk(manual_id="srm:spec")], [code()], [case()])
     # 검증 실패는 기존 색인을 지우기 전에 멈춘다.
     assert "manual:srm_spec:12:1" in ids_of(stores[CitationKind.MANUAL])
 
@@ -185,9 +184,49 @@ def test_rebuild_wraps_store_failure_as_dependency_error(stores, monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("embedding api down")
 
-    monkeypatch.setattr(stores[CitationKind.MANUAL], "add_documents", boom)
+    # 매뉴얼 청크는 벡터를 직접 만들어 넣으므로 임베딩 생성에서 실패시킨다.
+    monkeypatch.setattr(type(stores[CitationKind.MANUAL].embeddings), "embed_documents", boom)
     with pytest.raises(DependencyError):
         vectordb.rebuild_search_index([chunk()], [code()], [])
+
+
+# --- 코드 절 메타데이터와 임베딩 텍스트 ------------------------------------
+
+
+CODE_SECTION = "13.1 S135 스테이션 인계 이상"
+
+
+def stored_vector(store, doc_id):
+    return store._collection.get(ids=[doc_id], include=["embeddings"])["embeddings"][0]
+
+
+def test_chunk_in_error_code_section_gets_code_metadata(stores):
+    vectordb.rebuild_search_index([chunk(section=CODE_SECTION), chunk(no=2)], [], [])
+    manual = stores[CitationKind.MANUAL].get(ids=["manual:srm_spec:12:1", "manual:srm_spec:12:2"])
+    by_id = dict(zip(manual["ids"], manual["metadatas"], strict=True))
+    assert by_id["manual:srm_spec:12:1"]["code"] == "S135"
+    assert "code" not in by_id["manual:srm_spec:12:2"]  # `11.6` 같은 절에는 코드가 없다
+
+
+def test_manual_chunk_is_embedded_with_section_but_stored_as_is(stores):
+    vectordb.rebuild_search_index([chunk(section=CODE_SECTION, text="원인 후보 표")], [], [])
+    store = stores[CitationKind.MANUAL]
+    doc_id = "manual:srm_spec:12:1"
+
+    assert store.get(ids=[doc_id])["documents"][0] == "원인 후보 표"  # 인용 원문은 그대로
+    vector = stored_vector(store, doc_id)
+    assert list(vector) == pytest.approx(store.embeddings.embed_documents([f"{CODE_SECTION}\n원인 후보 표"])[0])
+    assert list(vector) != pytest.approx(store.embeddings.embed_documents(["원인 후보 표"])[0])
+
+
+def test_error_rows_and_history_are_embedded_as_stored(stores):
+    vectordb.rebuild_search_index([chunk()], [code()], [case()])
+    manual, history = stores[CitationKind.MANUAL], stores[CitationKind.HISTORY]
+    row = manual.get(ids=["error:SRM:S135"])["documents"][0]
+    note = history.get(ids=["history:SRM-H-0010"])["documents"][0]
+
+    assert list(stored_vector(manual, "error:SRM:S135")) == pytest.approx(manual.embeddings.embed_documents([row])[0])
+    assert list(stored_vector(history, "history:SRM-H-0010")) == pytest.approx(history.embeddings.embed_documents([note])[0])
 
 
 # --- index_history -------------------------------------------------------
@@ -227,29 +266,7 @@ def test_index_history_wraps_store_failure(stores, monkeypatch):
         vectordb.index_history(case())
 
 
-# --- 리뷰 반영: 허용 절차 ID 엄격 검증, 컬렉션 비우기 실패 -------------------------
-
-
-def test_rebuild_rejects_error_row_as_customer_procedure(stores):
-    # 허용 절차는 매뉴얼 본문(manual:)만 된다. 코드 표 행(error:)은 절차가 아니다.
-    with pytest.raises(ValidationError, match="매뉴얼 본문"):
-        vectordb.rebuild_search_index([chunk()], [code(refs=["error:SRM:S135"])], [])
-
-
-def test_rebuild_rejects_procedure_of_other_equipment(stores):
-    agv_chunk = Chunk(
-        manual_id="agv_spec",
-        equipment=Equipment.AGV,
-        page=3,
-        section="8.4",
-        chunk_no=1,
-        version="rev1.1",
-        text="AGV 절차",
-    )
-    with pytest.raises(ValidationError, match="다른 설비"):
-        vectordb.rebuild_search_index(
-            [chunk(), agv_chunk], [code(refs=["manual:agv_spec:3:1"])], []
-        )
+# --- 리뷰 반영: 컬렉션 비우기 실패 -------------------------------------------
 
 
 def test_rebuild_reset_failure_is_dependency_error_and_writes_nothing(stores, monkeypatch):

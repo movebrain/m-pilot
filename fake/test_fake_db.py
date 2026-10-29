@@ -235,9 +235,8 @@ def test_hash_embeddings_are_deterministic_and_unit_length():
 
 def test_install_swaps_db_functions(installed):
     assert rdb.fetch_cases is fake_db.fetch_cases
-    assert vectordb.get_store is fake_db.get_store
     assert parser.parse_manuals is fake_db.parse_manuals
-    assert vectordb.rebuild_search_index is not fake_db.get_store  # 색인 쓰기는 진짜 구현을 그대로 쓴다
+    assert vectordb.get_store.__module__ == "mpilot.db.vectordb"  # 벡터 저장소는 바꾸지 않는다
 
 
 # ---------------------------------------------------------------------------
@@ -259,21 +258,6 @@ def indexed():
     finally:
         for module, name, original in saved:
             setattr(module, name, original)
-
-
-def test_customer_procedure_ids_point_to_same_equipment_manual_chunks(indexed):
-    for equipment in Equipment:
-        for code in rdb.fetch_error_codes(equipment):
-            for ref in code.customer_procedure_ref_ids:
-                doc = vectordb.get_document(CitationKind.MANUAL, ref)
-                assert doc.metadata["doc_type"] == "manual" and doc.metadata["equipment"] == equipment.value
-
-
-def test_customer_action_codes_have_procedures_and_can_be_fetched(indexed):
-    code = next(c for c in rdb.fetch_error_codes(Equipment.AGV) if c.action_owner is ActionOwner.CUSTOMER)
-    hits = retriever.fetch_customer_procedures(code)
-    assert len(hits) == len(code.customer_procedure_ref_ids) > 0
-    assert all(h.distance is None and h.equipment is Equipment.AGV for h in hits)
 
 
 def test_manual_search_is_filtered_by_equipment_and_sorted(indexed):

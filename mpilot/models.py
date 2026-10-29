@@ -96,11 +96,7 @@ class Route(StrEnum):
 
 
 class GuideFailure(StrEnum):
-    """셀프 가이드 후보가 엔지니어 접수된 사유.
-
-    주의: spec §3.4는 `no_customer_procedure`도 언급하지만 §2.4.2 열거형에는 없다.
-    값을 추가할지는 spec 확인 뒤에 정한다.
-    """
+    """셀프 가이드 후보가 엔지니어 접수된 사유."""
 
     HELD = "held"
     GENERATION_FAILED = "generation_failed"
@@ -216,9 +212,6 @@ class ErrorCode(_Model):
         manual_id: 출처 PDF 식별자.
         page: 출처 쪽(1 이상).
         section: 출처 절.
-        customer_procedure_ref_ids: 고객 수행이 허용된 매뉴얼 본문 문서 ID 목록. 가이드 검증용.
-            비어 있으면 그 코드는 고객 안내 없이 엔지니어에게 접수된다.
-        required_safety_rules: 고객 안내에 반드시 들어가야 할 안전 문구 목록. 가이드 검증용.
     """
 
     equipment: Equipment
@@ -231,8 +224,6 @@ class ErrorCode(_Model):
     manual_id: str
     page: int = Field(ge=1)
     section: str
-    customer_procedure_ref_ids: list[str] = Field(default_factory=list)
-    required_safety_rules: list[str] = Field(default_factory=list)
 
 
 class CaseInput(_Model):
@@ -400,7 +391,7 @@ class SearchHit(_Model):
         code: 문서의 에러코드. 코드와 무관한 문서면 `None`.
         text: 문서 원문.
         locator: 화면에 보이는 출처 표기.
-        distance: 질의와의 벡터 거리. 직접 조회한 근거는 `None`.
+        distance: 질의와의 벡터 거리. 거리가 없으면 `None`.
     """
 
     ref_id: str
@@ -468,18 +459,6 @@ def is_self_guide_candidate(error_code: ErrorCode) -> bool:
     if error_code.severity == Severity.HIGH:
         return False
     return error_code.action_owner == ActionOwner.CUSTOMER
-
-
-def has_customer_procedure(error_code: ErrorCode) -> bool:
-    """고객이 수행하도록 허용된 매뉴얼 절차 ID가 있는지 판정한다(spec §2.10 경로 결정).
-
-    Args:
-        error_code: 신고한 에러코드 표의 행. `customer_procedure_ref_ids`만 읽는다.
-
-    Returns:
-        bool: 허용 절차 ID가 하나 이상 있으면 `True`, 비어 있으면 `False`.
-    """
-    return bool(error_code.customer_procedure_ref_ids)
 
 
 def raise_if_case_completed(case: ServiceCase) -> None:

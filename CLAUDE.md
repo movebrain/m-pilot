@@ -21,12 +21,12 @@
 
 ## 2. 코드 지도
 
-모든 `.py` 맨 위 docstring에 **역할·책임·의존·소유 파트**가 있다. 파일을 고치기 전에 그것부터 읽는다. 공통 함수 4개(`load_config`, `models`의 규칙 함수 3개)를 뺀 함수 본문은 아직 `...`이고 시그니처·docstring이 계약이다.
+모든 `.py` 맨 위 docstring에 **역할·책임·의존·소유 파트**가 있다. 파일을 고치기 전에 그것부터 읽는다. 공통 함수 3개(`load_config`, `models`의 규칙 함수 2개)를 뺀 함수 본문은 아직 `...`이고 시그니처·docstring이 계약이다.
 
 | 파트 | 파일 |
 | --- | --- |
 | 공통 | `mpilot/config.py`(`AppConfig`, `.env` 로드), `mpilot/models.py`(예외·열거형·업무 객체·순수 업무 규칙) |
-| DB | `mpilot/db/`(`parser`, `schemas`, `rdb`, `vectordb`), `scripts/init_db.py`, `docker-compose.yml` |
+| DB | `mpilot/db/`(`parser/`(`types`·`text`·`tables`·`chunks`·`ocr`), `schemas`, `rdb/`(`setup`·`cases`·`chat`·`_common`), `vectordb`), `scripts/init_db.py`, `scripts/build_error_codes.py`, `docker-compose.yml` |
 | RAG | `mpilot/rag/`(`retriever`, `generator`, `pipeline`), `prompts/`, `scripts/evaluate.py` |
 | UI·총괄 | `app.py`(공통부), `app_customer.py`, `app_engineer.py`, `mpilot/service.py`, `mpilot/ui/`(화면 6개와 `common.py`), `fake/`(가짜 service·가짜 DB와 실행 진입점. 수동 테스트·시연용) |
 | 자료 | `data/manuals/`(사양서 PDF 4종), `data/raw/`(에러코드 표 CSV, 장애 이력 더미 4종), `data/chroma/`·`data/photos/`(로컬 전용) |
@@ -49,12 +49,12 @@
 
 - 함수·변수명은 영어 `snake_case`, 주석·docstring은 한글이다. 식별자는 spec의 이름을 그대로 쓴다. 함수마다 받는 것과 돌려주는 것을 docstring에 쓴다(`Args`/`Returns`/`Raises`).
 - AI가 만든 코드는 커밋하는 사람이 설명할 수 있을 때만 커밋한다. 커밋 전에 무엇을 왜 바꿨는지 사용자에게 짧게 설명한다.
-- 작성한 코드에는 그 코드의 테스트 코드를 함께 작성한다. PR을 올리기 전에 로컬에서 `python -m pytest`를 돌려 통과를 확인한다(GitHub Actions `CI`가 같은 검사를 MySQL 컨테이너와 함께 돌린다).
+- 작성한 코드에는 그 코드의 테스트 코드를 함께 작성한다. PR을 올리기 전에 로컬에서 `python -m pytest`를 돌려 통과를 확인한다(GitHub Actions `CI`가 같은 검사를 `unit`·`db`(MySQL 컨테이너)·`pdf` 세 job으로 나눠 돌린다. 마커는 `rdb_db`·PDF fixture를 쓰면 자동으로 붙는다. PDF 읽기는 PR이 파서·매뉴얼 PDF 등을 바꿨을 때만 돈다).
 - `git push --force`, `git reset --hard`, 브랜치 삭제처럼 되돌리기 어려운 명령은 사용자에게 먼저 묻는다.
 
 ## 4. 사람이 정한다 (AI는 선택지와 근거만 정리)
 
-- 에러코드 표의 심각도·조치 구분 값, 두 목록 열(`customer_procedure_ref_ids`, `required_safety_rules`): 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다.
+- 에러코드 표의 심각도·조치 구분 값: 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다. `required_safety_rules`는 CSV에만 두는 사람 검수 참고용 열이며 코드는 읽지 않는다.
 - 평가 문항은 데이터를 만든 사람이 아닌 다른 사람이 쓴다. 인용·고객 안내 사람 검수와 `evidence_threshold` 확정도 사람이 한다(spec §2.7).
 - 계약 변경의 최종 판단, 범위(spec §4) 변경, PR 리뷰·머지, 충돌 해결 시 어느 쪽을 살릴지.
 
@@ -63,7 +63,7 @@
 원문은 spec §2.6, §2.10과 intent의 "지킬 범위와 원칙"이다.
 
 - **경로는 표만으로**: 심각도 `상`이면 조치 구분과 무관하게 `support`. 조치 구분이 `고객사 조치`면 `self_guide` 후보. 그 밖은 `support`. 가이드를 못 만들면(`held`, `generation_failed`) 조치를 추측하지 않고 `support`로 접수한다.
-- **고객 안내는 허용 절차만**: 매뉴얼에서 고객이 수행하도록 명시한 절차 ID를 직접 조회해 인용한다. 과거 이력은 고객 안내에 쓰지 않는다.
+- **고객 안내는 매뉴얼 근거만**: 조치 구분이 `고객사 조치`인 신고 코드의 `manual`을 검색해(설비 필터, 다른 코드 청크 제외, `evidence_threshold`) 인용한다. 근거가 부족하면 `held`로 접수한다. 과거 이력은 고객 안내에 쓰지 않는다.
 - **출처 없는 답은 없다**: 모든 단계에 인용이 있고 설비가 일치해야 한다(신고 설비 자료만으로 부족해 필터 없이 다시 찾은 폴백 답변은 예외이며 `notice`로 알린다). 근거 부족은 조치 단계 없이 그 사실만 알린다.
 - **설비 필터가 기본**: 검색은 신고 설비 `equipment` 필터를 건다. 필터 없는 검색(`equipment=None`)은 신고 설비 자료가 부족할 때의 폴백뿐이다. `(설비, 코드)`가 키다.
 - **이력은 확정분만**: `resolutions`가 있는 건만 `history` 색인에 넣는다. 셀프 가이드는 조회용으로만 두고 근거로 재사용하지 않는다. DB가 정본이고 Chroma는 재생성한다.
@@ -81,15 +81,18 @@
 
 ```
 docker compose up -d           # 로컬 MySQL
+python -m scripts.build_error_codes  # 원자료 표 + 매뉴얼 표 → data/errorcodes.csv(init_db 전에)
+python -m scripts.build_history_seed # 원자료 이력 4종 → data/history_seed.csv(init_db 전에)
 python -m scripts.init_db      # 시연 전 한 번. 모든 테이블을 지우고 다시 적재
 python app_customer.py         # 고객 앱(7860). --fake면 DB·RAG 없이 가짜 데이터
 python app_engineer.py         # 엔지니어 앱(7861). --fake 동일
 python -m fake.run --offline --both   # 가짜 DB 위에서 두 앱(7860·7861). service·rag는 진짜 코드. 절차는 fake/README.md
 python -m pytest               # 테스트(그냥 pytest는 쓰지 않는다)
+python -m pytest -m "not db and not pdf"  # DB·실제 PDF 읽기를 뺀 빠른 테스트(CI의 unit job)
 python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ```
 
 ## 8. 아직 어긋나 있는 곳 (PR #26 리뷰 포인트, 정리되면 지운다)
 
 - 위 spec 절 번호는 이 PR의 개정본 기준이다. 이 PR이 머지되기 전까지 `develop`의 spec은 개정 전 `src/` 구조다.
-- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `.env.example`의 `EVIDENCE_THRESHOLD=1.0`은 평가(#49) 전에 가짜 DB 청크로 잰 거리로 정한 수동 테스트용 임시 값이며 사람이 정한다. 비어 있거나 음수·NaN·무한대면 앱이 시작되지 않는다.
+- `load_config`는 `MYSQL_*` 변수로 `db_url`을 조립한다(`.env.example`·`docker-compose.yml`과 같은 이름). `.env.example`의 `EVIDENCE_THRESHOLD=0.80`은 평가(#49) 전에 합본 매뉴얼을 실제 임베딩으로 잰 거리로 정한 임시 후보이며 사람이 정한다. 비어 있거나 음수·NaN·무한대면 앱이 시작되지 않는다.

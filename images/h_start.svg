@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="80" viewBox="0 0 1200 80" role="img" aria-label="시작하기">
+  <rect width="1200" height="80" rx="14" fill="#002C5F"/>
+  <rect x="0" y="0" width="14" height="80" rx="7" fill="#00AAD2"/>
+  <text x="44" y="53" font-family="'Apple SD Gothic Neo','Noto Sans KR','Noto Sans CJK KR','Malgun Gothic','NanumGothic',sans-serif" font-size="34" font-weight="800" fill="#FFFFFF" letter-spacing="1">시작하기</text>
+  <text x="1160" y="52" font-family="'Apple SD Gothic Neo','Noto Sans KR','Noto Sans CJK KR','Malgun Gothic','NanumGothic',sans-serif" font-size="20" fill="#8FB8DA" text-anchor="end">GETTING STARTED</text>
+</svg>

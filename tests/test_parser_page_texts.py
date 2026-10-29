@@ -10,15 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from mpilot.db import parser
-from mpilot.db.parser import (
-    RawTable,
+from mpilot.db.parser import text
+from mpilot.db.parser.text import (
     _equipment_from_manual_id,
     _extract_page_texts,
     _is_char_in_table_area,
     _list_pdf_files,
     _parse_footer,
 )
+from mpilot.db.parser.types import RawTable
 from mpilot.models import DependencyError, Equipment, ValidationError
 
 MANUALS_DIR = Path(__file__).resolve().parents[1] / "data" / "manuals"
@@ -77,7 +77,7 @@ def open_fake_pdf(monkeypatch):
     """`pdfplumber.open`이 주어진 쪽들로 된 가짜 PDF를 돌려주게 한다."""
 
     def install(pages: list[FakePage]) -> None:
-        monkeypatch.setattr(parser.pdfplumber, "open", lambda path: FakePdf(pages))
+        monkeypatch.setattr(text.pdfplumber, "open", lambda path: FakePdf(pages))
 
     return install
 
@@ -147,14 +147,15 @@ def test_equipment_from_manual_id_rejects_unknown_code(manual_id):
 @pytest.mark.parametrize(
     ("file_name", "manual_id", "version", "equipment"),
     [
-        ("agv_spec_sheet_dummy_rev1_1.pdf", "HMX-AGV-TSM-001", "1.1", Equipment.AGV),
-        ("mini_loader_spec_sheet_dummy_rev1_1.pdf", "HMX-MLD-TSM-001", "1.1", Equipment.MINI_LOADER),
-        ("rtv_spec_sheet_dummy_rev2_1.pdf", "HMX-RTV-TSM-001", "2.1", Equipment.RTV),
-        ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.2", Equipment.SRM),
+        # 파일명의 rev는 원본 개정이고, 합본은 원본에 13장을 더한 개정이라 꼬리글 버전이 0.1 높다.
+        ("agv_spec_sheet_dummy_rev1_1.pdf", "HMX-AGV-TSM-001", "1.2", Equipment.AGV),
+        ("mini_loader_spec_sheet_dummy_rev1_1.pdf", "HMX-MLD-TSM-001", "1.2", Equipment.MINI_LOADER),
+        ("rtv_spec_sheet_dummy_rev2_1.pdf", "HMX-RTV-TSM-001", "2.2", Equipment.RTV),
+        ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.3", Equipment.SRM),
     ],
 )
-def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, equipment):
-    pages = _extract_page_texts(MANUALS_DIR / file_name, tables=[])
+def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, equipment, real_page_texts):
+    pages = real_page_texts(file_name)  # PDF를 읽는 데 오래 걸려 세션에서 한 번만 읽는다(conftest)
 
     # 표지는 빠지고 인쇄 쪽 번호가 1부터 이어진다.
     assert [page.page for page in pages] == list(range(1, len(pages) + 1))
@@ -172,15 +173,15 @@ def test_extract_page_texts_reads_real_manuals(file_name, manual_id, version, eq
         assert tops == sorted(tops)
 
 
-def test_extract_page_texts_removes_text_inside_table_bbox():
-    without_table = _extract_page_texts(AGV_PDF, tables=[])
+def test_extract_page_texts_removes_text_inside_table_bbox(real_page_texts, disk_parse):
+    without_table = real_page_texts(AGV_PDF.name)
     page3 = next(page for page in without_table if page.page == 3)
     target, following = page3.lines[1], page3.lines[2]
     # 둘째 줄만 덮는 표 영역. 같은 영역이 다른 쪽에 있으면 3쪽에는 영향이 없어야 한다.
     bbox = (0.0, target.top - 1, 600.0, following.top - 1)
 
-    with_table = _extract_page_texts(AGV_PDF, tables=[fake_table(3, bbox)])
-    with_other_page_table = _extract_page_texts(AGV_PDF, tables=[fake_table(4, bbox)])
+    with_table = disk_parse.page_texts(AGV_PDF, [fake_table(3, bbox)])  # 실제 추출 결과를 디스크 캐시로 받는다
+    with_other_page_table = disk_parse.page_texts(AGV_PDF, [fake_table(4, bbox)])
 
     page3_with_table = next(page for page in with_table if page.page == 3)
     assert page3_with_table.lines == [line for line in page3.lines if line != target]

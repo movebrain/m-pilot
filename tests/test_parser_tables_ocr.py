@@ -7,15 +7,15 @@ set_vision_model)는 parser의 OCR 코드와 함께 주석으로 보류해 두�
 from __future__ import annotations
 
 import csv
-import logging
 import re
 from pathlib import Path
 
 import pytest
 # from PIL import Image, ImageDraw  # OCR 테스트 보류
 
-from mpilot.db import parser
-from mpilot.db.parser import ChunkDraft, RawTable
+from mpilot.db.parser import tables
+# from mpilot.db.parser import ocr  # OCR 테스트를 되살리면 함께 푼다
+from mpilot.db.parser.types import ChunkDraft, RawTable
 from mpilot.models import DependencyError  # OCR 테스트를 되살리면 ValidationError도 import한다
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,10 +31,9 @@ SRM_PDF = MANUALS / "srm_spec_sheet_dummy_rev1_2.pdf"
 
 
 @pytest.fixture(scope="module")
-def manual_tables():
-    """매뉴얼 4종의 표를 한 번만 추출해 테스트끼리 나눠 쓴다(PDF 4종 추출에 수십 초 걸린다)."""
-    logging.getLogger("pdfminer").setLevel(logging.ERROR)  # 글꼴 경고가 많아 줄인다.
-    return {name: parser._extract_tables(MANUALS / name) for name in MANUAL_EQUIPMENT}
+def manual_tables(real_tables):
+    """매뉴얼 4종의 표. 세션에서 한 번만 추출해(conftest) 다른 테스트와 나눠 쓴다(PDF 4종 추출에 1분 넘게 걸린다)."""
+    return {name: real_tables(name) for name in MANUAL_EQUIPMENT}
 
 
 def error_codes_in(tables: list[RawTable]) -> list[str]:
@@ -122,18 +121,19 @@ def test_extract_tables_attaches_caption_and_bbox(manual_tables):
 
 
 def test_extract_tables_continued_table_inherits_caption(manual_tables):
-    # SRM 꼬리글 22쪽의 에러 코드 일람이 23쪽 맨 위로 이어진다. 23쪽 표에는 캡션이 없고 머리글이 반복된다.
+    # SRM 꼬리글 24쪽의 에러 코드 일람이 25쪽 맨 위로 이어진다. 25쪽 표에는 캡션이 없고 머리글이 반복된다.
     tables = manual_tables[SRM_PDF.name]
-    p23 = next(t for t in tables if t.page == 23 and t.index == 1)
-    assert p23.continued is True
-    assert p23.caption == "표 9-4. 에러 코드 일람"
+    p25 = next(t for t in tables if t.page == 25 and t.index == 1)
+    assert p25.continued is True
+    assert p25.caption == "표 9-4. 에러 코드 일람"
 
 
 def test_extract_tables_page_is_footer_number_and_skips_cover(manual_tables):
-    # 쪽 번호는 우측 하단 꼬리글의 인쇄 번호다(PDF 23쪽 꼬리글이 `22 / 35`). 표지(PDF 1쪽)의 표는 빠진다.
+    # 쪽 번호는 우측 하단 꼬리글의 인쇄 번호다(PDF 25쪽 꼬리글이 `24 / 111`). 표지(PDF 1쪽)의 표는 빠진다.
+    # 합본은 목차가 4쪽으로 늘어 원본(22쪽)보다 2쪽 뒤에 있다.
     tables = manual_tables[SRM_PDF.name]
     first_error_table = next(t for t in tables if t.caption == "표 9-4. 에러 코드 일람")
-    assert first_error_table.page == 22
+    assert first_error_table.page == 24
     assert min(t.page for t in tables) == 1
     assert all(t.rows[0][0] != "문서 번호" for t in tables)  # 표지의 문서 정보 표
 
@@ -151,16 +151,21 @@ def test_extract_tables_page_is_footer_number_and_skips_cover(manual_tables):
 )
 def test_printed_page_number_reads_footer_or_falls_back(last_line, pdf_page, expected):
     lines = [{"text": "본문", "bottom": 100.0}, {"text": last_line, "bottom": 818.0}]
-    assert parser._printed_page_number(lines, pdf_page) == expected
+    assert tables._printed_page_number(lines, pdf_page) == expected
 
 
 def test_printed_page_number_without_any_text_falls_back():
-    assert parser._printed_page_number([], 5) == 4
+    assert tables._printed_page_number([], 5) == 4
 
 
-def test_extract_tables_reads_captions_with_non_breaking_hyphen(manual_tables):
+def test_extract_tables_reads_captions_with_hyphen(manual_tables):
     captions = {t.caption for t in manual_tables[SRM_PDF.name]}
-    assert "표 B‑1. 계산 조건 (SRM)" in captions  # 'B‑1'의 하이픈은 U+2011
+    assert "표 B-1. 계산 조건 (SRM)" in captions  # 합본 PDF는 텍스트 레이어에 일반 하이픈(U+002D)을 쓴다
+
+
+def test_caption_pattern_accepts_non_breaking_hyphen():
+    # 원본 PDF는 'B‑1'의 하이픈이 U+2011이었다. 합본에는 없지만 그런 캡션도 읽어야 하므로 패턴으로 지킨다.
+    assert tables._CAPTION_PATTERN.match("표 B‑1. 계산 조건 (SRM)")
 
 
 def test_extract_tables_orders_by_page_then_position(manual_tables):
@@ -173,16 +178,16 @@ def test_extract_tables_orders_by_page_then_position(manual_tables):
 
 
 def test_extract_tables_is_reproducible(manual_tables):
-    assert parser._extract_tables(SRM_PDF) == manual_tables[SRM_PDF.name]
+    assert tables._extract_tables(SRM_PDF) == manual_tables[SRM_PDF.name]
 
 
 def test_extract_tables_wraps_unreadable_pdf_as_dependency_error(tmp_path):
     broken = tmp_path / "broken.pdf"
     broken.write_bytes(b"not a pdf")
     with pytest.raises(DependencyError):
-        parser._extract_tables(broken)
+        tables._extract_tables(broken)
     with pytest.raises(DependencyError):
-        parser._extract_tables(tmp_path / "missing.pdf")
+        tables._extract_tables(tmp_path / "missing.pdf")
 
 
 # --- _validate_table ------------------------------------------------------
@@ -195,19 +200,19 @@ def test_validate_table_reports_none_blank_and_short_rows():
         ["S102", "  ", "점검"],
         ["S103", "과주행"],
     ]
-    assert parser._validate_table(rows) == [(1, 1), (2, 1), (3, 2)]
+    assert tables._validate_table(rows) == [(1, 1), (2, 1), (3, 2)]
 
 
 def test_validate_table_returns_empty_for_clean_or_empty_table():
-    assert parser._validate_table([["a", "b"], ["c", "d"]]) == []
-    assert parser._validate_table([]) == []
+    assert tables._validate_table([["a", "b"], ["c", "d"]]) == []
+    assert tables._validate_table([]) == []
 
 
 # --- _table_to_drafts -----------------------------------------------------
 
 
 def test_table_to_drafts_small_table_is_one_markdown_draft():
-    drafts = parser._table_to_drafts(table([["코드", "명칭"], ["S101", "X축 위치 편차\n초과"], ["S102", "a|b"]]))
+    drafts = tables._table_to_drafts(table([["코드", "명칭"], ["S101", "X축 위치 편차\n초과"], ["S102", "a|b"]]))
     assert drafts == [
         ChunkDraft(
             page=3,
@@ -221,10 +226,10 @@ def test_table_to_drafts_small_table_is_one_markdown_draft():
 
 def test_table_to_drafts_splits_large_table_and_repeats_header():
     rows = [["코드", "조치"]] + [[f"S{n}", "가" * 60] for n in range(101, 151)]
-    drafts = parser._table_to_drafts(table(rows))
+    drafts = tables._table_to_drafts(table(rows))
     assert len(drafts) > 1
     for d in drafts:
-        assert len(d.text) <= parser.DRAFT_MAX_CHARS
+        assert len(d.text) <= tables.DRAFT_MAX_CHARS
         assert d.text.startswith("표 9-4. 에러 코드 일람\n| 코드 | 조치 |\n| --- | --- |\n")
     # 모든 행이 한 번씩, 순서대로 들어 있다.
     found = [line.split(" | ")[0][2:] for d in drafts for line in d.text.splitlines()[3:]]
@@ -232,18 +237,18 @@ def test_table_to_drafts_splits_large_table_and_repeats_header():
 
 
 def test_table_to_drafts_does_not_cut_a_long_row():
-    long_cell = "나" * (parser.DRAFT_MAX_CHARS + 50)
-    drafts = parser._table_to_drafts(table([["코드", "조치"], ["S101", "짧음"], ["S102", long_cell], ["S103", "짧음"]]))
+    long_cell = "나" * (tables.DRAFT_MAX_CHARS + 50)
+    drafts = tables._table_to_drafts(table([["코드", "조치"], ["S101", "짧음"], ["S102", long_cell], ["S103", "짧음"]]))
     assert len(drafts) == 3
     assert long_cell in drafts[1].text
 
 
 def test_table_to_drafts_marks_continued_and_handles_missing_caption():
-    cont = parser._table_to_drafts(table([["코드"], ["S110"]], continued=True))
+    cont = tables._table_to_drafts(table([["코드"], ["S110"]], continued=True))
     assert cont[0].text.startswith("표 9-4. 에러 코드 일람 (계속)\n")
-    no_caption = parser._table_to_drafts(table([["항목", "값"], ["하중"]], caption=None))
+    no_caption = tables._table_to_drafts(table([["항목", "값"], ["하중"]], caption=None))
     assert no_caption[0].text == "| 항목 | 값 |\n| --- | --- |\n| 하중 |  |"
-    assert parser._table_to_drafts(table([])) == []
+    assert tables._table_to_drafts(table([])) == []
 
 
 # --- [보류] 이미지 페이지·OCR 테스트(parser의 OCR 코드가 주석이라 함께 막아 둠) ---
@@ -261,22 +266,22 @@ def test_table_to_drafts_marks_continued_and_handles_missing_caption():
 #     ],
 # )
 # def test_is_image_page_rule(text, areas, expected):
-#     assert parser._is_image_page(text, 1000.0, areas) is expected
+#     assert ocr._is_image_page(text, 1000.0, areas) is expected
 #
 #
 # def test_find_image_pages_detects_image_only_pages_and_skips_cover(tmp_path):
 #     # PDF는 표지 + 그림 쪽 2개. 표지는 청킹 대상이 아니라 빠지고, 나머지는 인쇄 번호 1, 2로 센다.
-#     assert parser._find_image_pages(image_pdf(tmp_path / "scan.pdf", pages=2)) == [1, 2]
+#     assert ocr._find_image_pages(image_pdf(tmp_path / "scan.pdf", pages=2)) == [1, 2]
 #
 #
 # def test_find_image_pages_is_empty_for_current_manual():
 #     # 현재 매뉴얼에는 이미지 페이지가 없다(실측). 바뀌면 OCR 경로가 실제 실행에 들어온다.
-#     assert parser._find_image_pages(SRM_PDF) == []
+#     assert ocr._find_image_pages(SRM_PDF) == []
 #
 #
 # def test_find_image_pages_wraps_unreadable_pdf(tmp_path):
 #     with pytest.raises(DependencyError):
-#         parser._find_image_pages(tmp_path / "missing.pdf")
+#         ocr._find_image_pages(tmp_path / "missing.pdf")
 #
 #
 # # --- set_vision_model / _ocr_page ------------------------------------------
@@ -348,20 +353,20 @@ def test_table_to_drafts_marks_continued_and_handles_missing_caption():
 #
 #
 # def test_ocr_to_drafts_empty_text_gives_no_drafts():
-#     assert parser._ocr_to_drafts("", 5) == []
-#     assert parser._ocr_to_drafts("  \n\n ", 5) == []
+#     assert ocr._ocr_to_drafts("", 5) == []
+#     assert ocr._ocr_to_drafts("  \n\n ", 5) == []
 #
 #
 # def test_ocr_to_drafts_short_text_is_one_draft():
-#     assert parser._ocr_to_drafts("첫 문단\n\n둘째 문단", 5) == [
+#     assert ocr._ocr_to_drafts("첫 문단\n\n둘째 문단", 5) == [
 #         ChunkDraft(page=5, top=0.0, kind="ocr", section=None, text="첫 문단\n\n둘째 문단")
 #     ]
 #
 #
 # def test_ocr_to_drafts_groups_paragraphs_under_limit_without_cutting():
-#     paragraphs = [f"{i}번 " + "다" * 300 for i in range(6)] + ["라" * (parser.DRAFT_MAX_CHARS + 10)]
-#     drafts = parser._ocr_to_drafts("\n\n".join(paragraphs), 7)
+#     paragraphs = [f"{i}번 " + "다" * 300 for i in range(6)] + ["라" * (tables.DRAFT_MAX_CHARS + 10)]
+#     drafts = ocr._ocr_to_drafts("\n\n".join(paragraphs), 7)
 #     assert all(d.kind == "ocr" and d.page == 7 for d in drafts)
-#     assert all(len(d.text) <= parser.DRAFT_MAX_CHARS for d in drafts[:-1])
+#     assert all(len(d.text) <= tables.DRAFT_MAX_CHARS for d in drafts[:-1])
 #     assert drafts[-1].text == paragraphs[-1]  # 긴 문단은 자르지 않는다
 #     assert "\n\n".join(d.text for d in drafts) == "\n\n".join(paragraphs)

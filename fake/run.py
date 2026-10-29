@@ -1,7 +1,7 @@
 """가짜 DB 위에서 고객(7860)·엔지니어(7861) 앱을 한 프로세스로 띄우는 수동 테스트용 진입점.
 
 역할:
-    `fake_db.install()`로 `rdb`·`vectordb`·`parser`만 메모리 구현으로 바꾸고, 나머지(`service`·`rag`·`ui`)는
+    `fake_db.install()`로 `rdb`·`parser`만 메모리 구현으로 바꾸고, 나머지(`service`·`rag`·`ui`)는
     진짜 코드를 그대로 띄운다. MySQL과 docker 없이 UI에서 RAG까지 눈으로 확인하기 위한 도구다.
 
 책임:
@@ -128,9 +128,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     from mpilot.models import DependencyError, Role, ValidationError
     from mpilot.rag import generator
 
+    _real_connect = vectordb.connect
     fake_db.install()
     if args.offline:
-        vectordb.connect = lambda _emb: fake_db.connect_vectordb(fake_db.HashEmbeddings())
+        vectordb.connect = lambda _emb: _real_connect(fake_db.HashEmbeddings())
         generator.set_chat_model = lambda _model: None
 
     try:

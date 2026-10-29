@@ -131,6 +131,14 @@ def test_same_time_cases_put_later_saved_first():
     assert ids.index(second) < ids.index(first)
 
 
+def test_completed_sample_keeps_chat_history():
+    # 완료 예시 0006은 대화 기록을 가진 채 완료되어 있다(완료 건 대화 기록 화면 확인용)
+    case = fake_service.get_engineer_case("SC-mock0006")
+    assert case.service_case.status == CaseStatus.COMPLETED and case.resolution is not None
+    turns = fake_service.list_chat_turns("SC-mock0006")
+    assert len(turns) == 2 and all(t.created_at <= case.service_case.completed_at for t in turns)
+
+
 def test_customer_cannot_open_seed_case():
     seed = next(d for d in fake_service.list_engineer_cases() if d.service_case.source == Source.SEED)
     with pytest.raises(NotFoundError):
@@ -159,7 +167,7 @@ def test_submit_customer_code_becomes_self_guide():
     case = fake_service.get_engineer_case(case_id).service_case
     assert (case.route, case.status, case.guide_failure) == (Route.SELF_GUIDE, CaseStatus.COMPLETED, None)
     cited = {c.ref_id for s in case.guidance_answer.steps for c in s.citations}
-    assert cited <= set(code.customer_procedure_ref_ids)
+    assert cited == {f"error:{code.equipment}:{code.code}"}  # 코드 표 행을 인용한다
 
 
 def test_submit_engineer_code_goes_to_support():

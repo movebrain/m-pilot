@@ -11,7 +11,8 @@ from pathlib import Path
 import pdfplumber
 import pytest
 
-from mpilot.db.parser import Footer, _parse_footer, _read_manual_identity
+from mpilot.db.parser.text import _parse_footer, _read_manual_identity
+from mpilot.db.parser.types import Footer
 from mpilot.models import ValidationError
 
 MANUALS_DIR = Path(__file__).resolve().parents[1] / "data" / "manuals"
@@ -64,13 +65,15 @@ def test_read_manual_identity_rejects_missing_or_mixed(footers):
         _read_manual_identity(footers)
 
 
+@pytest.mark.pdf  # PDF를 직접 열어 conftest의 PDF fixture를 거치지 않으므로 마커를 직접 단다
 @pytest.mark.parametrize(
     ("file_name", "manual_id", "version"),
     [
-        ("agv_spec_sheet_dummy_rev1_1.pdf", "HMX-AGV-TSM-001", "1.1"),
-        ("mini_loader_spec_sheet_dummy_rev1_1.pdf", "HMX-MLD-TSM-001", "1.1"),
-        ("rtv_spec_sheet_dummy_rev2_1.pdf", "HMX-RTV-TSM-001", "2.1"),
-        ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.2"),
+        # 파일명의 rev는 원본 개정이고, 합본은 원본에 13장을 더한 개정이라 꼬리글 버전이 0.1 높다.
+        ("agv_spec_sheet_dummy_rev1_1.pdf", "HMX-AGV-TSM-001", "1.2"),
+        ("mini_loader_spec_sheet_dummy_rev1_1.pdf", "HMX-MLD-TSM-001", "1.2"),
+        ("rtv_spec_sheet_dummy_rev2_1.pdf", "HMX-RTV-TSM-001", "2.2"),
+        ("srm_spec_sheet_dummy_rev1_2.pdf", "HMX-SRM-TSM-001", "1.3"),
     ],
 )
 def test_real_manuals_have_footer_on_every_page_but_cover(file_name, manual_id, version):
