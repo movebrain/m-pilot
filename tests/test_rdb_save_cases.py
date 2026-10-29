@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, insert, select
 
+from mpilot.db.rdb import _common
 from mpilot.db.schemas import error_codes, resolutions, service_cases
 from mpilot.models import (
     Answer,
@@ -47,7 +48,7 @@ SRM_S101 = CaseInput(equipment=Equipment.SRM, code="S101", memo="목적지 셀 �
 @pytest.fixture
 def rdb(rdb_db):
     """에러코드 표에 SRM S101 한 행이 있는 테스트 DB에 연결된 `rdb` 모듈."""
-    with rdb_db._get_engine().begin() as conn:
+    with _common._get_engine().begin() as conn:
         conn.execute(
             insert(error_codes).values(
                 equipment="SRM",
@@ -69,13 +70,13 @@ def rdb(rdb_db):
 
 def stored_row(rdb, case_id):
     """`service_cases`에 저장된 행을 그대로 읽는다(DB 컬럼 이름 확인용)."""
-    with rdb._get_engine().connect() as conn:
+    with _common._get_engine().connect() as conn:
         return conn.execute(select(service_cases).where(service_cases.c.case_id == case_id)).first()
 
 
 def count_rows(rdb, table):
     """표의 행 수."""
-    with rdb._get_engine().connect() as conn:
+    with _common._get_engine().connect() as conn:
         return conn.execute(select(func.count()).select_from(table)).scalar()
 
 
@@ -253,7 +254,7 @@ def test_save_duplicate_case_id_is_dependency_error(rdb, save):
 def test_save_requires_connect():
     from mpilot.db import rdb as rdb_module
 
-    assert rdb_module._engine is None
+    assert _common._engine is None
     with pytest.raises(DependencyError):
         rdb_module.save_support_case("SC-0000EEEE", SRM_S101, None)
     with pytest.raises(DependencyError):

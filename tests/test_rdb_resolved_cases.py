@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import insert
 
+from mpilot.db.rdb import _common
 from mpilot.db.schemas import error_codes, resolutions, service_cases
 from mpilot.models import (
     Answer,
@@ -42,7 +43,7 @@ ANSWERED = Answer(
 @pytest.fixture
 def rdb(rdb_db):
     """에러코드 표에 SRM S101 한 행이 있는 테스트 DB에 연결된 `rdb` 모듈."""
-    with rdb_db._get_engine().begin() as conn:
+    with _common._get_engine().begin() as conn:
         conn.execute(
             insert(error_codes).values(
                 equipment="SRM",
@@ -67,7 +68,7 @@ def add_case(rdb, case_id, status="completed", route="support", source="seed", r
     """신고 한 건을 넣는다(설비 SRM, 코드 S101). `resolution`이면 조치 기록도 넣는다."""
     completed_at = datetime(2026, 7, 1, 10, 0) if status == "completed" else None
     self_guide_answer = ANSWERED.model_dump_json() if route == "self_guide" else None
-    with rdb._get_engine().begin() as conn:
+    with _common._get_engine().begin() as conn:
         conn.execute(
             insert(service_cases).values(
                 case_id=case_id,
@@ -157,6 +158,6 @@ def test_fetch_resolved_cases_requires_connect():
     # DB가 없어도 도는 테스트: connect 전에 부르면 DependencyError.
     from mpilot.db import rdb as rdb_module
 
-    assert rdb_module._engine is None
+    assert _common._engine is None
     with pytest.raises(DependencyError):
         rdb_module.fetch_resolved_cases()

@@ -26,7 +26,7 @@
 | 파트 | 파일 |
 | --- | --- |
 | 공통 | `mpilot/config.py`(`AppConfig`, `.env` 로드), `mpilot/models.py`(예외·열거형·업무 객체·순수 업무 규칙) |
-| DB | `mpilot/db/`(`parser`, `schemas`, `rdb`, `vectordb`), `scripts/init_db.py`, `scripts/build_error_codes.py`, `scripts/build_history_seed.py`, `docker-compose.yml` |
+| DB | `mpilot/db/`(`parser`, `schemas`, `rdb/`(`setup`·`cases`·`chat`·`_common`), `vectordb`), `scripts/init_db.py`, `scripts/build_error_codes.py`, `scripts/build_history_seed.py`, `docker-compose.yml` |
 | RAG | `mpilot/rag/`(`retriever`, `generator`, `pipeline`), `prompts/`, `scripts/evaluate.py` |
 | UI·총괄 | `app.py`(공통부), `app_customer.py`, `app_engineer.py`, `mpilot/service.py`, `mpilot/ui/`(화면 6개와 `common.py`), `fake/`(가짜 service·가짜 DB와 실행 진입점. 수동 테스트·시연용) |
 | 자료 | `data/manuals/`(사양서 PDF 4종), `data/raw/`(에러코드 표 CSV, 장애 이력 더미 4종), `data/chroma/`·`data/photos/`(로컬 전용) |

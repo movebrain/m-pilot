@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import inspect, insert, select, update
 
 from mpilot.db import rdb
+from mpilot.db.rdb import _common
 from mpilot.db.schemas import chat_turns, error_codes, metadata, resolutions, service_cases
 from mpilot.models import (
     Answer,
@@ -130,15 +131,15 @@ def test_connect_rejects_unknown_driver():
 
 
 def test_connect_unreachable_db_is_dependency_error_without_password(monkeypatch):
-    monkeypatch.setattr(rdb, "_engine", None)
+    monkeypatch.setattr(_common, "_engine", None)
     with pytest.raises(DependencyError) as error:
         rdb.connect("mysql+pymysql://user:secret-pw@127.0.0.1:1/db?connect_timeout=2")
     assert "secret-pw" not in str(error.value)
-    assert rdb._engine is None  # 실패하면 엔진을 보관하지 않는다
+    assert _common._engine is None  # 실패하면 엔진을 보관하지 않는다
 
 
 def test_functions_before_connect_are_dependency_error(monkeypatch):
-    monkeypatch.setattr(rdb, "_engine", None)
+    monkeypatch.setattr(_common, "_engine", None)
     with pytest.raises(DependencyError):
         rdb.reset_schema()
     with pytest.raises(DependencyError):
@@ -152,28 +153,28 @@ def test_functions_before_connect_are_dependency_error(monkeypatch):
 
 def test_to_db_time_converts_to_utc_without_timezone():
     value = datetime(2026, 3, 2, 9, 15, 30, 123456, tzinfo=KST)
-    assert rdb._to_db_time(value) == datetime(2026, 3, 2, 0, 15, 30)
+    assert _common._to_db_time(value) == datetime(2026, 3, 2, 0, 15, 30)
 
 
 def test_to_db_time_rejects_naive_time():
     with pytest.raises(ValidationError):
-        rdb._to_db_time(datetime(2026, 3, 2, 9, 15))
+        _common._to_db_time(datetime(2026, 3, 2, 9, 15))
 
 
 def test_from_db_time_attaches_utc():
-    assert rdb._from_db_time(datetime(2026, 3, 2, 0, 15)) == datetime(2026, 3, 2, 0, 15, tzinfo=UTC)
-    assert rdb._from_db_time(None) is None
+    assert _common._from_db_time(datetime(2026, 3, 2, 0, 15)) == datetime(2026, 3, 2, 0, 15, tzinfo=UTC)
+    assert _common._from_db_time(None) is None
 
 
 def test_now_for_db_has_no_timezone_and_microseconds():
-    now = rdb._now_for_db()
+    now = _common._now_for_db()
     assert now.tzinfo is None
     assert now.microsecond == 0
 
 
 def test_to_json_list_keeps_korean():
-    assert rdb._to_json_list(["전원 차단"]) == '["전원 차단"]'
-    assert rdb._to_json_list([]) == "[]"
+    assert _common._to_json_list(["전원 차단"]) == '["전원 차단"]'
+    assert _common._to_json_list([]) == "[]"
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +183,12 @@ def test_to_json_list_keeps_korean():
 
 
 def test_reset_schema_creates_four_empty_tables(rdb_db):
-    names = sorted(inspect(rdb_db._engine).get_table_names())
+    names = sorted(inspect(_common._engine).get_table_names())
     assert names == ["chat_turns", "error_codes", "resolutions", "service_cases"]
 
 
 def test_reset_schema_creates_foreign_keys(rdb_db):
-    inspector = inspect(rdb_db._engine)
+    inspector = inspect(_common._engine)
     case_fk = inspector.get_foreign_keys("service_cases")[0]
     assert case_fk["referred_table"] == "error_codes"
     assert case_fk["constrained_columns"] == ["equipment", "code"]
@@ -196,20 +197,20 @@ def test_reset_schema_creates_foreign_keys(rdb_db):
 
 
 def test_reset_schema_deletes_existing_rows(rdb_db):
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
         add_case(conn)
     rdb_db.reset_schema()
-    with rdb_db._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         assert conn.execute(select(service_cases)).all() == []
         assert conn.execute(select(error_codes)).all() == []
 
 
 def test_case_id_is_case_sensitive(rdb_db):
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
         add_case(conn, case_id="SC-ABCD1234")
-    with rdb_db._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         row = conn.execute(
             select(service_cases).where(service_cases.c.case_id == "sc-abcd1234")
         ).first()
@@ -218,23 +219,23 @@ def test_case_id_is_case_sensitive(rdb_db):
 
 def test_foreign_key_blocks_unknown_error_code(rdb_db):
     with pytest.raises(Exception):
-        with rdb_db._engine.begin() as conn:
+        with _common._engine.begin() as conn:
             add_case(conn)  # 에러코드 표에 S101이 없다
 
 
 def test_korean_text_round_trip(rdb_db):
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
-    with rdb_db._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         row = conn.execute(select(error_codes)).first()
-    assert rdb._row_to_error_code(row).required_safety_rules == ["전원을 차단한다"]
+    assert _common._row_to_error_code(row).required_safety_rules == ["전원을 차단한다"]
 
 
 def test_load_case_detail_without_resolution(rdb_db):
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
         add_case(conn)
-        detail = rdb._load_case_detail(conn, "SC-0001")
+        detail = _common._load_case_detail(conn, "SC-0001")
     assert isinstance(detail, CaseDetail)
     assert detail.service_case.memo == "크레인이 멈췄어요"
     assert detail.service_case.created_at == datetime(2026, 10, 27, 0, 0, tzinfo=UTC)
@@ -244,35 +245,35 @@ def test_load_case_detail_without_resolution(rdb_db):
 
 def test_load_case_detail_with_resolution_and_guidance(rdb_db):
     answer = Answer(verdict=Verdict.ANSWERED, steps=[], notice=None)
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
         add_case(conn, status="completed", route="self_guide", answer_json=answer.model_dump_json())
         add_case(conn, case_id="SC-0002", status="completed")
         conn.execute(
             insert(resolutions).values(case_id="SC-0002", cause="원인", action="조치", result="결과")
         )
-        self_guide = rdb._load_case_detail(conn, "SC-0001")
-        support = rdb._load_case_detail(conn, "SC-0002")
+        self_guide = _common._load_case_detail(conn, "SC-0001")
+        support = _common._load_case_detail(conn, "SC-0002")
     assert self_guide.service_case.guidance_answer == answer
     assert support.resolution == Resolution(cause="원인", action="조치", result="결과")
 
 
 def test_load_case_detail_unknown_case_is_not_found(rdb_db):
-    with rdb_db._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         with pytest.raises(NotFoundError):
-            rdb._load_case_detail(conn, "SC-없음")
+            _common._load_case_detail(conn, "SC-없음")
 
 
 def test_broken_stored_value_is_dependency_error(rdb_db):
-    with rdb_db._engine.begin() as conn:
+    with _common._engine.begin() as conn:
         add_error_code(conn)
         add_case(conn)
         conn.execute(
             update(error_codes).values(customer_procedure_ref_ids="깨진 JSON")
         )
         conn.execute(update(service_cases).values(status="unknown"))
-    with rdb_db._engine.connect() as conn:
+    with _common._engine.connect() as conn:
         with pytest.raises(DependencyError):
-            rdb._row_to_error_code(conn.execute(select(error_codes)).first())
+            _common._row_to_error_code(conn.execute(select(error_codes)).first())
         with pytest.raises(DependencyError):
-            rdb._row_to_service_case(conn.execute(select(service_cases)).first())
+            _common._row_to_service_case(conn.execute(select(service_cases)).first())

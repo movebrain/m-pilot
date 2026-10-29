@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from mpilot.db.rdb import _common
 from mpilot.db.schemas import error_codes, resolutions, service_cases
 from mpilot.models import DependencyError, Equipment, ValidationError
 
@@ -89,13 +90,13 @@ def rdb(rdb_db, tmp_path):
 
 def read_rows(rdb, table) -> list:
     """표의 모든 행을 읽는다."""
-    with rdb._get_engine().connect() as conn:
+    with _common._get_engine().connect() as conn:
         return conn.execute(select(table)).all()
 
 
 def read_case(rdb, case_id: str):
     """`service_cases`에서 접수번호 한 행을 읽는다."""
-    with rdb._get_engine().connect() as conn:
+    with _common._get_engine().connect() as conn:
         return conn.execute(
             select(service_cases).where(service_cases.c.case_id == case_id)
         ).one()
@@ -113,7 +114,7 @@ def test_load_seed_history_stores_200_completed_cases(rdb, tmp_path):
     assert case.guide_failure is None
     assert case.self_guide_answer is None
     assert case.customer_memo == "현장 증상"
-    with rdb._get_engine().connect() as conn:
+    with _common._get_engine().connect() as conn:
         record = conn.execute(
             select(resolutions).where(resolutions.c.case_id == "SRM-H-0001")
         ).one()
@@ -209,6 +210,6 @@ def test_load_seed_history_requires_connect(tmp_path):
     # DB가 없어도 도는 테스트: connect 전에 부르면 DependencyError.
     from mpilot.db import rdb as rdb_module
 
-    assert rdb_module._engine is None
+    assert _common._engine is None
     with pytest.raises(DependencyError):
         rdb_module.load_seed_history_from_csv(tmp_path / "없음.csv")
