@@ -15,15 +15,41 @@ from mpilot.rag import retriever
 NAME = "주행 브레이크 이상"
 
 
+NAME_VECTOR = [float(len(NAME))]  # FakeEmbeddings가 NAME으로 만드는 벡터
+
+
+class FakeEmbeddings:
+    """`embed_query` 호출을 기록하고, 글자 수로 정한 벡터를 돌려주는 가짜 임베딩."""
+
+    def __init__(self):
+        self.queries: list[str] = []
+
+    def embed_query(self, text):
+        self.queries.append(text)
+        return [float(len(text))]
+
+
+class FlakyEmbeddings(FakeEmbeddings):
+    """첫 호출만 실패하는 가짜 임베딩."""
+
+    def embed_query(self, text):
+        first = not self.queries
+        vector = super().embed_query(text)
+        if first:
+            raise RuntimeError("임베딩 API 장애")
+        return vector
+
+
 class FakeStore:
     """메타데이터 동등 필터를 실제로 적용하고 미리 정한 거리를 돌려주는 가짜 저장소."""
 
-    def __init__(self, scored: list[tuple[Document, float]]):
+    def __init__(self, scored: list[tuple[Document, float]], embeddings: FakeEmbeddings | None = None):
         self.scored = scored
+        self.embeddings = embeddings or FakeEmbeddings()
         self.calls: list[dict] = []
 
-    def similarity_search_with_score(self, query, k=4, filter=None):
-        self.calls.append({"query": query, "k": k, "filter": filter})
+    def similarity_search_by_vector_with_relevance_scores(self, embedding, k=4, filter=None):
+        self.calls.append({"embedding": embedding, "k": k, "filter": filter})
         hits = [
             (doc, dist)
             for doc, dist in self.scored
@@ -33,8 +59,11 @@ class FakeStore:
 
 
 class BrokenStore:
-    def similarity_search_with_score(self, query, k=4, filter=None):
-        raise RuntimeError("임베딩 API 장애")
+    def __init__(self):
+        self.embeddings = FakeEmbeddings()
+
+    def similarity_search_by_vector_with_relevance_scores(self, embedding, k=4, filter=None):
+        raise RuntimeError("검색 API 장애")
 
 
 def error_row(equipment: Equipment, code: str) -> Document:
@@ -84,7 +113,13 @@ def install_store(monkeypatch):
     return install
 
 
-def manual_store() -> FakeStore:
+@pytest.fixture(autouse=True)
+def reset_query_vector(monkeypatch):
+    """직전 질의 벡터는 모듈 상태라 테스트마다 비운다."""
+    monkeypatch.setattr(retriever, "_last_query_vector", None)
+
+
+def manual_store(embeddings: FakeEmbeddings | None = None) -> FakeStore:
     return FakeStore(
         [
             (error_row(Equipment.MINI_LOADER, "M406"), 0.30),
@@ -92,18 +127,20 @@ def manual_store() -> FakeStore:
             (error_row(Equipment.RTV, "R206"), 0.20),
             (manual_body(Equipment.SRM, 1), 0.15),
             (manual_body(Equipment.MINI_LOADER, 1), 0.25),
-        ]
+        ],
+        embeddings,
     )
 
 
-def history_store() -> FakeStore:
+def history_store(embeddings: FakeEmbeddings | None = None) -> FakeStore:
     return FakeStore(
         [
             (history(Equipment.MINI_LOADER, "C-1", "M406"), 0.40),
             (history(Equipment.SRM, "C-2", "S115"), 0.05),
             (history(Equipment.RTV, "C-3", "R206"), 0.20),
             (history(Equipment.SRM, "C-4", "S115"), 0.30),
-        ]
+        ],
+        embeddings,
     )
 
 
@@ -129,7 +166,7 @@ def test_filter_and_k_are_passed_to_store(install_store):
     store = manual_store()
     install_store(manual=store)
     retriever.search_manual(Equipment.SRM, NAME, 3)
-    assert store.calls == [{"query": NAME, "k": 3, "filter": {"equipment": "SRM"}}]
+    assert store.calls == [{"embedding": NAME_VECTOR, "k": 3, "filter": {"equipment": "SRM"}}]
 
 
 def test_results_sorted_by_distance_and_mix_error_rows_with_body(install_store):
@@ -241,7 +278,45 @@ def test_equipment가_None이면_필터_없이_4종_전체에서_찾는다(insta
     install_store(manual=manual, hist=hist)
     manual_hits = retriever.search_manual(None, NAME, 5)
     history_hits = retriever.search_history(None, NAME, 5)
-    assert manual.calls == [{"query": NAME, "k": 5, "filter": None}]
-    assert hist.calls == [{"query": NAME, "k": 5, "filter": None}]
+    assert manual.calls == [{"embedding": NAME_VECTOR, "k": 5, "filter": None}]
+    assert hist.calls == [{"embedding": NAME_VECTOR, "k": 5, "filter": None}]
     assert {h.equipment for h in manual_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}
     assert {h.equipment for h in history_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}
+
+
+def test_같은_질의를_연달아_검색하면_임베딩은_한_번이다(install_store):
+    emb = FakeEmbeddings()
+    manual, hist = manual_store(emb), history_store(emb)  # 실제 앱처럼 두 저장소가 임베딩 객체를 공유한다
+    install_store(manual=manual, hist=hist)
+    retriever.search_manual(Equipment.SRM, NAME, 3)
+    retriever.search_history(Equipment.SRM, NAME, 3)
+    assert emb.queries == [NAME]
+    assert manual.calls[0]["embedding"] == hist.calls[0]["embedding"] == NAME_VECTOR
+
+
+def test_질의가_바뀌면_다시_임베딩한다(install_store):
+    emb = FakeEmbeddings()
+    install_store(manual=manual_store(emb), hist=history_store(emb))
+    retriever.search_manual(Equipment.SRM, NAME, 3)
+    retriever.search_history(Equipment.SRM, NAME, 3)
+    retriever.search_manual(None, "다른 질문", 3)
+    retriever.search_history(None, "다른 질문", 3)
+    assert emb.queries == [NAME, "다른 질문"]
+
+
+def test_임베딩_객체가_바뀌면_같은_질의도_다시_임베딩한다(install_store):
+    old, new = FakeEmbeddings(), FakeEmbeddings()
+    install_store(manual=manual_store(old), hist=history_store(new))  # connect로 객체가 바뀐 경우
+    retriever.search_manual(Equipment.SRM, NAME, 3)
+    retriever.search_history(Equipment.SRM, NAME, 3)
+    assert (old.queries, new.queries) == ([NAME], [NAME])
+
+
+def test_임베딩_실패는_DependencyError이고_벡터를_저장하지_않는다(install_store):
+    emb = FlakyEmbeddings()
+    install_store(manual=manual_store(emb))
+    with pytest.raises(DependencyError) as info:
+        retriever.search_manual(Equipment.SRM, NAME, 3)
+    assert isinstance(info.value.__cause__, RuntimeError)
+    assert retriever.search_manual(Equipment.SRM, NAME, 3)  # 실패가 저장되지 않아 다시 임베딩하고 성공한다
+    assert emb.queries == [NAME, NAME]

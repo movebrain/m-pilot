@@ -8,6 +8,7 @@
     - 모든 검색에 설비 필터를 건다. 다른 설비의 같은 이름 에러를 근거로 돌려주지 않는다.
     - 엔지니어 대화는 `manual`과 `history`를 검색한다. 고객 안내는 `manual`만 검색하고 `history`는 쓰지 않는다.
     - `history`의 `case_id` 중복은 색인이 막는다(`history:<case_id>` ID로 upsert). 검색에서 다시 거르지 않는다.
+    - 같은 질의를 연달아 검색하면 임베딩 호출은 한 번만 한다(직전 질의의 벡터만 기억한다).
     - 검색 결과가 근거로 충분한지 판단한다(임계값은 사람이 평가 결과를 보고 정한다).
     - 답변을 만들거나 DB에 쓰지 않는다.
 
@@ -32,6 +33,26 @@ from mpilot.models import (
 
 if TYPE_CHECKING:
     from langchain_core.documents import Document
+    from langchain_core.embeddings import Embeddings
+
+# 직전 질의의 (임베딩 객체, 질의, 벡터). 엔지니어 답변은 같은 질의로 manual·history를 연달아 검색한다.
+# shortcut: 슬롯이 하나라 동시 접속이 많으면 적중률이 떨어진다, 그때 크기를 늘린다.
+_last_query_vector: tuple[Embeddings, str, list[float]] | None = None
+
+
+def _embed_query(embeddings: Embeddings, query: str) -> list[float]:
+    """질의를 벡터로 만든다. 직전과 같은 임베딩 객체·같은 질의면 저장해 둔 벡터를 돌려준다.
+
+    임베딩 객체를 `is`로 비교하므로 `vectordb.connect`로 객체가 바뀌면 이전 벡터를 쓰지 않는다.
+    임베딩에 실패하면 아무것도 저장하지 않는다.
+    """
+    global _last_query_vector
+    cached = _last_query_vector
+    if cached is not None and cached[0] is embeddings and cached[1] == query:
+        return cached[2]
+    vector = embeddings.embed_query(query)
+    _last_query_vector = (embeddings, query, vector)
+    return vector
 
 
 def search_manual(equipment: Equipment | None, query: str, k: int) -> list[SearchHit]:
@@ -99,8 +120,10 @@ def _search_by_equipment(
         raise ValidationError(f"k는 1 이상이어야 한다: {k}")
     store = vectordb.get_store(kind)  # get_store의 오류는 계약된 예외라 변환하지 않는다
     try:
-        scored = store.similarity_search_with_score(
-            query, k=k, filter={"equipment": equipment.value} if equipment else None
+        scored = store.similarity_search_by_vector_with_relevance_scores(
+            _embed_query(store.embeddings, query),
+            k=k,
+            filter={"equipment": equipment.value} if equipment else None,
         )
         scored = sorted(scored, key=lambda pair: pair[1])  # 거리가 None이면 여기서 TypeError
     except Exception as e:
