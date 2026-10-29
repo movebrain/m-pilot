@@ -147,6 +147,8 @@ flowchart TD
 │   └── test_*.py           #   위 가짜들과 실행 진입점의 테스트
 ├── scripts/
 │   ├── init_db.py          # [DB] DB 초기화·초기 자료 적재
+│   ├── build_error_codes.py   # [DB] 에러코드 정본 data/errorcodes.csv 생성
+│   ├── build_history_seed.py  # [DB] 시드 이력 data/history_seed.csv 생성
 │   └── evaluate.py         # [RAG] RAG 품질 평가 실행·기록
 ├── prompts/                # [RAG] 모델 지시문(고객 안내·엔지니어 대화)
 ├── tests/                  # 테스트
@@ -186,6 +188,8 @@ flowchart TD
 python -m pip install -r requirements.txt
 cp .env.example .env                    # 값을 채웁니다. .env는 커밋하지 않습니다
 docker compose up -d                    # 로컬 MySQL이 필요할 때
+python -m scripts.build_error_codes     # 원자료 에러코드 표 + 매뉴얼 표 → data/errorcodes.csv (init_db 전에)
+python -m scripts.build_history_seed    # 원자료 이력 4종 → data/history_seed.csv (init_db 전에)
 python -m scripts.init_db               # DB 초기화·초기 자료 적재 (시연 전 한 번만)
 python app_customer.py                  # 고객 앱     http://127.0.0.1:7860
 python app_engineer.py                  # 엔지니어 앱 http://127.0.0.1:7861
