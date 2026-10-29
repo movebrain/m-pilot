@@ -1,4 +1,4 @@
-"""UI에서 RAG까지 동작을 확인하기 위한 가짜 DB. DB 파트가 구현되기 전에 `rdb`·`vectordb`·`parser`를 메모리로 대신한다.
+"""UI에서 RAG까지 동작을 확인하기 위한 가짜 DB. DB 파트가 구현되기 전에 `rdb`·`parser`를 메모리로 대신한다. 벡터 저장소는 진짜 `vectordb`를 쓴다.
 
 역할:
     `service`와 `rag`는 진짜 코드를 그대로 쓰고, 그 아래 DB 계층만 바꿔 끼운다(`install()`).
@@ -8,15 +8,14 @@
     - `rdb`: 에러코드 표·시드 이력 200건·신고·대화·조치를 메모리에 둔다. 상태 전이는
       `models.raise_if_case_completed`를 쓰고, 쓰기는 잠금 하나로 직렬화한다(조건부 UPDATE 대신).
       시각은 UTC 시간대를 붙여 돌려준다. 시드 CSV의 시각은 시간대가 없어 KST로 본다.
-    - `vectordb`: `connect`·`get_store`·`get_document`만 바꾼다. 저장소는 진짜 Chroma(메모리)라서 거리 척도와
-      필터 동작이 같다. 색인 쓰기(`rebuild_search_index`, `index_history`)는 진짜 구현을 그대로 쓴다.
+    - `vectordb`: 바꾸지 않는다. 진짜 `connect`(메모리 Chroma)·`get_store`·`get_document`와 색인 쓰기를 그대로 쓴다.
     - `parser`: `data/manuals` PDF를 쪽 단위로 잘라 청크로 만든다. 파싱에 20초 안팎이 걸려 한 번만 한다.
     - 에러코드 표의 `customer_procedure_ref_ids`·`required_safety_rules`는 사람이 쓰는 값이라 CSV에 없다.
       가짜 DB가 같은 설비 매뉴얼에서 그 코드가 가장 많이 나오는 청크를 골라 `(목)` 표시와 함께 채운다.
       배선 확인용 값이며 RAG 품질을 판단하는 근거로 쓰지 않는다.
     - `rdb.load_*_from_csv`는 `scripts.init_db` 전용이라 바꾸지 않는다. `connect`가 곧바로 시드를 올린다.
 
-의존: `fake_service`(CSV 로더·조회 도우미), `db.*`(바꿔 끼울 대상), `models`. Chroma는 `connect_vectordb`에서만 불러온다.
+의존: `fake_service`(CSV 로더·조회 도우미), `db.*`(바꿔 끼울 대상), `models`.
 소유: UI·총괄 파트
 """
 
@@ -27,7 +26,6 @@ import logging
 import math
 import re
 import threading
-import uuid
 from datetime import UTC, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -35,7 +33,7 @@ from pathlib import Path
 from langchain_core.embeddings import Embeddings
 
 from fake import fake_service
-from mpilot.db import parser, rdb, vectordb
+from mpilot.db import parser, rdb
 from mpilot.models import (
     ActionOwner,
     Answer,
@@ -44,12 +42,10 @@ from mpilot.models import (
     CaseStatus,
     ChatTurn,
     Chunk,
-    CitationKind,
     DependencyError,
     Equipment,
     ErrorCode,
     GuideFailure,
-    NotFoundError,
     Resolution,
     Route,
     ServiceCase,
@@ -73,7 +69,6 @@ _PREFIX_EQUIPMENT = {
 
 _lock = threading.RLock()
 _store: fake_service._Store | None = None  # connect가 만든다
-_vector_stores: dict[CitationKind, object] = {}  # connect_vectordb가 만든다
 
 
 # ---------------------------------------------------------------------------
@@ -334,54 +329,6 @@ def fetch_resolved_cases() -> list[CaseDetail]:
 
 
 # ---------------------------------------------------------------------------
-# vectordb
-# ---------------------------------------------------------------------------
-
-
-def connect_vectordb(embeddings: Embeddings) -> None:
-    """`vectordb.connect`의 가짜. 임베딩을 받아 `manual`·`history` 메모리 Chroma 저장소를 만든다.
-
-    Args:
-        embeddings: 문서와 질의를 벡터로 바꿀 임베딩(`HashEmbeddings` 또는 실제 임베딩).
-
-    Returns:
-        None: 이후 `get_store`·`get_document`가 이 저장소를 쓴다. 다시 부르면 새 저장소로 바뀐다.
-
-    Raises:
-        DependencyError: 이 환경에서 Chroma를 쓸 수 없을 때(예: sqlite 3.35 미만).
-    """
-    try:
-        from langchain_chroma import Chroma
-    except Exception as e:  # 오래된 sqlite는 ImportError가 아닌 RuntimeError를 낸다
-        raise DependencyError(f"Chroma를 불러오지 못했습니다({type(e).__name__}).") from e
-    suffix = uuid.uuid4().hex[:8]  # 같은 프로세스의 메모리 Chroma는 이름이 겹치면 자료를 공유한다
-    _vector_stores.clear()
-    for kind in CitationKind:
-        # client_settings를 주지 않는다: 설정이 다른 메모리 Chroma를 한 프로세스에 두면 ValueError가 난다.
-        _vector_stores[kind] = Chroma(collection_name=f"{kind.value}_{suffix}", embedding_function=embeddings)
-
-
-def get_store(kind: CitationKind):
-    """`vectordb.get_store`의 가짜. 계약은 같다."""
-    kind = fake_service._parse_enum(CitationKind, kind, "컬렉션")
-    if kind not in _vector_stores:
-        raise DependencyError("저장소에 연결하지 않았습니다(connect 필요).")
-    return _vector_stores[kind]
-
-
-def get_document(kind: CitationKind, ref_id: str):
-    """`vectordb.get_document`의 가짜. 계약은 같다."""
-    store = get_store(kind)
-    try:
-        docs = store.get_by_ids([ref_id])
-    except Exception as e:
-        raise DependencyError("문서를 조회하지 못했습니다.") from e
-    if not docs:
-        raise NotFoundError(f"문서를 찾을 수 없습니다: {ref_id}")
-    return docs[0]
-
-
-# ---------------------------------------------------------------------------
 # 설치
 # ---------------------------------------------------------------------------
 
@@ -402,20 +349,19 @@ _TARGETS = (
             "fetch_resolved_cases": fetch_resolved_cases,
         },
     ),
-    (vectordb, {"connect": connect_vectordb, "get_store": get_store, "get_document": get_document}),
     (parser, {"parse_manuals": parse_manuals}),
 )
 """(바꿀 모듈, {모듈의 함수 이름: 대신 끼울 가짜 함수}). 이름이 같은 `connect`가 둘이라 사전으로 둔다."""
 
 
 def install() -> None:
-    """`rdb`·`vectordb`·`parser`의 함수를 이 모듈의 가짜로 바꿔 끼운다.
+    """`rdb`·`parser`의 함수를 이 모듈의 가짜로 바꿔 끼운다.
 
     `service`와 `retriever`는 `rdb.<함수>`처럼 모듈 속성으로 부르므로, 바꿔 끼운 뒤에는 진짜 `service`·`rag`가
-    가짜 DB 위에서 동작한다. `vectordb`의 색인 쓰기(`rebuild_search_index`, `index_history`)는 바꾸지 않는다.
+    가짜 DB 위에서 동작한다. `vectordb`는 바꾸지 않는다.
 
     Returns:
-        None: 이후 세 모듈의 해당 함수 호출이 메모리 구현으로 처리된다.
+        None: 이후 두 모듈의 해당 함수 호출이 메모리 구현으로 처리된다.
     """
     for module, fakes in _TARGETS:
         for name, fake in fakes.items():

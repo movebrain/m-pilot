@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-label="M-Pilot: 설비가 멈춘 순간, 근거 있는 첫 대응">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#002C5F"/>
+      <stop offset="1" stop-color="#0B5CA8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="400" rx="20" fill="url(#bg)"/>
+  <g stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="1">
+    <path d="M0 80H1200M0 160H1200M0 240H1200M0 320H1200M150 0V400M300 0V400M450 0V400M600 0V400M750 0V400M900 0V400M1050 0V400"/>
+  </g>
+  <rect x="70" y="86" width="10" height="150" rx="5" fill="#00AAD2"/>
+  <text x="105" y="170" font-family="'Apple SD Gothic Neo','Noto Sans KR','Noto Sans CJK KR','Malgun Gothic','NanumGothic',sans-serif" font-size="104" font-weight="800" fill="#FFFFFF">M-Pilot</text>
+  <text x="108" y="222" font-family="'Apple SD Gothic Neo','Noto Sans KR','Noto Sans CJK KR','Malgun Gothic','NanumGothic',sans-serif" font-size="36" font-weight="600" fill="#CFE8F7">설비가 멈춘 순간, 근거 있는 첫 대응</text>
+  <text x="108" y="266" font-family="'Apple SD Gothic Neo','Noto Sans KR','Noto Sans CJK KR','Malgun Gothic','NanumGothic',sans-serif" font-size="22" fill="#8FB8DA">Hyundai AI Campus · Team 무브레인 (MoveBrain)</text>
+  <g font-family="'Apple SD Gothic Neo','Noto Sans KR','Noto Sans CJK KR','Malgun Gothic','NanumGothic',sans-serif" font-size="20" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+    <rect x="105" y="310" width="150" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.14" stroke="#FFFFFF" stroke-opacity="0.35"/>
+    <text x="180" y="340">SRM</text>
+    <rect x="275" y="310" width="150" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.14" stroke="#FFFFFF" stroke-opacity="0.35"/>
+    <text x="350" y="340">AGV</text>
+    <rect x="445" y="310" width="150" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.14" stroke="#FFFFFF" stroke-opacity="0.35"/>
+    <text x="520" y="340">RTV</text>
+    <rect x="615" y="310" width="190" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.14" stroke="#FFFFFF" stroke-opacity="0.35"/>
+    <text x="710" y="340">Mini Loader</text>
+  </g>
+  <g transform="translate(930 110)" fill="none" stroke="#00AAD2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="90" cy="90" r="62" stroke-opacity="0.9"/>
+    <circle cx="90" cy="90" r="30" stroke="#FFFFFF" stroke-opacity="0.85"/>
+    <path d="M90 14V44M90 136V166M14 90H44M136 90H166M36 36L57 57M123 123L144 144M144 36L123 57M57 123L36 144" stroke-opacity="0.75"/>
+  </g>
+</svg>

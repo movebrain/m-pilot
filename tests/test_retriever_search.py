@@ -234,3 +234,14 @@ def test_hit_fields_for_error_row_body_and_history(install_store):
     first = retriever.search_history(Equipment.SRM, NAME, 5)[0]
     assert (first.kind, first.code, first.locator) == (CitationKind.HISTORY, "S115", "접수 C-2 S115")
     assert first.distance == 0.05
+
+
+def test_equipment가_None이면_필터_없이_4종_전체에서_찾는다(install_store):
+    manual, hist = manual_store(), history_store()
+    install_store(manual=manual, hist=hist)
+    manual_hits = retriever.search_manual(None, NAME, 5)
+    history_hits = retriever.search_history(None, NAME, 5)
+    assert manual.calls == [{"query": NAME, "k": 5, "filter": None}]
+    assert hist.calls == [{"query": NAME, "k": 5, "filter": None}]
+    assert {h.equipment for h in manual_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}
+    assert {h.equipment for h in history_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}

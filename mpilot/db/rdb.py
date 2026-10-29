@@ -534,7 +534,43 @@ def fetch_cases(
         ValidationError: 허용되지 않은 `status`·`source` 값일 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    # 1) 필터 값을 확인한다. 틀린 값을 조용히 무시하면 엉뚱한 목록이 나가므로 오류로 알린다.
+    try:
+        status = CaseStatus(status) if status is not None else None
+        source = Source(source) if source is not None else None
+    except ValueError:
+        raise ValidationError(f"허용되지 않은 조회 조건입니다: status={status}, source={source}") from None
+
+    # 2) 신고 건에 조치 기록을 외부 조인한다(조치 기록이 없는 건도 나오게).
+    query = (
+        select(service_cases, resolutions.c.cause, resolutions.c.action, resolutions.c.result)
+        .outerjoin(resolutions, resolutions.c.case_id == service_cases.c.case_id)
+        # 최신순. 신고 시각이 같으면 접수번호 역순으로 순서를 고정한다.
+        .order_by(service_cases.c.created_at.desc(), service_cases.c.case_id.desc())
+    )
+    if status is not None:
+        query = query.where(service_cases.c.status == status.value)
+    if source is not None:
+        query = query.where(service_cases.c.source == source.value)
+
+    try:
+        with _get_engine().connect() as conn:
+            rows = conn.execute(query).all()
+            code_rows = conn.execute(select(error_codes)).all()
+    except SQLAlchemyError as e:
+        raise DependencyError(f"신고 목록을 조회하지 못했습니다({type(e).__name__}).") from None
+
+    # 3) 에러코드 행을 (설비, 코드)로 붙인다. 외래키가 있어 반드시 있다.
+    codes = {(r.equipment, r.code): _row_to_error_code(r) for r in code_rows}
+    return [
+        CaseDetail(
+            service_case=_row_to_service_case(row),
+            error_code=codes[(row.equipment, row.code)],
+            # 외부 조인이라 조치 기록이 없으면 세 컬럼이 모두 NULL이다.
+            resolution=_row_to_resolution(row) if row.cause is not None else None,
+        )
+        for row in rows
+    ]
 
 
 def fetch_case_detail(case_id: str) -> CaseDetail:
@@ -550,7 +586,11 @@ def fetch_case_detail(case_id: str) -> CaseDetail:
         NotFoundError: 그 접수번호의 신고가 없을 때.
         DependencyError: DB 조회에 실패했을 때.
     """
-    ...
+    try:
+        with _get_engine().connect() as conn:
+            return _load_case_detail(conn, case_id)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"신고 상세를 조회하지 못했습니다({type(e).__name__}).") from None
 
 
 def save_self_guide_case(

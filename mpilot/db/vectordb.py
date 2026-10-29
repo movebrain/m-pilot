@@ -27,6 +27,8 @@ from __future__ import annotations
 from datetime import UTC
 from typing import TYPE_CHECKING
 
+from langchain_core.documents import Document
+
 from mpilot.models import (
     CaseDetail,
     CaseStatus,
@@ -34,15 +36,16 @@ from mpilot.models import (
     CitationKind,
     DependencyError,
     ErrorCode,
-    MpilotError,
+    NotFoundError,
     Route,
     ValidationError,
 )
 
 if TYPE_CHECKING:
-    from langchain_core.documents import Document
     from langchain_core.embeddings import Embeddings
     from langchain_core.vectorstores import VectorStore
+
+_stores = {}  # connect가 만든 컬렉션별 저장소. 키는 CitationKind(manual, history)
 
 
 def connect(embeddings: Embeddings) -> None:
@@ -57,7 +60,17 @@ def connect(embeddings: Embeddings) -> None:
     Raises:
         DependencyError: 저장소를 초기화할 수 없을 때.
     """
-    ...
+    global _stores
+    try:
+        # import 순간 sqlite3 버전 검사(3.35 미만이면 RuntimeError)가 있어, 모듈 맨 위가 아니라 여기서 불러온다.
+        # 그래야 이 환경에서도 앱(--fake 포함)은 켜지고, 실패는 아래에서 DependencyError로 바뀐다.
+        from langchain_chroma import Chroma
+
+        # client·persist_directory를 주지 않으면 메모리 Chroma다(spec §2.1).
+        _stores = {kind: Chroma(collection_name=kind.value, embedding_function=embeddings)
+                   for kind in CitationKind}
+    except Exception as e:
+        raise DependencyError("검색 저장소를 초기화할 수 없습니다.") from e
 
 
 def get_store(kind: CitationKind) -> VectorStore:
@@ -73,7 +86,13 @@ def get_store(kind: CitationKind) -> VectorStore:
         ValidationError: 지원하지 않는 종류일 때.
         DependencyError: 저장소에 접근할 수 없거나 `connect` 전에 불렀을 때.
     """
-    ...
+    try:
+        kind = CitationKind(kind)
+    except ValueError:
+        raise ValidationError(f"지원하지 않는 저장소 종류입니다: {kind}") from None
+    if kind not in _stores:
+        raise DependencyError("검색 저장소가 연결되지 않았습니다. vectordb.connect를 먼저 부르세요.")
+    return _stores[kind]
 
 
 def get_document(kind: CitationKind, ref_id: str) -> Document:
@@ -92,7 +111,20 @@ def get_document(kind: CitationKind, ref_id: str) -> Document:
         NotFoundError: 그 ID의 문서가 컬렉션에 없을 때.
         DependencyError: 저장소 조회에 실패했을 때.
     """
-    ...
+    from langchain_core.documents import Document
+
+    try:
+        store = get_store(kind)
+    except ValidationError:  # 계약 예외에 맞춰 모르는 종류는 '그 컬렉션에 없음'으로 본다
+        raise NotFoundError(f"검색 문서가 없습니다: {kind}/{ref_id}") from None
+    try:
+        found = store.get(ids=[ref_id])  # 유사도 검색이 아니라 ID로 정확히 찾는다
+    except Exception as e:
+        raise DependencyError("검색 문서를 조회하지 못했습니다.") from e
+    if not found["ids"]:
+        raise NotFoundError(f"검색 문서가 없습니다: {kind}/{ref_id}")
+    return Document(id=ref_id, page_content=found["documents"][0],
+                    metadata=found["metadatas"][0] or {})
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +143,7 @@ def get_document(kind: CitationKind, ref_id: str) -> Document:
 #        만들어 두면, 한쪽에서 컬렉션을 다시 만든 뒤 다른 쪽 객체로는 검색이 실패한다.
 # ---------------------------------------------------------------------------
 
-_ID_SEP = ":"
+_ID_SEP = ":"  # 문서 ID 구성 요소 사이의 구분자
 
 
 def _make_doc_id(prefix: str, *parts: object) -> str:
@@ -127,13 +159,15 @@ def _make_doc_id(prefix: str, *parts: object) -> str:
     Raises:
         ValidationError: 구성 요소가 비었거나 `:`가 들어 있을 때(ID를 다시 쪼갤 수 없게 된다).
     """
-    texts = [str(p) for p in parts]
-    for text in texts:
-        if not text or _ID_SEP in text:
+    texts = []  # 문자열로 바꾼 구성 요소
+    for part in parts:  # 구성 요소를 하나씩 본다
+        texts.append(str(part))  # 쪽 번호·청크 번호는 숫자로 들어오므로 문자열로 바꾼다
+    for text in texts:  # 바꾼 구성 요소를 하나씩 검사한다
+        if not text or _ID_SEP in text:  # 비었거나 ':'가 있으면 나중에 ID를 ':'로 다시 쪼갤 수 없다
             raise ValidationError(
                 f"문서 ID 구성 요소가 비었거나 ':'가 들어 있습니다: {prefix}{_ID_SEP}{texts}"
-            )
-    return _ID_SEP.join([prefix, *texts])
+            )  # 추측하지 않고 적재 오류로 낸다
+    return _ID_SEP.join([prefix] + texts)  # 예) "error" + ["SRM", "S101"] → "error:SRM:S101"
 
 
 def _build_error_document(code: ErrorCode) -> tuple[str, Document]:
@@ -148,10 +182,8 @@ def _build_error_document(code: ErrorCode) -> tuple[str, Document]:
     Raises:
         ValidationError: ID 구성 요소가 비었거나 `:`가 들어 있을 때.
     """
-    from langchain_core.documents import Document
-
-    doc_id = _make_doc_id("error", code.equipment.value, code.code)
-    text = "\n".join(
+    doc_id = _make_doc_id("error", code.equipment.value, code.code)  # 예) error:SRM:S101
+    text = "\n".join(  # 표 한 행을 "항목: 값" 줄로 풀어 본문을 만든다
         [
             f"설비: {code.equipment.value}",
             f"에러코드: {code.code}",
@@ -162,16 +194,16 @@ def _build_error_document(code: ErrorCode) -> tuple[str, Document]:
             f"조치: {code.action}",
             f"출처: {code.manual_id} p.{code.page} {code.section}",
         ]
-    )
-    metadata = {
-        "doc_type": "error",
-        "equipment": code.equipment.value,
+    )  # 본문 끝
+    metadata = {  # 설비 필터와 출처 표기에 쓰는 메타데이터
+        "doc_type": "error",  # 문서 종류: 코드 표 행
+        "equipment": code.equipment.value,  # 설비 필터에 쓴다
         "code": code.code,
         "manual_id": code.manual_id,
         "page": code.page,
         "section": code.section,
-    }
-    return doc_id, Document(page_content=text, metadata=metadata, id=doc_id)
+    }  # 메타데이터 끝
+    return doc_id, Document(page_content=text, metadata=metadata, id=doc_id)  # ID와 문서를 함께 돌려준다
 
 
 def _build_manual_document(chunk: Chunk) -> tuple[str, Document]:
@@ -188,19 +220,17 @@ def _build_manual_document(chunk: Chunk) -> tuple[str, Document]:
     Raises:
         ValidationError: ID 구성 요소가 비었거나 `:`가 들어 있을 때.
     """
-    from langchain_core.documents import Document
-
-    doc_id = _make_doc_id("manual", chunk.manual_id, chunk.page, chunk.chunk_no)
-    metadata = {
-        "doc_type": "manual",
-        "equipment": chunk.equipment.value,
+    doc_id = _make_doc_id("manual", chunk.manual_id, chunk.page, chunk.chunk_no)  # 예) manual:HMX-SRM-TSM-001:12:3
+    metadata = {  # 설비 필터와 쪽·절 출처 표기에 쓰는 메타데이터
+        "doc_type": "manual",  # 문서 종류: 매뉴얼 본문
+        "equipment": chunk.equipment.value,  # 설비 필터에 쓴다
         "manual_id": chunk.manual_id,
         "page": chunk.page,
         "section": chunk.section,
         "chunk_no": chunk.chunk_no,
         "version": chunk.version,
-    }
-    return doc_id, Document(page_content=chunk.text, metadata=metadata, id=doc_id)
+    }  # 메타데이터 끝
+    return doc_id, Document(page_content=chunk.text, metadata=metadata, id=doc_id)  # 본문은 청크 원문 그대로
 
 
 def _build_history_document(case: CaseDetail) -> tuple[str, Document]:
@@ -217,15 +247,18 @@ def _build_history_document(case: CaseDetail) -> tuple[str, Document]:
     Raises:
         ValidationError: 조치 기록(`resolution`)이 없거나, 셀프 가이드 건이거나, 완료되지 않은 건일 때.
     """
-    from langchain_core.documents import Document
-
-    sc = case.service_case
-    if case.resolution is None:
-        raise ValidationError(f"{sc.case_id}: 조치 기록이 없는 건은 이력 색인에 넣지 않습니다.")
-    if sc.route != Route.SUPPORT or sc.status != CaseStatus.COMPLETED or sc.completed_at is None:
-        raise ValidationError(f"{sc.case_id}: 확정된 현장 조치 건만 이력 색인에 넣습니다.")
-    doc_id = _make_doc_id("history", sc.case_id)
-    text = "\n".join(
+    sc = case.service_case  # 신고 건(자주 쓰여서 짧은 이름으로 둔다)
+    if case.resolution is None:  # 조치 기록이 없는 건이면
+        raise ValidationError(f"{sc.case_id}: 조치 기록이 없는 건은 이력 색인에 넣지 않습니다.")  # 근거로 쓸 수 없어 거부한다
+    not_confirmed = f"{sc.case_id}: 확정된 현장 조치 건만 이력 색인에 넣습니다."  # 아래 세 검사가 함께 쓰는 오류 문구
+    if sc.route != Route.SUPPORT:  # 셀프 가이드 건이면
+        raise ValidationError(not_confirmed)  # 자동 안내는 검색 근거로 다시 쓰지 않는다
+    if sc.status != CaseStatus.COMPLETED:  # 아직 완료되지 않은 건이면
+        raise ValidationError(not_confirmed)  # 확정 전이라 넣지 않는다
+    if sc.completed_at is None:  # 완료 시각이 비어 있으면
+        raise ValidationError(not_confirmed)  # 메타데이터를 만들 수 없어 넣지 않는다
+    doc_id = _make_doc_id("history", sc.case_id)  # 예) history:SRM-H-0001
+    text = "\n".join(  # 증상 메모와 확정된 원인·조치·결과로 본문을 만든다
         [
             f"설비: {sc.equipment.value}",
             f"에러코드: {sc.code} ({case.error_code.name})",
@@ -234,16 +267,16 @@ def _build_history_document(case: CaseDetail) -> tuple[str, Document]:
             f"조치: {case.resolution.action}",
             f"결과: {case.resolution.result}",
         ]
-    )
-    completed_at = sc.completed_at.astimezone(UTC).replace(microsecond=0).isoformat()
-    metadata = {
-        "doc_type": "history",
-        "equipment": sc.equipment.value,
+    )  # 본문 끝
+    completed_at = sc.completed_at.astimezone(UTC).replace(microsecond=0).isoformat()  # UTC 초 단위 문자열. 예) 2026-07-07T14:29:00+00:00
+    metadata = {  # 설비 필터와 출처 표기에 쓰는 메타데이터
+        "doc_type": "history",  # 문서 종류: 확정 현장 조치
+        "equipment": sc.equipment.value,  # 설비 필터에 쓴다
         "code": sc.code,
         "case_id": sc.case_id,
         "completed_at": completed_at,
-    }
-    return doc_id, Document(page_content=text, metadata=metadata, id=doc_id)
+    }  # 메타데이터 끝
+    return doc_id, Document(page_content=text, metadata=metadata, id=doc_id)  # ID와 문서를 함께 돌려준다
 
 
 def _write_documents(store: VectorStore, docs: dict[str, Document], what: str) -> None:
@@ -260,14 +293,12 @@ def _write_documents(store: VectorStore, docs: dict[str, Document], what: str) -
     Raises:
         DependencyError: 임베딩 생성이나 저장소 쓰기에 실패했을 때.
     """
-    if not docs:
-        return
-    try:
-        store.add_documents(list(docs.values()), ids=list(docs.keys()))
-    except MpilotError:
-        raise
-    except Exception as e:  # OpenAI·Chroma 오류 종류가 많아 한곳에서 의존 오류로 바꾼다.
-        raise DependencyError(f"{what} 색인에 쓰지 못했습니다({type(e).__name__}).") from None
+    if not docs:  # 넣을 문서가 없으면
+        return  # 임베딩 API를 부르지 않고 끝낸다
+    try:  # 임베딩·저장소 오류만 따로 잡는다
+        store.add_documents(list(docs.values()), ids=list(docs.keys()))  # 문서와 ID를 같은 순서로 넘긴다. 여기서 임베딩을 만든다
+    except Exception as e:  # OpenAI·Chroma 오류는 종류가 많아 한곳에서 잡는다
+        raise DependencyError(f"{what} 색인에 쓰지 못했습니다({type(e).__name__}).") from None  # 원문은 숨기고 오류 종류만 남긴다
 
 
 def index_history(case: CaseDetail) -> None:
@@ -285,8 +316,8 @@ def index_history(case: CaseDetail) -> None:
         ValidationError: `resolution`이 없거나 셀프 가이드 건일 때.
         DependencyError: 임베딩 생성이나 저장소 쓰기에 실패했을 때.
     """
-    doc_id, doc = _build_history_document(case)
-    _write_documents(get_store(CitationKind.HISTORY), {doc_id: doc}, "이력")
+    doc_id, doc = _build_history_document(case)  # 확정 건인지 검사하고 문서를 만든다
+    _write_documents(get_store(CitationKind.HISTORY), {doc_id: doc}, "이력")  # history 컬렉션에 넣는다. 같은 case_id면 덮어쓴다
 
 
 def rebuild_search_index(
@@ -314,38 +345,44 @@ def rebuild_search_index(
     `get_store`가 돌려준 Chroma 객체의 `reset_collection()`을 쓴다(위 '기대는 것' 주석).
     """
     # 1) 문서를 모두 먼저 만들고 검증한다. 검증에 실패하면 기존 색인을 지우지 않고 멈춘다.
-    manual_docs: dict[str, Document] = {}
-    for doc_id, doc in [_build_error_document(c) for c in codes] + [_build_manual_document(c) for c in chunks]:
-        if doc_id in manual_docs:
-            # 같은 ID는 같은 원문이어야 한다(spec §3.4). 겹치면 파싱·코드 표 오류다.
-            raise ValidationError(f"manual 문서 ID가 겹칩니다: {doc_id}")
-        manual_docs[doc_id] = doc
+    built = []  # (문서 ID, 문서) 목록. 에러코드 표 행 → 매뉴얼 본문 순서
+    for error_code in codes:  # 에러코드 표 행마다
+        built.append(_build_error_document(error_code))  # error: 문서를 만든다
+    for chunk in chunks:  # 매뉴얼 청크마다
+        built.append(_build_manual_document(chunk))  # manual: 문서를 만든다
+    manual_docs: dict[str, Document] = {}  # 문서 ID → 문서(manual 컬렉션에 넣을 것)
+    for doc_id, doc in built:  # 만든 문서를 하나씩 모은다
+        if doc_id in manual_docs:  # 같은 ID가 또 나오면(같은 ID는 같은 원문이어야 한다, spec §3.4)
+            raise ValidationError(f"manual 문서 ID가 겹칩니다: {doc_id}")  # 파싱·코드 표 오류라 멈춘다
+        manual_docs[doc_id] = doc  # 처음 나온 ID면 모은다
 
-    # 허용 절차 ID는 매뉴얼 본문(`manual:`) 문서여야 하고, 그 에러코드와 같은 설비의 문서여야 한다
-    # (spec §3.3 customer_procedure_ref_ids, §3.4 색인 검증). 코드 표 행(`error:`)은 절차가 아니다.
-    problems = []
-    for c in codes:
-        for ref in c.customer_procedure_ref_ids:
-            doc = manual_docs.get(ref)
-            if doc is None or doc.metadata["doc_type"] != "manual":
-                problems.append(f"{c.equipment.value}:{c.code} → {ref} (매뉴얼 본문 문서 없음)")
-            elif doc.metadata["equipment"] != c.equipment.value:
-                problems.append(f"{c.equipment.value}:{c.code} → {ref} (다른 설비 문서)")
-    if problems:
-        raise ValidationError("허용 절차 ID가 올바르지 않습니다: " + "; ".join(sorted(problems)))
+    # 허용 절차 ID는 같은 설비의 매뉴얼 본문(`manual:`) 문서여야 한다(spec §3.3, §3.4). 코드 표 행(`error:`)은 절차가 아니다.
+    problems = []  # 잘못된 허용 절차 ID를 모두 모아 한 번에 알린다
+    for error_code in codes:  # 에러코드마다
+        for ref in error_code.customer_procedure_ref_ids:  # 그 코드의 허용 절차 ID마다
+            where = f"{error_code.equipment.value}:{error_code.code} → {ref}"  # 오류 문구에 쓸 위치 표시
+            ref_doc = manual_docs.get(ref)  # 그 ID의 문서를 찾는다. 없으면 None
+            if ref_doc is None:  # 없는 ID면
+                problems.append(f"{where} (매뉴얼 본문 문서 없음)")
+            elif ref_doc.metadata["doc_type"] != "manual":  # 코드 표 행(error:) ID면
+                problems.append(f"{where} (매뉴얼 본문 문서 없음)")
+            elif ref_doc.metadata["equipment"] != error_code.equipment.value:  # 다른 설비 문서면
+                problems.append(f"{where} (다른 설비 문서)")
+    if problems:  # 하나라도 잘못됐으면
+        raise ValidationError("허용 절차 ID가 올바르지 않습니다: " + "; ".join(sorted(problems)))  # 기존 색인을 지우기 전에 멈춘다
 
-    # history는 case_id로 중복을 없앤다. 같은 case_id면 나중 것이 남는다(DB 정본과 같은 내용).
-    history_docs: dict[str, Document] = dict(_build_history_document(c) for c in histories)
+    history_docs: dict[str, Document] = {}  # 문서 ID → 이력 문서(history 컬렉션에 넣을 것)
+    for case in histories:  # 조치 기록이 있는 신고마다
+        doc_id, doc = _build_history_document(case)  # 이력 문서를 만든다
+        history_docs[doc_id] = doc  # 같은 case_id면 나중 것이 남는다(DB 정본과 같은 내용)
 
     # 2) 두 컬렉션을 비우고(삭제 후 다시 만들기) 새로 채운다. 원자 교체는 없다.
-    manual_store = get_store(CitationKind.MANUAL)
-    history_store = get_store(CitationKind.HISTORY)
-    try:
-        manual_store.reset_collection()
-        history_store.reset_collection()
-    except MpilotError:
-        raise
-    except Exception as e:
-        raise DependencyError(f"검색 색인을 비우지 못했습니다({type(e).__name__}).") from None
-    _write_documents(manual_store, manual_docs, "매뉴얼")
-    _write_documents(history_store, history_docs, "이력")
+    manual_store = get_store(CitationKind.MANUAL)  # manual 저장소
+    history_store = get_store(CitationKind.HISTORY)  # history 저장소
+    try:  # 컬렉션 비우기 오류만 따로 잡는다
+        manual_store.reset_collection()  # manual 컬렉션을 지우고 빈 것으로 다시 만든다
+        history_store.reset_collection()  # history 컬렉션도 같다
+    except Exception as e:  # Chroma 오류는 종류가 많아 한곳에서 잡는다
+        raise DependencyError(f"검색 색인을 비우지 못했습니다({type(e).__name__}).") from None  # 의존 오류로 바꿔 앱 시작을 멈춘다
+    _write_documents(manual_store, manual_docs, "매뉴얼")  # 코드 표 행과 매뉴얼 본문을 넣는다
+    _write_documents(history_store, history_docs, "이력")  # 확정 이력을 넣는다

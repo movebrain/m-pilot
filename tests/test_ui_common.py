@@ -126,3 +126,15 @@ def test_only_one_screen_visible(current):
     all_screens = [*common.ROLE_SCREENS[Role.CUSTOMER], *common.ROLE_SCREENS[Role.ENGINEER]]
     visible = [s for s in all_screens if common.is_screen_visible(current, s)]
     assert visible == [current]
+
+
+def test_format_answer_notice_is_hidden_by_default_and_shown_when_asked():
+    answer = Answer(
+        verdict=Verdict.ANSWERED,
+        steps=[AnswerStep(text="점검한다.", citations=[])],
+        notice="다른 설비 자료를 포함했습니다.",
+    )
+    assert "다른 설비 자료를 포함했습니다." not in common.format_answer_markdown(answer)
+    shown = common.format_answer_markdown(answer, show_notice=True)
+    assert shown.startswith("> 다른 설비 자료를 포함했습니다.")
+    assert shown.index("> 다른 설비") < shown.index("1. 점검한다.")

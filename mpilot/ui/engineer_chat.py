@@ -9,7 +9,8 @@
     - 답변의 각 단계에 출처를 보여 주고 펼치면 원문을 보여 준다.
     - 근거 부족은 조치 없이 안내만 보여 주고, AI 오류(`DependencyError`)는 고정 문구로 안내한다.
     - 첫 질문에서 신고가 '조치 중'이 되는 것은 서비스가 처리하며 이 화면은 결과만 반영한다.
-    - 완료된 건은 질문할 수 없다('이미 완료'). 완료 후 채팅·재개는 범위 밖이다.
+    - 완료된 건은 읽기 전용이다. 질문 입력·[질문 보내기]·[조치 결과 작성]을 숨기고 대화 기록과 조치 결과만 보인다.
+      완료 후 채팅·재개는 범위 밖이다.
     - 질문 전송 중에는 버튼을 비활성화한다.
 
 화면 전환: 대화 → 이력 저장(조치 결과 작성) / 대시보드(뒤로).
@@ -31,10 +32,10 @@ QUESTION_MAX_LENGTH = service.MAX_QUESTION_LENGTH
 """질문 입력의 최대 글자 수(서비스 검증과 같다)."""
 
 EMPTY_CHAT_NOTICE = "아직 대화가 없습니다. 첫 질문을 보내면 신고가 '조치 중'이 됩니다."
-"""대화가 없을 때 보이는 문구."""
+"""진행 중인 건에 대화가 없을 때 보이는 문구."""
 
-COMPLETED_NOTICE = "조치 완료된 건이라 더 질문할 수 없습니다."
-"""완료된 건에서 질문 입력 대신 보이는 문구."""
+COMPLETED_NO_CHAT_NOTICE = "AI 대화 없이 완료된 건입니다."
+"""완료된 건에 대화가 없을 때 보이는 문구(시드 이력 포함). 더 질문할 수 없으므로 질문 안내를 하지 않는다."""
 
 
 def case_summary_markdown(detail: CaseDetail) -> str:
@@ -56,22 +57,39 @@ def case_summary_markdown(detail: CaseDetail) -> str:
     ])
 
 
-def chat_markdown(turns: list[ChatTurn]) -> str:
+def chat_markdown(turns: list[ChatTurn], completed: bool = False) -> str:
     """대화 목록을 화면용 Markdown으로 만든다. 답변은 `common.format_answer_markdown` 표기를 쓴다.
 
     Args:
         turns: 오래된 순 대화 목록.
+        completed: 완료된 건이면 `True`. 대화가 없을 때 보일 문구만 달라진다.
 
     Returns:
-        str: 질문·답변을 차례로 담은 Markdown. 대화가 없으면 `EMPTY_CHAT_NOTICE`.
+        str: 질문·답변을 차례로 담은 Markdown. 대화가 없으면 완료 건은 `COMPLETED_NO_CHAT_NOTICE`,
+            진행 중인 건은 `EMPTY_CHAT_NOTICE`.
     """
     if not turns:
-        return EMPTY_CHAT_NOTICE
+        return COMPLETED_NO_CHAT_NOTICE if completed else EMPTY_CHAT_NOTICE
     blocks = [
-        f"**Q{no}.** {turn.question}\n\n{common.format_answer_markdown(turn.answer)}"
+        f"**Q{no}.** {turn.question}\n\n{common.format_answer_markdown(turn.answer, show_notice=True)}"
         for no, turn in enumerate(turns, start=1)
     ]
     return "\n\n---\n\n".join(blocks)
+
+
+def resolution_markdown(detail: CaseDetail) -> str:
+    """확정된 조치 결과를 화면용 Markdown으로 만든다. 엔지니어 화면이라 원인도 보인다.
+
+    Args:
+        detail: 신고 상세.
+
+    Returns:
+        str: 원인·조치 내용·결과를 담은 Markdown. 조치 결과가 없으면 빈 문자열.
+    """
+    record = detail.resolution
+    if record is None:
+        return ""
+    return f"### 조치 결과\n\n**원인** {record.cause}\n\n**조치 내용** {record.action}\n\n**결과** {record.result}"
 
 
 def citations_of(turns: list[ChatTurn]) -> list[Citation]:
@@ -119,6 +137,7 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
         gr.Markdown("## 장애 분석 대화")
         summary = gr.Markdown()
         chat = gr.Markdown()
+        resolution = gr.Markdown()  # 완료된 건의 조치 결과
         source_pick = gr.Dropdown(choices=[], value=None, label="출처를 고르면 원문을 봅니다", visible=False)
         with gr.Accordion("출처 원문", open=True, visible=False) as source_box:
             source_text = gr.Textbox(show_label=False, lines=6, interactive=False)
@@ -135,14 +154,15 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
         found = citations_of(turns)
         choices = [(common.citation_label(c), str(i)) for i, c in enumerate(found)]
         open_ = can_ask(detail)
+        # 완료된 건은 읽기 전용: 질문 입력과 두 버튼을 숨긴다. send_btn은 잠금 해제 때문에 맨 끝에 둔다.
         return (
-            case_summary_markdown(detail), chat_markdown(turns),
+            case_summary_markdown(detail), chat_markdown(turns, completed=not open_), resolution_markdown(detail),
             gr.Dropdown(choices=choices, value=None, visible=bool(found)), gr.Accordion(visible=False), found,
-            gr.Textbox(interactive=open_, placeholder=None if open_ else COMPLETED_NOTICE),
-            gr.Button(interactive=open_),
+            gr.Textbox(visible=open_, interactive=open_), gr.Button(visible=open_),
+            gr.Button(visible=open_, interactive=open_),
         )
 
-    refresh_outputs = [summary, chat, source_pick, source_box, citations, question, send_btn]
+    refresh_outputs = [summary, chat, resolution, source_pick, source_box, citations, question, resolve_btn, send_btn]
 
     def on_screen_change(current: str, selected: str | None):
         # 이 화면에 들어올 때마다 고른 신고를 다시 읽는다.
@@ -155,7 +175,7 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
             return (gr.skip(),) * (len(refresh_outputs) + 1) + (common.SCREEN_ENGINEER_LIST,)
         except Exception as e:  # 화면에는 고정 문구만 보인다
             gr.Warning(common.error_message(e))
-            return (gr.Column(visible=True), "", "") + (gr.skip(),) * (len(refresh_outputs) - 2) + (gr.skip(),)
+            return (gr.Column(visible=True), "", "", "") + (gr.skip(),) * (len(refresh_outputs) - 3) + (gr.skip(),)
 
     def on_send(selected: str | None, text: str | None):
         # 질문을 보내고 성공하면 입력을 비운다. 실패하면 질문을 남겨 다시 보낼 수 있게 한다.

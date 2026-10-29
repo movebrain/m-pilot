@@ -53,12 +53,15 @@ def fakes(monkeypatch):
     fake = SimpleNamespace(
         # 엔지니어 답변
         enough=True,  # 근거가 충분한가
+        enough_seq=None,  # 값이 있으면 호출마다 하나씩 꺼내 쓴다(1차·폴백 결과를 따로 정할 때)
         check_ok=True,  # 인용 검증을 통과하는가
         search_error=None,  # 검색 장애로 던질 예외
         generate_error=None,  # 생성 장애로 던질 예외
         generated=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
         searches=[],  # 검색 호출 기록
         generate_calls=0,
+        cross_flags=[],  # 생성 호출마다 넘긴 cross_equipment
+        allow_flags=[],  # 인용 검증 호출마다 넘긴 allow_other_equipment
         check_calls=0,
         # 고객 안내
         procedures=["procedure-hit"],  # 허용 절차 (비우면 절차 없음)
@@ -81,14 +84,19 @@ def fakes(monkeypatch):
         fake.searches.append(("history", equipment, query, k))
         return ["history-hit"]
 
-    def generate_engineer_answer(context, hits, request):
+    def has_enough_evidence(hits, threshold):
+        return fake.enough_seq.pop(0) if fake.enough_seq else fake.enough
+
+    def generate_engineer_answer(context, hits, request, cross_equipment=False):
         fake.generate_calls += 1
+        fake.cross_flags.append(cross_equipment)
         if fake.generate_error:
             raise fake.generate_error
         return fake.generated
 
-    def passes_answer_check(answer, hits, equipment):
+    def passes_answer_check(answer, hits, equipment, allow_other_equipment=False):
         fake.check_calls += 1
+        fake.allow_flags.append(allow_other_equipment)
         return fake.check_ok
 
     def fetch_customer_procedures(error_code):
@@ -109,7 +117,7 @@ def fakes(monkeypatch):
 
     monkeypatch.setattr(pipeline.retriever, "search_manual", search_manual)
     monkeypatch.setattr(pipeline.retriever, "search_history", search_history)
-    monkeypatch.setattr(pipeline.retriever, "has_enough_evidence", lambda hits, threshold: fake.enough)
+    monkeypatch.setattr(pipeline.retriever, "has_enough_evidence", has_enough_evidence)
     monkeypatch.setattr(pipeline.retriever, "fetch_customer_procedures", fetch_customer_procedures)
     monkeypatch.setattr(pipeline.generator, "generate_engineer_answer", generate_engineer_answer)
     monkeypatch.setattr(pipeline.generator, "passes_answer_check", passes_answer_check)
@@ -237,6 +245,63 @@ def test_생성_장애는_DependencyError_그대로_올라간다(fakes):
     fakes.generate_error = DependencyError("모델 장애")
     with pytest.raises(DependencyError, match="모델 장애"):
         ask("위치가 어긋나요")
+
+
+# --- 엔지니어 답변: 다른 설비 폴백 -------------------------------------
+QUESTION = "SRM 포트에서 정위치 정지 실패 원인?"
+
+
+def test_1차_근거가_충분하면_폴백하지_않는다(fakes):
+    answer = ask(QUESTION, equipment="AGV")
+    assert answer is fakes.generated
+    assert fakes.cross_flags == [False]
+    assert fakes.allow_flags == [False]
+    assert [s[1] for s in fakes.searches] == ["AGV", "AGV"]
+
+
+def test_1차_근거가_부족하면_필터_없이_질문_원문으로_다시_찾는다(fakes):
+    fakes.enough_seq = [False, True]
+    ask(QUESTION, equipment="AGV")
+    first_query = f"S-104 주행 위치 편차 {QUESTION}"  # 1차는 신고 코드·이름을 붙이고, 폴백은 원문만 쓴다
+    assert fakes.searches == [
+        ("manual", "AGV", first_query, 3), ("history", "AGV", first_query, 3),
+        ("manual", None, QUESTION, 3), ("history", None, QUESTION, 3),
+    ]
+
+
+def test_폴백_근거로_답하면_다른_설비_안내를_붙이고_인용_검증은_다른_설비를_허용한다(fakes):
+    fakes.enough_seq = [False, True]
+    fakes.generated = Answer(verdict=Verdict.ANSWERED, steps=[AnswerStep(text="조치", citations=[])], notice=None)
+    answer = ask(QUESTION, equipment="AGV")
+    assert answer.verdict == Verdict.ANSWERED
+    assert answer.steps == fakes.generated.steps
+    assert answer.notice == pipeline.CROSS_EQUIPMENT_NOTICE
+    assert fakes.cross_flags == [True]
+    assert fakes.allow_flags == [True]
+
+
+def test_폴백에서도_근거가_부족하면_보류하고_생성은_부르지_않는다(fakes):
+    fakes.enough_seq = [False, False]
+    answer = ask(QUESTION, equipment="AGV")
+    assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
+    assert answer.steps == []
+    assert len(fakes.searches) == 4
+    assert fakes.generate_calls == 0
+
+
+def test_폴백에서_생성기가_보류를_돌려주면_안내를_덧붙이지_않고_그대로_돌려준다(fakes):
+    fakes.enough_seq = [False, True]
+    hold = Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="보류")
+    fakes.generated = hold
+    assert ask(QUESTION, equipment="AGV") is hold
+    assert fakes.check_calls == 0
+
+
+def test_폴백에서_인용_검증에_실패하면_DependencyError(fakes):
+    fakes.enough_seq = [False, True]
+    fakes.check_ok = False
+    with pytest.raises(DependencyError):
+        ask(QUESTION, equipment="AGV")
 
 
 # --- 고객 안내: 절차 조회·생성·검증 ------------------------------------

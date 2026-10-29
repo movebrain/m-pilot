@@ -37,11 +37,12 @@ if TYPE_CHECKING:
     from langchain_core.documents import Document
 
 
-def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
+def search_manual(equipment: Equipment | None, query: str, k: int) -> list[SearchHit]:
     """설비 필터로 매뉴얼 근거를 검색한다.
 
     Args:
-        equipment: 검색 대상 설비. 이 설비의 문서만 찾는다.
+        equipment: 검색 대상 설비. 이 설비의 문서만 찾는다. `None`이면 필터 없이 4종 전체에서 찾는다
+            (신고 설비 자료만으로 근거가 부족할 때 pipeline이 쓰는 폴백 검색).
         query: 검색 질의 문장.
         k: 가져올 상위 건수.
 
@@ -56,11 +57,12 @@ def search_manual(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
     return _search_by_equipment(CitationKind.MANUAL, equipment, query, k)
 
 
-def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
+def search_history(equipment: Equipment | None, query: str, k: int) -> list[SearchHit]:
     """설비 필터로 확정 이력 근거를 검색한다.
 
     Args:
-        equipment: 검색 대상 설비. 이 설비의 이력만 찾는다.
+        equipment: 검색 대상 설비. 이 설비의 이력만 찾는다. `None`이면 필터 없이 4종 전체에서 찾는다
+            (신고 설비 자료만으로 근거가 부족할 때 pipeline이 쓰는 폴백 검색).
         query: 검색 질의 문장.
         k: 가져올 상위 건수.
 
@@ -75,18 +77,19 @@ def search_history(equipment: Equipment, query: str, k: int) -> list[SearchHit]:
 
 
 def _search_by_equipment(
-    kind: CitationKind, equipment: Equipment, query: str, k: int
+    kind: CitationKind, equipment: Equipment | None, query: str, k: int
 ) -> list[SearchHit]:
     """설비 필터를 건 유사도 검색의 공통부. `search_manual`과 `search_history`가 쓴다.
 
     Args:
         kind: 검색할 컬렉션. `CitationKind.MANUAL` 또는 `CitationKind.HISTORY`.
         equipment: 검색 대상 설비. 메타데이터 `equipment`로 걸러 이 설비의 문서만 찾는다.
+            `None`이면 거르지 않는다.
         query: 검색 질의 문장. 공백만 있으면 안 된다.
         k: 가져올 상위 건수. 1 이상이어야 한다.
 
     Returns:
-        list[SearchHit]: 필터에 맞는 문서를 `distance` 오름차순으로 정렬한 근거. 없으면 빈 목록이다.
+        list[SearchHit]: 필터에 맞는 문서(필터가 없으면 전체)를 `distance` 오름차순으로 정렬한 근거. 없으면 빈 목록이다.
 
     Raises:
         ValidationError: 질의가 비었거나 공백뿐이거나 `k`가 1보다 작을 때. `get_store`가 낸 것은 그대로 올린다.
@@ -100,7 +103,7 @@ def _search_by_equipment(
     store = vectordb.get_store(kind)  # get_store의 오류는 계약된 예외라 변환하지 않는다
     try:
         scored = store.similarity_search_with_score(
-            query, k=k, filter={"equipment": equipment.value}
+            query, k=k, filter={"equipment": equipment.value} if equipment else None
         )
         scored = sorted(scored, key=lambda pair: pair[1])  # 거리가 None이면 여기서 TypeError
     except Exception as e:

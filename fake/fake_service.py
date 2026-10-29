@@ -391,7 +391,12 @@ def _add_sample_reported_cases(store: _Store) -> None:
     question = f"{_MOCK} 같은 증상의 과거 조치가 있나요?"
     _add_chat_turn(store, in_progress, question, _fake_engineer_answer(store, in_progress, question), now)
 
-    # 0006: 조치 결과를 넣어 완료로 만듦
+    # 0006: 대화 두 턴을 넣은 뒤 조치 결과를 넣어 완료로 만듦(완료 건의 대화 기록 확인용)
+    for minutes, question in [(10, f"{_MOCK} 이 에러의 점검 순서를 알려 주세요."),
+                              (20, f"{_MOCK} 같은 증상의 과거 조치가 있나요?")]:
+        case = store.cases["SC-mock0006"]
+        answer = _fake_engineer_answer(store, case, question)
+        _add_chat_turn(store, case, question, answer, case.created_at + timedelta(minutes=minutes))
     done = store.cases["SC-mock0006"]
     store.resolutions[done.case_id] = Resolution(
         cause=f"{_MOCK} 내부 원인(고객 비공개)",
