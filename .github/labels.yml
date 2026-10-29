@@ -37,3 +37,19 @@
 - name: 계약 변경
   color: B60205
   description: 모듈 간 계약(spec.md §2.3·§2.4, mpilot/ 시그니처)이 바뀐 PR. 영향받는 파트 담당이 확인
+
+- name: develop 반영
+  color: 3ffa83
+  description: develop에 머지됨, main 릴리스 때 폐쇄
+
+- name: DB
+  color: 4576fe
+  description: DB 파트(mpilot/db, 스키마·색인) 작업
+
+- name: RAG
+  color: 7f08ac
+  description: RAG 파트(mpilot/rag, 검색·생성·검증) 작업
+
+- name: UI
+  color: c3d958
+  description: UI 파트(Gradio 화면, mpilot/ui) 작업

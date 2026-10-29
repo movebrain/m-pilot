@@ -104,7 +104,6 @@
 │   ├── config.py                      # [공통] 앱 설정 로드·검증
 │   ├── models.py                      # [공통] 업무 데이터 정의와 순수 업무 규칙
 │   ├── service.py                     # [UI] 화면과 DB·RAG를 잇는 유즈케이즈(접수·질문·완료 등)
-│   ├── fake_service.py                # [UI] --fake 실행용 가짜 service(원자료 CSV + 메모리). service와 같은 공개 함수
 │   ├── db/                            # [DB]
 │   │   ├── parser.py                  # 매뉴얼 PDF를 출처가 붙은 검색 단위로 분해
 │   │   ├── schemas.py                 # 관계형 DB 구조·연결 설정 정의
@@ -122,6 +121,11 @@
 │       ├── engineer_dashboard.py      # 엔지니어 대시보드
 │       ├── engineer_chat.py           # 장애 분석 대화
 │       └── engineer_resolution.py     # 조치 이력 저장
+├── fake/                              # [UI] 수동 테스트·시연용 가짜 구현. 사용법·재현 절차는 fake/README.md
+│   ├── fake_service.py                # --fake 실행용 가짜 service(원자료 CSV + 메모리). service와 같은 공개 함수
+│   ├── fake_db.py                     # 가짜 rdb·vectordb·parser(메모리 + 진짜 Chroma). service·rag는 진짜 코드로 돈다
+│   ├── run.py                         # 가짜 DB 위에서 고객·엔지니어 앱 실행(`python -m fake.run`)
+│   └── test_*.py                      # 위 가짜들과 실행 진입점의 테스트
 ├── scripts/
 │   ├── init_db.py                     # [DB] DB 초기화·초기 자료 적재 실행
 │   └── evaluate.py                    # [RAG] RAG 품질 평가 실행·기록
@@ -188,7 +192,7 @@
 | ------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | ui/customer_dashboard     | `build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`     | 고객 본인의 신고 목록을 최신순·상태별로 보여 준다                                | —                                                                  |
 | ui/customer_report_form   | `build_customer_report_form_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`   | 설비·에러코드·증상 메모를 입력받아 신고를 제출한다                               | —                                                                  |
-| ui/customer_report_detail | `build_customer_report_detail_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None` | 신고의 진행 상태와 셀프 가이드 또는 조치 결과를 보여 주고 출처 원문을 펼친다     | —                                                                  |
+| ui/customer_report_detail | `build_customer_report_detail_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None` | 신고의 진행 상태와 셀프 가이드 박스 또는 조치 결과를 보여 준다(출처 원문은 펼치지 않는다) | —                                                                  |
 | ui/engineer_dashboard     | `build_engineer_dashboard_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`     | 시드 이력을 포함한 전체 신고를 상태별로 보여 주고 대응할 건을 선택받는다         | —                                                                  |
 | ui/engineer_chat          | `build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`          | 신고 정보와 대화를 보여 주고 질문 전송·출처 원문 확인을 처리한다                 | —                                                                  |
 | ui/engineer_resolution    | `build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None`    | 원인·실제 조치·결과를 입력받아 조치 완료로 등록한다                              | —                                                                  |
@@ -212,7 +216,7 @@
 | ----------------- | --------------------------------------------------------------------------------- |
 | 고객 신고 목록    | `list_customer_cases`                                                             |
 | 고객 신고 작성    | `list_error_codes`, `submit_case`                                                 |
-| 고객 신고 상세    | `get_customer_case`, `get_citation_text`                                          |
+| 고객 신고 상세    | `get_customer_case`                                                               |
 | 엔지니어 대시보드 | `list_engineer_cases`                                                             |
 | 장애 분석 대화    | `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` |
 | 이력 저장         | `get_engineer_case`, `confirm_resolution`                                         |
@@ -317,9 +321,12 @@ stateDiagram-v2
 
 ```text
 app_customer.py, app_engineer.py ──→ app
-app.py ──→ ui/*, service, fake_service, config, models, db/rdb, db/vectordb, rag/generator
+app.py ──→ ui/*, service, fake/fake_service, config, models, db/rdb, db/vectordb, rag/generator
 service ──→ db/parser, db/rdb, db/vectordb, rag/pipeline, config, models
-fake_service ──→ service(바꿔 끼울 대상), config, models (app의 --fake만 install을 부른다)
+fake/fake_service ──→ service(바꿔 끼울 대상), config, models (app의 --fake만 install을 부른다)
+fake/fake_db ──→ fake/fake_service(CSV 로더·조회 도우미), db/parser, db/rdb, db/vectordb(바꿔 끼울 대상), models (fake/run만 install을 부른다)
+fake/run ──→ app, fake/fake_db, db/vectordb, rag/generator
+mpilot/* ──✗ fake/* (운영 코드는 fake를 import하지 않는다)
 rag/pipeline ──→ rag/retriever, rag/generator, models
 rag/retriever ──→ db/vectordb, models
 db/rdb ──→ db/schemas, models
