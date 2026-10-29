@@ -201,6 +201,7 @@ python app_engineer.py                  # 엔지니어 앱 http://127.0.0.1:7861
 python app_customer.py --fake           # DB·모델 없이 가짜 데이터로 화면만 확인
 python -m fake.run                      # 가짜 DB 위에서 고객·엔지니어 앱 실행 (fake/README.md 참고)
 python -m pytest                        # 전체 테스트
+python -m pytest -m "not db and not pdf"  # DB·실제 PDF 읽기를 뺀 빠른 테스트
 ```
 
 - `init_db`는 **실행할 때마다 DB를 비우고 다시 만듭니다.** 시연 중에 다시 실행하면 새로 확정한 이력이 사라지니, 시연 전에 한 번만 실행하세요.

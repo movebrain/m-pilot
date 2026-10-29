@@ -49,7 +49,7 @@
 
 - 함수·변수명은 영어 `snake_case`, 주석·docstring은 한글이다. 식별자는 spec의 이름을 그대로 쓴다. 함수마다 받는 것과 돌려주는 것을 docstring에 쓴다(`Args`/`Returns`/`Raises`).
 - AI가 만든 코드는 커밋하는 사람이 설명할 수 있을 때만 커밋한다. 커밋 전에 무엇을 왜 바꿨는지 사용자에게 짧게 설명한다.
-- 작성한 코드에는 그 코드의 테스트 코드를 함께 작성한다. PR을 올리기 전에 로컬에서 `python -m pytest`를 돌려 통과를 확인한다(GitHub Actions `CI`가 같은 검사를 MySQL 컨테이너와 함께 돌린다).
+- 작성한 코드에는 그 코드의 테스트 코드를 함께 작성한다. PR을 올리기 전에 로컬에서 `python -m pytest`를 돌려 통과를 확인한다(GitHub Actions `CI`가 같은 검사를 `unit`·`db`(MySQL 컨테이너)·`pdf` 세 job으로 나눠 돌린다. 마커는 `rdb_db`·PDF fixture를 쓰면 자동으로 붙는다. PDF 읽기는 PR이 파서·매뉴얼 PDF 등을 바꿨을 때만 돈다).
 - `git push --force`, `git reset --hard`, 브랜치 삭제처럼 되돌리기 어려운 명령은 사용자에게 먼저 묻는다.
 
 ## 4. 사람이 정한다 (AI는 선택지와 근거만 정리)
@@ -88,6 +88,7 @@ python app_customer.py         # 고객 앱(7860). --fake면 DB·RAG 없이 가�
 python app_engineer.py         # 엔지니어 앱(7861). --fake 동일
 python -m fake.run --offline --both   # 가짜 DB 위에서 두 앱(7860·7861). service·rag는 진짜 코드. 절차는 fake/README.md
 python -m pytest               # 테스트(그냥 pytest는 쓰지 않는다)
+python -m pytest -m "not db and not pdf"  # DB·실제 PDF 읽기를 뺀 빠른 테스트(CI의 unit job)
 python -m scripts.evaluate     # RAG 평가(수동, CI 아님)
 ```
 
