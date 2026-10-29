@@ -38,7 +38,6 @@ from mpilot.models import (
     Source,
     ValidationError,
     Verdict,
-    has_customer_procedure,
     is_self_guide_candidate,
     raise_if_case_completed,
 )
@@ -327,8 +326,6 @@ def _load_error_codes() -> dict[tuple[Equipment, str], ErrorCode]:
         equipment = Equipment(row["equipment"])
         action_owner = ActionOwner(row["action_owner"])
         manual_id = f"mock-{equipment.name.lower()}"  # 예: mock-agv
-        # 고객사 조치 코드에만 가짜 허용 절차 ID를 붙여 셀프 가이드 경로를 열어 둠
-        refs = [f"manual:{manual_id}:1:1"] if action_owner == ActionOwner.CUSTOMER else []
         codes[(equipment, row["code"])] = ErrorCode(
             equipment=equipment,
             code=row["code"],
@@ -340,8 +337,6 @@ def _load_error_codes() -> dict[tuple[Equipment, str], ErrorCode]:
             manual_id=manual_id,
             page=1,
             section=_MOCK,
-            customer_procedure_ref_ids=refs,
-            required_safety_rules=[],
         )
     return codes
 
@@ -419,8 +414,7 @@ def _new_reported_case(case_id: str, error_code: ErrorCode, memo: str | None, cr
     메모에 [held]·[fail]을 넣으면 가이드 보류·생성 실패로 접수된다.
     """
     route, guide_failure, answer = Route.SUPPORT, None, None  # 기본은 엔지니어 처리
-    # 허용 절차가 없는 코드의 guide_failure 값은 spec에서 아직 정해지지 않아 NULL로 둠
-    if is_self_guide_candidate(error_code) and has_customer_procedure(error_code):
+    if is_self_guide_candidate(error_code):
         memo_text = memo or ""
         if "[held]" in memo_text:
             guide_failure = GuideFailure.HELD
@@ -445,10 +439,13 @@ def _new_reported_case(case_id: str, error_code: ErrorCode, memo: str | None, cr
 
 
 def _fake_customer_guidance(error_code: ErrorCode) -> Answer:
-    """허용 절차 ID만 인용하는 가짜 셀프 가이드를 만든다."""
+    """코드 표 행(`error:<설비>:<코드>`)을 인용하는 가짜 셀프 가이드를 만든다."""
     citations = [
-        Citation(kind=CitationKind.MANUAL, ref_id=ref, locator=f"{_MOCK} {error_code.manual_id} 1쪽")
-        for ref in error_code.customer_procedure_ref_ids
+        Citation(
+            kind=CitationKind.MANUAL,
+            ref_id=f"error:{error_code.equipment}:{error_code.code}",
+            locator=f"{_MOCK} {error_code.manual_id} 1쪽",
+        )
     ]
     return Answer(
         verdict=Verdict.ANSWERED,

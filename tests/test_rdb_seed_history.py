@@ -7,7 +7,6 @@ DB가 필요한 테스트는 실제 MySQL 테스트 DB를 쓴다(`rdb_db` fixtur
 from __future__ import annotations
 
 import csv
-import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -53,8 +52,6 @@ def code_row(eq: Equipment, error_code: str) -> dict:
         "manual_id": f"{eq.name.lower()}_manual",
         "page": "12",
         "section": "11.1",
-        "customer_procedure_ref_ids": json.dumps([f"manual:{eq.name.lower()}_manual:12:1"]),
-        "required_safety_rules": json.dumps(["전원을 차단한다"], ensure_ascii=False),
     }
 
 

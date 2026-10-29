@@ -14,7 +14,6 @@
     _now_for_db()            지금 시각을 DATETIME 저장용 값으로
     _to_db_time(value)       시간대가 있는 시각을 DATETIME 저장용 값으로(시드 적재 등)
     _from_db_time(value)     DATETIME에서 꺼낸 값에 UTC 시간대 붙이기
-    _to_json_list(values)    문자열 목록을 JSON 배열 문자열로
     _row_to_error_code(row)  error_codes 행 → ErrorCode
     _row_to_service_case(row) service_cases 행 → ServiceCase
     _row_to_resolution(row)  resolutions 행 → Resolution
@@ -27,7 +26,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -103,18 +101,6 @@ def _from_db_time(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=UTC)
 
 
-def _to_json_list(values: list[str]) -> str:
-    """문자열 목록을 JSON 배열 문자열로 바꾼다(한글은 그대로 둔다).
-
-    Args:
-        values: 저장할 문자열 목록(예: `customer_procedure_ref_ids`).
-
-    Returns:
-        str: JSON 배열 문자열. 빈 목록이면 `[]`.
-    """
-    return json.dumps(values, ensure_ascii=False)
-
-
 def _row_to_error_code(row) -> ErrorCode:
     """`error_codes` 한 행을 `ErrorCode`로 바꾼다.
 
@@ -122,7 +108,7 @@ def _row_to_error_code(row) -> ErrorCode:
         row: `select(error_codes)` 결과 행.
 
     Returns:
-        ErrorCode: 목록 열 2개를 JSON에서 되돌린 에러코드 표 한 행.
+        ErrorCode: 에러코드 표 한 행.
 
     Raises:
         DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
@@ -139,10 +125,8 @@ def _row_to_error_code(row) -> ErrorCode:
             manual_id=row.manual_id,
             page=row.page,
             section=row.section,
-            customer_procedure_ref_ids=json.loads(row.customer_procedure_ref_ids),
-            required_safety_rules=json.loads(row.required_safety_rules),
         )
-    except ValueError:  # json 오류와 pydantic 검증 오류는 모두 ValueError다
+    except ValueError:  # pydantic 검증 오류는 ValueError다
         raise DependencyError(
             f"저장된 에러코드의 형식이 올바르지 않습니다: {row.equipment}:{row.code}"
         ) from None

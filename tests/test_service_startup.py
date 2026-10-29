@@ -16,7 +16,6 @@ from mpilot.models import (
     ErrorCode,
     SearchSettings,
     Severity,
-    ValidationError,
 )
 
 
@@ -41,11 +40,11 @@ def _chunk(page: int, chunk_no: int) -> Chunk:
     )
 
 
-def _code(ref_ids: list[str]) -> ErrorCode:
+def _code() -> ErrorCode:
     return ErrorCode(
         equipment=Equipment.AGV, code="A-120", name="배터리 저전압", severity=Severity.LOW,
         action_owner=ActionOwner.CUSTOMER, cause="충전 부족", action="충전",
-        manual_id="agv_rev1_1", page=8, section="2.4 배터리", customer_procedure_ref_ids=ref_ids,
+        manual_id="agv_rev1_1", page=8, section="2.4 배터리",
     )
 
 
@@ -59,7 +58,7 @@ def configured(monkeypatch):
 def backend(monkeypatch):
     """DB·파서·저장소를 가짜로 바꾸고 호출 기록을 돌려준다."""
     calls: dict = {}
-    codes_by_equipment = {Equipment.AGV: [_code(["manual:agv_rev1_1:8:2"])]}
+    codes_by_equipment = {Equipment.AGV: [_code()]}
 
     def parse_manuals(directory):
         calls["dir"] = directory
@@ -90,14 +89,6 @@ def test_prepare_search_index_rebuilds_with_all_sources(configured, backend):
     assert [c.chunk_no for c in chunks] == [2]
     assert [c.code for c in codes] == ["A-120"]
     assert histories == []
-
-
-def test_prepare_search_index_rejects_unknown_procedure_id(configured, backend):
-    backend["codes"][Equipment.AGV] = [_code(["manual:agv_rev1_1:99:1"])]
-
-    with pytest.raises(ValidationError):
-        service.prepare_search_index()
-    assert "rebuild" not in backend  # 검증에 실패하면 색인을 만들지 않는다
 
 
 def test_login_removed():

@@ -136,7 +136,7 @@ def test_get_document_after_rebuild_search_index(connected):
     code = ErrorCode(
         equipment=Equipment.SRM, code="S101", name="X축 위치 편차 초과", severity="중",
         action_owner="고객사 조치", cause="원인", action="조치", manual_id="srm_manual", page=12,
-        section="11.1", customer_procedure_ref_ids=[MANUAL_ID], required_safety_rules=[],
+        section="11.1",
     )
     chunk = Chunk(manual_id="srm_manual", equipment=Equipment.SRM, page=12, section="11.1",
                   chunk_no=1, version="1.2", text="반사판을 마른 천으로 닦는다.")

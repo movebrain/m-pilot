@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import json
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +27,7 @@ from sqlalchemy import create_engine, insert, select
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 
 from mpilot.db.rdb import _common
-from mpilot.db.rdb._common import _get_engine, _row_to_error_code, _to_db_time, _to_json_list
+from mpilot.db.rdb._common import _get_engine, _row_to_error_code, _to_db_time
 from mpilot.db.schemas import error_codes, metadata, resolutions, service_cases
 from mpilot.models import (
     CaseInput,
@@ -106,7 +105,8 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
     """에러코드 CSV를 검증해 적재한다.
 
     필수값, `(equipment, code)` 중복, 설비 4종, 출처(`manual_id`, `page`, `section`)를 검증한다.
-    두 목록 열은 JSON 배열 문자열이며 비어 있으면 `[]`다. 틀린 값은 고치지 않고 적재를 멈춘다.
+    머리글에 DB 컬럼이 모두 있어야 하며, 그 밖의 열(사람 검수 참고용 `required_safety_rules` 등)은 읽지 않는다.
+    틀린 값은 고치지 않고 적재를 멈춘다.
 
     Args:
         path: 에러코드 CSV 경로(`AppConfig.codes_path`, `data/errorcodes.csv`).
@@ -127,8 +127,8 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
         raise DependencyError(f"파일을 읽을 수 없습니다({type(e).__name__}): {path}") from None
     except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
         raise ValidationError(f"{Path(path).name}: CSV 형식이 올바르지 않습니다: {e}") from None
-    if set(df.columns) != set(columns) or df.empty:
-        raise ValidationError(f"{Path(path).name}: 머리글이 {list(columns)}와 다르거나 데이터가 없습니다.")
+    if not set(columns) <= set(df.columns) or df.empty:
+        raise ValidationError(f"{Path(path).name}: 머리글에 {list(columns)}가 모두 있어야 하며 데이터도 있어야 합니다.")
     rows = df.to_dict("records")
 
     codes, seen = [], set()
@@ -142,28 +142,16 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
             if limit and len(row[c]) > limit:
                 raise ValidationError(f"{no}번째 행: {c}는 {limit}자 이하여야 합니다.")
         try:
-            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. 목록 열 2개는 JSON 배열 문자열이다.
-            code = ErrorCode(**{
-                **row,
-                "customer_procedure_ref_ids": json.loads(row["customer_procedure_ref_ids"]),
-                "required_safety_rules": json.loads(row["required_safety_rules"]),
-            })
-        except ValueError as e:  # JSON 오류, pydantic 오류 모두 ValueError
+            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. DB 컬럼 밖의 열은 읽지 않는다.
+            code = ErrorCode(**{c: row[c] for c in columns})
+        except ValueError as e:  # pydantic 오류는 ValueError다
             raise ValidationError(f"{no}번째 행 값이 올바르지 않습니다: {e}") from None
         if (code.equipment, code.code) in seen:
             raise ValidationError(f"{no}번째 행: (equipment, code) 중복 {code.equipment}/{code.code}")
         seen.add((code.equipment, code.code))
         codes.append(code)
 
-    # 검증을 통과한 값을 저장한다. 목록 열은 공통 도구로 JSON 문자열로 되돌린다.
-    values = [
-        {
-            **c.model_dump(mode="json"),
-            "customer_procedure_ref_ids": _to_json_list(c.customer_procedure_ref_ids),
-            "required_safety_rules": _to_json_list(c.required_safety_rules),
-        }
-        for c in codes
-    ]
+    values = [c.model_dump(mode="json") for c in codes]  # 검증을 통과한 값을 저장한다.
     try:
         with engine.begin() as conn:  # 한 트랜잭션: 실패하면 아무것도 남지 않는다
             conn.execute(insert(error_codes), values)

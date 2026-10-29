@@ -2,12 +2,11 @@
 
 역할:
     질문에 맞는 근거를 `manual`·`history` 컬렉션에서 찾아 `SearchHit`으로 돌려준다.
-    고객 신고에서는 검색하지 않고, 허용된 매뉴얼 절차 원문만 직접 조회한다.
+    고객 신고는 신고 코드의 `manual`만 검색한다.
 
 책임:
     - 모든 검색에 설비 필터를 건다. 다른 설비의 같은 이름 에러를 근거로 돌려주지 않는다.
-    - 엔지니어 대화는 `manual`과 `history`를 검색한다. 고객 안내는 `customer_procedure_ref_ids`의 ID로
-      `manual` 원문을 직접 조회하며 유사도 임계값을 적용하지 않는다. `history`는 고객 안내에 쓰지 않는다.
+    - 엔지니어 대화는 `manual`과 `history`를 검색한다. 고객 안내는 `manual`만 검색하고 `history`는 쓰지 않는다.
     - `history`의 `case_id` 중복은 색인이 막는다(`history:<case_id>` ID로 upsert). 검색에서 다시 거르지 않는다.
     - 검색 결과가 근거로 충분한지 판단한다(임계값은 사람이 평가 결과를 보고 정한다).
     - 답변을 만들거나 DB에 쓰지 않는다.
@@ -27,8 +26,6 @@ from mpilot.models import (
     CitationKind,
     DependencyError,
     Equipment,
-    ErrorCode,
-    NotFoundError,
     SearchHit,
     ValidationError,
 )
@@ -111,33 +108,6 @@ def _search_by_equipment(
     return [_to_hit(doc, distance) for doc, distance in scored]
 
 
-def fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]:
-    """고객이 수행할 매뉴얼 절차 원문을 가져온다.
-
-    `error_code.customer_procedure_ref_ids`에 적힌 ID의 `manual` 원문만 직접 조회한다. 검색하지 않으며
-    유사도 임계값도 적용하지 않는다.
-
-    Args:
-        error_code: 신고한 에러코드 표의 행. 허용 절차 ID 목록을 읽는다.
-
-    Returns:
-        list[SearchHit]: 허용 절차 원문. 직접 조회한 근거이므로 `distance`는 `None`이다.
-            허용 ID가 비어 있으면 빈 목록.
-
-    Raises:
-        DependencyError: 저장소 조회에 실패했을 때(허용 ID의 원문이 없는 경우 포함).
-    """
-    hits = []
-    for ref_id in error_code.customer_procedure_ref_ids:
-        try:
-            doc = vectordb.get_document(CitationKind.MANUAL, ref_id)
-        except NotFoundError as e:
-            # 허용 절차 원문이 없으면 조용히 건너뛰지 않고 오류로 알린다.
-            raise DependencyError(f"허용 절차 원문을 찾을 수 없다: {ref_id}") from e
-        hits.append(_to_hit(doc, None))
-    return hits
-
-
 def _to_hit(doc: Document, distance: float | None) -> SearchHit:
     """저장소 문서 한 건을 `SearchHit`으로 바꾼다.
 
@@ -147,7 +117,7 @@ def _to_hit(doc: Document, distance: float | None) -> SearchHit:
     Args:
         doc: 저장소가 돌려준 문서. `id`와 메타데이터 `equipment`를 읽고, 매뉴얼은 `manual_id`·`page`·`section`,
             이력은 `case_id`·`code`도 읽는다.
-        distance: 질의와의 벡터 거리. 직접 조회한 근거는 `None`.
+        distance: 질의와의 벡터 거리. 거리가 없으면 `None`.
 
     Returns:
         SearchHit: 변환된 근거. `code`는 코드 표 행·이력과 에러코드 절(`13.n <코드> ...`)의 매뉴얼 청크에 있고,
@@ -189,7 +159,7 @@ def has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool:
     - `hits`가 비었거나 비교 가능한 근거가 모두 `threshold`보다 멀면 부족하다.
     - `threshold`는 유한한 0 이상의 실수여야 한다. 음수·NaN·무한대는 거부한다.
     - 거리 척도(L2·cosine)에 의존하지 않고 값의 대소만 비교한다.
-    - 엔지니어 검색 결과 전용이다. 고객 직접 조회(`distance=None`)에는 쓰지 않는다.
+    - 엔지니어 답변과 고객 안내가 같은 판정과 같은 임계값을 쓴다.
 
     Args:
         hits: 검색으로 얻은 근거 목록.

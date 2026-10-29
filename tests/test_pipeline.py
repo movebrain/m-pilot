@@ -1,4 +1,4 @@
-"""pipeline 테스트: 입력 검증, 범위 밖 질문의 검색 진행, 근거 확보·생성·검증 연결, 고객 안내, 보류 답변 모양."""
+"""pipeline 테스트: 입력 검증, 범위 밖 질문의 검색 진행, 근거 확보·생성·검증 연결, 고객 안내(매뉴얼 검색), 보류 답변 모양."""
 
 from types import SimpleNamespace
 
@@ -33,7 +33,6 @@ def make_context(equipment: str = "SRM", code: str = "S-104") -> CaseContext:
         equipment=equipment, code=code, name="주행 위치 편차", severity="하",
         action_owner="고객사 조치", cause="엔코더 커넥터", action="커넥터 재체결",
         manual_id="SRM_SPEC_v1", page=41, section="9.4",
-        customer_procedure_ref_ids=[], required_safety_rules=[],
     )
     return CaseContext(error_code=error_code, memo="")
 
@@ -45,8 +44,10 @@ def ask(question: str, settings: SearchSettings | None = None, equipment: str = 
     )
 
 
-def ask_customer(equipment: str = "SRM"):
-    return pipeline.run_customer_guidance(make_context(equipment))
+def ask_customer(equipment: str = "SRM", settings: SearchSettings | None = None):
+    return pipeline.run_customer_guidance(
+        make_context(equipment), settings or SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.35)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -71,12 +72,11 @@ def fakes(monkeypatch):
         allow_flags=[],  # 인용 검증 호출마다 넘긴 allow_other_equipment
         check_calls=0,
         # 고객 안내
-        procedures=["procedure-hit"],  # 허용 절차 (비우면 절차 없음)
-        guidance_check_ok=True,  # 인용·안전 문구 검증을 통과하는가
-        fetch_error=None,  # 절차 조회 장애로 던질 예외
+        guidance_check_ok=True,  # 인용 검증을 통과하는가
         guidance_error=None,  # 안내 생성 장애로 던질 예외
         guidance=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
-        fetched=[],  # 절차 조회 기록(에러코드)
+        guidance_hits_seen=[],  # 안내 생성 호출마다 넘긴 근거
+        thresholds=[],  # 근거 충분성 판단 호출마다 넘긴 임계값
         guidance_calls=0,
         guidance_check_calls=0,
     )
@@ -92,6 +92,7 @@ def fakes(monkeypatch):
         return ["history-hit"]
 
     def has_enough_evidence(hits, threshold):
+        fake.thresholds.append(threshold)
         return fake.enough_seq.pop(0) if fake.enough_seq else fake.enough
 
     def generate_engineer_answer(context, hits, request, cross_equipment=False):
@@ -107,14 +108,9 @@ def fakes(monkeypatch):
         fake.allow_flags.append(allow_other_equipment)
         return fake.check_ok
 
-    def fetch_customer_procedures(error_code):
-        if fake.fetch_error:
-            raise fake.fetch_error
-        fake.fetched.append(error_code.code)
-        return fake.procedures
-
     def generate_customer_guidance(context, hits):
         fake.guidance_calls += 1
+        fake.guidance_hits_seen.append(hits)
         if fake.guidance_error:
             raise fake.guidance_error
         return fake.guidance
@@ -126,7 +122,6 @@ def fakes(monkeypatch):
     monkeypatch.setattr(pipeline.retriever, "search_manual", search_manual)
     monkeypatch.setattr(pipeline.retriever, "search_history", search_history)
     monkeypatch.setattr(pipeline.retriever, "has_enough_evidence", has_enough_evidence)
-    monkeypatch.setattr(pipeline.retriever, "fetch_customer_procedures", fetch_customer_procedures)
     monkeypatch.setattr(pipeline.generator, "generate_engineer_answer", generate_engineer_answer)
     monkeypatch.setattr(pipeline.generator, "passes_answer_check", passes_answer_check)
     monkeypatch.setattr(pipeline.generator, "generate_customer_guidance", generate_customer_guidance)
@@ -337,23 +332,40 @@ def test_폴백에서_인용_검증에_실패하면_DependencyError(fakes):
         ask(QUESTION, equipment="AGV")
 
 
-# --- 고객 안내: 절차 조회·생성·검증 ------------------------------------
-def test_신고한_에러코드의_허용_절차를_조회하고_검색은_하지_않는다(fakes):
+# --- 고객 안내: 매뉴얼 검색·생성·검증 ----------------------------------
+def test_신고_코드의_매뉴얼만_검색하고_폴백과_이력은_쓰지_않는다(fakes):
+    ask_customer("AGV")
+    assert [
+        (kind, equipment.value, query, k)
+        for kind, equipment, query, k in fakes.searches
+    ] == [("manual", "AGV", "S-104 주행 위치 편차", 3 * pipeline.MANUAL_FETCH_FACTOR)]
+
+
+def test_검색_건수와_임계값은_설정값을_쓴다(fakes):
+    ask_customer(settings=SearchSettings(manual_k=2, history_k=9, evidence_threshold=0.8))
+    assert fakes.searches[0][3] == 2 * pipeline.MANUAL_FETCH_FACTOR
+    assert fakes.thresholds == [0.8]
+
+
+def test_다른_코드의_매뉴얼_청크는_안내_근거에서_뺀다(fakes):
+    own = chunk_hit("manual:srm:9:1", code="S-104")
+    other = chunk_hit("manual:srm:9:2", code="S-105")
+    fakes.manual_hits = [other, own]
     ask_customer()
-    assert fakes.fetched == ["S-104"]
-    assert fakes.searches == []
+    assert fakes.guidance_hits_seen == [[own]]
 
 
-def test_허용_절차가_없으면_보류하고_생성은_부르지_않는다(fakes):
-    fakes.procedures = []
+def test_근거가_부족하면_보류하고_다시_찾지_않으며_생성은_부르지_않는다(fakes):
+    fakes.enough = False
     answer = ask_customer()
     assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
     assert answer.steps == []
     assert answer.notice
     assert fakes.guidance_calls == 0
+    assert len(fakes.searches) == 1  # 폴백 검색을 하지 않는다
 
 
-def test_허용_절차가_있으면_생성한_안내를_돌려준다(fakes):
+def test_근거가_충분하면_생성한_안내를_돌려준다(fakes):
     answer = ask_customer()
     assert answer is fakes.guidance
     assert fakes.guidance_check_calls == 1
@@ -383,11 +395,10 @@ def test_안내_보류_판정이_보류_모양이_아니면_DependencyError(fake
         ask_customer()
 
 
-def test_절차_조회_장애는_DependencyError_그대로_올라간다(fakes):
-    fakes.fetch_error = DependencyError("조회 장애")
-    with pytest.raises(DependencyError, match="조회 장애"):
+def test_안내용_검색_장애는_DependencyError_그대로_올라간다(fakes):
+    fakes.search_error = DependencyError("검색 장애")
+    with pytest.raises(DependencyError, match="검색 장애"):
         ask_customer()
-
 
 def test_안내_생성_장애는_DependencyError_그대로_올라간다(fakes):
     fakes.guidance_error = DependencyError("모델 장애")

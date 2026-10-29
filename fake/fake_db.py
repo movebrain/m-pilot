@@ -10,9 +10,8 @@
       시각은 UTC 시간대를 붙여 돌려준다. 시드 CSV의 시각은 시간대가 없어 KST로 본다.
     - `vectordb`: 바꾸지 않는다. 진짜 `connect`(메모리 Chroma)·`get_store`·`get_document`와 색인 쓰기를 그대로 쓴다.
     - `parser`: `data/manuals` PDF를 쪽 단위로 잘라 청크로 만든다. 파싱에 20초 안팎이 걸려 한 번만 한다.
-    - 에러코드 표의 `customer_procedure_ref_ids`·`required_safety_rules`는 사람이 쓰는 값이라 CSV에 없다.
-      가짜 DB가 같은 설비 매뉴얼에서 그 코드가 가장 많이 나오는 청크를 골라 `(목)` 표시와 함께 채운다.
-      배선 확인용 값이며 RAG 품질을 판단하는 근거로 쓰지 않는다.
+    - 에러코드 표의 출처(`manual_id`·`page`·`section`)는 같은 설비 매뉴얼에서 그 코드가 가장 많이 나오는 청크를
+      골라 붙인다. 배선 확인용 값이며 RAG 품질을 판단하는 근거로 쓰지 않는다.
     - `rdb.load_*_from_csv`는 `scripts.init_db` 전용이라 바꾸지 않는다. `connect`가 곧바로 시드를 올린다.
 
 의존: `fake_service`(CSV 로더·조회 도우미), `db.*`(바꿔 끼울 대상), `models`.
@@ -35,7 +34,6 @@ from langchain_core.embeddings import Embeddings
 from fake import fake_service
 from mpilot.db import parser, rdb
 from mpilot.models import (
-    ActionOwner,
     Answer,
     CaseDetail,
     CaseInput,
@@ -162,18 +160,13 @@ def parse_manuals(directory: Path) -> list[Chunk]:
     return list(_parse(Path(directory).resolve()))
 
 
-def _ref_id(chunk: Chunk) -> str:
-    """청크의 검색 문서 ID(spec §3.4)."""
-    return f"manual:{chunk.manual_id}:{chunk.page}:{chunk.chunk_no}"
-
-
 # ---------------------------------------------------------------------------
 # rdb
 # ---------------------------------------------------------------------------
 
 
 def _with_manual_sources(codes: dict[tuple[Equipment, str], ErrorCode]) -> dict[tuple[Equipment, str], ErrorCode]:
-    """같은 설비 매뉴얼에서 코드가 가장 많이 나온 청크를 출처로 붙이고, 고객사 조치 코드에는 허용 절차를 단다."""
+    """같은 설비 매뉴얼에서 코드가 가장 많이 나온 청크를 출처로 붙인다."""
     by_equipment: dict[Equipment, list[Chunk]] = {e: [] for e in Equipment}
     for chunk in _parse(_MANUALS_DIR.resolve()):
         by_equipment[chunk.equipment].append(chunk)
@@ -186,9 +179,6 @@ def _with_manual_sources(codes: dict[tuple[Equipment, str], ErrorCode]) -> dict[
             result[key] = code
             continue
         update = {"manual_id": best.manual_id, "page": best.page, "section": best.section}
-        if code.action_owner is ActionOwner.CUSTOMER:
-            update["customer_procedure_ref_ids"] = [_ref_id(best)]
-            update["required_safety_rules"] = [f"{fake_service._MOCK} 작업 전 전원 차단"]
         result[key] = code.model_copy(update=update)
     return result
 

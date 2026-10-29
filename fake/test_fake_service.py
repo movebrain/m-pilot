@@ -167,7 +167,7 @@ def test_submit_customer_code_becomes_self_guide():
     case = fake_service.get_engineer_case(case_id).service_case
     assert (case.route, case.status, case.guide_failure) == (Route.SELF_GUIDE, CaseStatus.COMPLETED, None)
     cited = {c.ref_id for s in case.guidance_answer.steps for c in s.citations}
-    assert cited <= set(code.customer_procedure_ref_ids)
+    assert cited == {f"error:{code.equipment}:{code.code}"}  # 코드 표 행을 인용한다
 
 
 def test_submit_engineer_code_goes_to_support():

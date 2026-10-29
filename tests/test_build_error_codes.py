@@ -6,7 +6,6 @@ DB와 PDF 없이 돈다. 매뉴얼 청크는 parser가 만드는 모양(캡션 +
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 
 import pytest
@@ -49,7 +48,6 @@ def test_read_manual_code_rows_takes_cells_and_source():
     assert s101["cause"] == "센서 오염"
     assert s101["action"] == "작업자: CMD-09 RESET 1회 재시도. 정비자: 센서 청소"
     assert (s101["manual_id"], s101["page"], s101["section"]) == ("HMX-SRM-TSM-001", 22, "9.2 에러 코드 일람")
-    assert s101["ref_id"] == "manual:HMX-SRM-TSM-001:22:6"  # 그 행이 들어 있는 청크 ID
     assert rows[("SRM", "S102")]["action_owner"] == "엔지니어 필요"
 
 
@@ -98,20 +96,18 @@ def manual_rows():
     return build.read_manual_code_rows([table_chunk([S101_ROW, S102_ROW])])
 
 
-def test_build_rows_links_customer_procedure_only_for_customer_action():
+def test_build_rows_follows_raw_order():
     raws = [raw(), raw("S102", "과속도 트립", "상", "엔지니어 필요")]
 
-    codes, warnings = build.build_rows(raws, manual_rows(), {})
+    codes, warnings = build.build_rows(raws, manual_rows())
 
     s101, s102 = codes
-    assert s101.customer_procedure_ref_ids == ["manual:HMX-SRM-TSM-001:22:6"]
-    assert s102.customer_procedure_ref_ids == []
-    assert s101.required_safety_rules == [] and s102.required_safety_rules == []
+    assert (s101.code, s102.code) == ("S101", "S102")
     assert warnings == []
 
 
 def test_build_rows_fills_manual_columns():
-    [code], _ = build.build_rows([raw()], manual_rows(), {})
+    [code], _ = build.build_rows([raw()], manual_rows())
 
     assert code.cause == "센서 오염"
     assert code.manual_id == "HMX-SRM-TSM-001"
@@ -121,10 +117,9 @@ def test_build_rows_fills_manual_columns():
 
 def test_build_rows_keeps_raw_values_and_warns_on_mismatch():
     # 원자료 심각도·조치 구분은 사람이 정한 값이라 매뉴얼과 달라도 고치지 않는다.
-    [code], warnings = build.build_rows([raw(severity="하", action_owner="엔지니어 필요")], manual_rows(), {})
+    [code], warnings = build.build_rows([raw(severity="하", action_owner="엔지니어 필요")], manual_rows())
 
     assert (code.severity, code.action_owner) == ("하", "엔지니어 필요")
-    assert code.customer_procedure_ref_ids == []  # 원자료 조치 구분을 따른다
     mismatch = [w for w in warnings if w.startswith("SRM/S101")]
     assert len(mismatch) == 2  # severity, action_owner
 
@@ -133,28 +128,20 @@ def test_build_rows_name_ignores_pdf_spacing():
     # PDF 추출이 "과전 류"처럼 단어 중간에 공백을 넣어도 같은 이름으로 본다.
     row = "| S101 | X축 위치 편 차 초과 | 전 모델 | 중 | 고객사 조치 | 원인 | 조치 |"
 
-    _, warnings = build.build_rows([raw()], build.read_manual_code_rows([table_chunk([row])]), {})
+    _, warnings = build.build_rows([raw()], build.read_manual_code_rows([table_chunk([row])]))
 
     assert warnings == []
 
 
 def test_build_rows_rejects_code_missing_in_manual():
     with pytest.raises(ValidationError, match="S199"):
-        build.build_rows([raw(), raw("S199")], manual_rows(), {})
+        build.build_rows([raw(), raw("S199")], manual_rows())
 
 
 def test_build_rows_warns_manual_only_code():
-    _, warnings = build.build_rows([raw()], manual_rows(), {})
+    _, warnings = build.build_rows([raw()], manual_rows())
 
     assert any("S102" in w and "원자료에 없어" in w for w in warnings)
-
-
-def test_build_rows_keeps_existing_safety_rules():
-    rules = {("SRM", "S101"): ["안전 구역 밖에서 리셋한다"]}
-
-    [code], _ = build.build_rows([raw()], manual_rows(), rules)
-
-    assert code.required_safety_rules == ["안전 구역 밖에서 리셋한다"]
 
 
 # ---------------------------------------------------------------------------
@@ -194,31 +181,31 @@ def test_read_raw_codes_rejects_wrong_header(tmp_path):
 
 
 def test_write_codes_matches_loader_format(tmp_path):
-    codes, _ = build.build_rows([raw()], manual_rows(), {})
+    codes, _ = build.build_rows([raw()], manual_rows())
     path = tmp_path / "errorcodes.csv"
 
-    build.write_codes(path, codes)
+    build.write_codes(path, codes, {})
 
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        assert reader.fieldnames == build.OUTPUT_COLUMNS  # error_codes 12열과 같은 순서
+        assert reader.fieldnames == build.OUTPUT_COLUMNS  # DB 컬럼 10열 + CSV 전용 1열
         [row] = list(reader)
-    assert json.loads(row["customer_procedure_ref_ids"]) == ["manual:HMX-SRM-TSM-001:22:6"]
     assert row["required_safety_rules"] == "[]"
     assert row["page"] == "22"
 
 
-def test_output_columns_match_error_codes_table():
+def test_output_columns_are_error_codes_table_plus_csv_only_column():
     from mpilot.db.schemas import error_codes
 
-    assert build.OUTPUT_COLUMNS == list(error_codes.c.keys())
+    # 사람 검수 참고용 열은 CSV에만 있고 DB 컬럼에는 없다.
+    assert build.OUTPUT_COLUMNS == list(error_codes.c.keys()) + ["required_safety_rules"]
 
 
 def test_read_existing_safety_rules_round_trip(tmp_path):
     rules = {("SRM", "S101"): ["전원을 차단한다"]}
-    codes, _ = build.build_rows([raw()], manual_rows(), rules)
+    codes, _ = build.build_rows([raw()], manual_rows())
     path = tmp_path / "errorcodes.csv"
-    build.write_codes(path, codes)
+    build.write_codes(path, codes, rules)
 
     assert build.read_existing_safety_rules(path) == rules
 

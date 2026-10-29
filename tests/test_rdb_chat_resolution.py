@@ -61,8 +61,6 @@ def add_error_code(conn):
             manual_id="HMX-SRM-TSM-001",
             page=12,
             section="9.4 에러 코드 일람",
-            customer_procedure_ref_ids="[]",
-            required_safety_rules="[]",
         )
     )
 

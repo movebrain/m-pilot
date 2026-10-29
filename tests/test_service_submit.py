@@ -27,22 +27,20 @@ from mpilot.models import (
     Verdict,
 )
 
-PROCEDURE_ID = "manual:agv_rev1_1:8:2"
+PROCEDURE_ID = "manual:agv_rev1_1:8:2"  # 가짜 안내가 인용하는 근거 ID
 
 
-def _code(code: str, severity: Severity, owner: ActionOwner, procedures: list[str]) -> ErrorCode:
+def _code(code: str, severity: Severity, owner: ActionOwner) -> ErrorCode:
     return ErrorCode(
         equipment=Equipment.AGV, code=code, name=f"{code} 에러", severity=severity, action_owner=owner,
         cause="원인", action="조치", manual_id="agv_rev1_1", page=8, section="2.4 배터리",
-        customer_procedure_ref_ids=procedures,
     )
 
 
 CODES = {
-    "SELF": _code("A120", Severity.LOW, ActionOwner.CUSTOMER, [PROCEDURE_ID]),  # 셀프 가이드 후보
-    "HIGH": _code("A301", Severity.HIGH, ActionOwner.CUSTOMER, [PROCEDURE_ID]),  # 심각도 상
-    "ENGINEER": _code("A205", Severity.MEDIUM, ActionOwner.ENGINEER, []),  # 엔지니어 필요
-    "NOPROC": _code("A130", Severity.LOW, ActionOwner.CUSTOMER, []),  # 후보지만 허용 절차 없음
+    "SELF": _code("A120", Severity.LOW, ActionOwner.CUSTOMER),  # 셀프 가이드 후보
+    "HIGH": _code("A301", Severity.HIGH, ActionOwner.CUSTOMER),  # 심각도 상
+    "ENGINEER": _code("A205", Severity.MEDIUM, ActionOwner.ENGINEER),  # 엔지니어 필요
 }
 
 ANSWERED = Answer(
@@ -64,13 +62,14 @@ def backend(monkeypatch):
         search=SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5),
         llm_timeout_seconds=0.2, demo_accounts={},
     ))
-    calls = {"saved": [], "guidance": [], "answer": ANSWERED}
+    calls = {"saved": [], "guidance": [], "settings": [], "answer": ANSWERED}
 
     def fetch_error_codes(equipment):
         return list(CODES.values()) if equipment == Equipment.AGV else []
 
-    def run_customer_guidance(context):
+    def run_customer_guidance(context, settings):
         calls["guidance"].append(context)
+        calls["settings"].append(settings)
         result = calls["answer"]
         if isinstance(result, Exception):
             raise result
@@ -102,6 +101,7 @@ def test_self_guide_answered_saves_self_guide(backend):
     _submit("SELF", memo="충전 표시등 꺼짐")
     assert backend["saved"] == [("self_guide", backend["saved"][0][1], ANSWERED)]
     assert backend["guidance"][0].memo == "충전 표시등 꺼짐"
+    assert backend["settings"] == [service._config.search]  # 검색 설정(건수·임계값)을 pipeline에 넘긴다
 
 
 def test_held_answer_goes_to_engineer(backend):
@@ -130,12 +130,6 @@ def test_non_candidate_skips_guidance(backend, code_key):
     _submit(code_key)
     assert backend["guidance"] == []  # 표만으로 정한다. pipeline을 부르지 않는다
     assert [(kind, failure) for kind, _, failure in backend["saved"]] == [("support", None)]
-
-
-def test_no_customer_procedure_is_held_without_guidance(backend):
-    _submit("NOPROC")
-    assert backend["guidance"] == []
-    assert [(kind, failure) for kind, _, failure in backend["saved"]] == [("support", GuideFailure.HELD)]
 
 
 def test_unregistered_code_raises(backend):

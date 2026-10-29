@@ -9,7 +9,6 @@
 
 책임:
     - 앱을 시작할 때마다 컬렉션을 삭제하고 DB·PDF 원자료에서 새로 만든다. 원자 교체는 없고, 실패하면 시작을 중단한다.
-    - 색인을 만들 때 모든 `customer_procedure_ref_ids`가 `manual`에 실제로 있는지 검증하고 없으면 실패한다.
     - `history`에는 `resolutions` 행이 있는 건(시드 포함)만 넣고 `case_id`로 중복을 제거한다.
       같은 `case_id`는 upsert다. 자동 셀프 가이드와 대화는 넣지 않는다.
     - 모든 검색은 설비 필터가 필수다. 이 모듈은 그 필터를 쓸 수 있는 저장소를 돌려준다.
@@ -101,7 +100,7 @@ def get_store(kind: CitationKind) -> VectorStore:
 def get_document(kind: CitationKind, ref_id: str) -> Document:
     """문서 ID로 원문·메타데이터를 조회한다.
 
-    답변의 인용 원문 확인과, 고객 안내용 허용 절차 직접 조회에 쓴다.
+    답변의 인용 원문 확인에 쓴다.
 
     Args:
         kind: 문서가 있는 컬렉션.
@@ -375,7 +374,7 @@ def rebuild_search_index(
     """검색 색인을 새로 만든다.
 
     두 컬렉션을 삭제하고 다시 만든다. `manual`에는 코드 표 행(`error:...`)과 매뉴얼 본문(`manual:...`),
-    `history`에는 확정 이력(`history:...`)을 넣는다. 모든 `customer_procedure_ref_ids`가 `manual`에 있어야 한다.
+    `history`에는 확정 이력(`history:...`)을 넣는다.
 
     Args:
         chunks: `parser.parse_manuals`가 만든 매뉴얼 청크.
@@ -386,11 +385,10 @@ def rebuild_search_index(
         None: 두 컬렉션이 원자료에서 새로 채워진다.
 
     Raises:
-        ValidationError: 문서 ID 구성 요소에 `:`가 있거나, 허용 절차 ID가 `manual`에 없을 때.
-            허용 절차 ID가 매뉴얼 본문(`manual:`) 문서가 아니거나 다른 설비 문서일 때, 문서 ID가 겹칠 때도 같다.
+        ValidationError: 문서 ID 구성 요소에 `:`가 있거나 문서 ID가 겹칠 때.
         DependencyError: 임베딩 생성이나 저장소 쓰기에 실패했을 때. 이 경우 앱 시작을 중단한다.
 
-    구현 메모: 허용 절차 ID는 같은 설비의 매뉴얼 본문(`manual:`) 문서만 인정한다. 컬렉션을 비우는 데
+    구현 메모: 컬렉션을 비우는 데
     `get_store`가 돌려준 Chroma 객체의 `reset_collection()`을 쓴다(위 '기대는 것' 주석).
     """
     # 1) 문서를 모두 먼저 만들고 검증한다. 검증에 실패하면 기존 색인을 지우지 않고 멈춘다.
@@ -404,21 +402,6 @@ def rebuild_search_index(
         if doc_id in manual_docs:  # 같은 ID가 또 나오면(같은 ID는 같은 원문이어야 한다, spec §3.4)
             raise ValidationError(f"manual 문서 ID가 겹칩니다: {doc_id}")  # 파싱·코드 표 오류라 멈춘다
         manual_docs[doc_id] = doc  # 처음 나온 ID면 모은다
-
-    # 허용 절차 ID는 같은 설비의 매뉴얼 본문(`manual:`) 문서여야 한다(spec §3.3, §3.4). 코드 표 행(`error:`)은 절차가 아니다.
-    problems = []  # 잘못된 허용 절차 ID를 모두 모아 한 번에 알린다
-    for error_code in codes:  # 에러코드마다
-        for ref in error_code.customer_procedure_ref_ids:  # 그 코드의 허용 절차 ID마다
-            where = f"{error_code.equipment.value}:{error_code.code} → {ref}"  # 오류 문구에 쓸 위치 표시
-            ref_doc = manual_docs.get(ref)  # 그 ID의 문서를 찾는다. 없으면 None
-            if ref_doc is None:  # 없는 ID면
-                problems.append(f"{where} (매뉴얼 본문 문서 없음)")
-            elif ref_doc.metadata["doc_type"] != "manual":  # 코드 표 행(error:) ID면
-                problems.append(f"{where} (매뉴얼 본문 문서 없음)")
-            elif ref_doc.metadata["equipment"] != error_code.equipment.value:  # 다른 설비 문서면
-                problems.append(f"{where} (다른 설비 문서)")
-    if problems:  # 하나라도 잘못됐으면
-        raise ValidationError("허용 절차 ID가 올바르지 않습니다: " + "; ".join(sorted(problems)))  # 기존 색인을 지우기 전에 멈춘다
 
     history_docs: dict[str, Document] = {}  # 문서 ID → 이력 문서(history 컬렉션에 넣을 것)
     for case in histories:  # 조치 기록이 있는 신고마다
