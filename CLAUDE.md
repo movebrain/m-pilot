@@ -26,7 +26,7 @@
 | 파트 | 파일 |
 | --- | --- |
 | 공통 | `mpilot/config.py`(`AppConfig`, `.env` 로드), `mpilot/models.py`(예외·열거형·업무 객체·순수 업무 규칙) |
-| DB | `mpilot/db/`(`parser`, `schemas`, `rdb`, `vectordb`), `scripts/init_db.py`, `docker-compose.yml` |
+| DB | `mpilot/db/`(`parser`, `schemas`, `rdb`, `vectordb`), `scripts/init_db.py`, `scripts/build_error_codes.py`, `docker-compose.yml` |
 | RAG | `mpilot/rag/`(`retriever`, `generator`, `pipeline`), `prompts/`, `scripts/evaluate.py` |
 | UI·총괄 | `app.py`(공통부), `app_customer.py`, `app_engineer.py`, `mpilot/service.py`, `mpilot/ui/`(화면 6개와 `common.py`), `fake/`(가짜 service·가짜 DB와 실행 진입점. 수동 테스트·시연용) |
 | 자료 | `data/manuals/`(사양서 PDF 4종), `data/raw/`(에러코드 표 CSV, 장애 이력 더미 4종), `data/chroma/`·`data/photos/`(로컬 전용) |
@@ -54,7 +54,7 @@
 
 ## 4. 사람이 정한다 (AI는 선택지와 근거만 정리)
 
-- 에러코드 표의 심각도·조치 구분 값, 두 목록 열(`customer_procedure_ref_ids`, `required_safety_rules`): 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다.
+- 에러코드 표의 심각도·조치 구분 값과 `required_safety_rules`: 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다. `customer_procedure_ref_ids`는 `scripts.build_error_codes`가 조치 구분과 매뉴얼 표 청크로 만든다.
 - 평가 문항은 데이터를 만든 사람이 쓴다. 인용·고객 안내 사람 검수와 `evidence_threshold` 확정도 사람이 한다(spec §2.7).
 - 계약 변경의 최종 판단, 범위(spec §4) 변경, PR 리뷰·머지, 충돌 해결 시 어느 쪽을 살릴지.
 
@@ -81,6 +81,7 @@
 
 ```
 docker compose up -d           # 로컬 MySQL
+python -m scripts.build_error_codes  # 원자료 표 + 매뉴얼 표 → data/errorcodes.csv(init_db 전에)
 python -m scripts.init_db      # 시연 전 한 번. 모든 테이블을 지우고 다시 적재
 python app_customer.py         # 고객 앱(7860). --fake면 DB·RAG 없이 가짜 데이터
 python app_engineer.py         # 엔지니어 앱(7861). --fake 동일
