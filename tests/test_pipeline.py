@@ -9,6 +9,7 @@ from mpilot.models import (
     AnswerStep,
     CaseContext,
     ChatRequest,
+    CitationKind,
     DependencyError,
     ErrorCode,
     SearchSettings,
@@ -60,7 +61,7 @@ def fakes(monkeypatch):
     fake = SimpleNamespace(
         # 엔지니어 답변
         generated_seq=None,  # 값이 있으면 생성 호출마다 하나씩 꺼내 쓴다(1차·폴백 판정을 따로 정할 때)
-        check_ok=True,  # 인용 검증을 통과하는가
+        check_ok=True,  # 인용 검증을 통과하는가(고객 안내와 엔지니어 답변 공용)
         search_error=None,  # 검색 장애로 던질 예외
         generate_error=None,  # 생성 장애로 던질 예외
         generated=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
@@ -72,23 +73,20 @@ def fakes(monkeypatch):
         allow_flags=[],  # 인용 검증 호출마다 넘긴 allow_other_equipment
         check_calls=0,
         # 고객 안내
-        guidance_check_ok=True,  # 인용 검증을 통과하는가
         guidance_error=None,  # 안내 생성 장애로 던질 예외
         guidance=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
         guidance_hits_seen=[],  # 안내 생성 호출마다 넘긴 근거
         guidance_calls=0,
-        guidance_check_calls=0,
     )
 
-    def search_manual(equipment, query, k):
+    def search(kind, equipment, query, k):
+        if kind is CitationKind.HISTORY:
+            fake.searches.append(("history", equipment, query, k))
+            return ["history-hit"]
         if fake.search_error:
             raise fake.search_error
         fake.searches.append(("manual", equipment, query, k))
         return fake.manual_hits if fake.manual_hits is not None else [chunk_hit()]
-
-    def search_history(equipment, query, k):
-        fake.searches.append(("history", equipment, query, k))
-        return ["history-hit"]
 
     def generate_engineer_answer(context, hits, request, cross_equipment=False):
         fake.generate_calls += 1
@@ -98,7 +96,7 @@ def fakes(monkeypatch):
             raise fake.generate_error
         return fake.generated_seq.pop(0) if fake.generated_seq else fake.generated
 
-    def passes_answer_check(answer, hits, equipment, allow_other_equipment=False):
+    def passes_check(answer, hits, equipment, allow_other_equipment=False):
         fake.check_calls += 1
         fake.allow_flags.append(allow_other_equipment)
         return fake.check_ok
@@ -110,16 +108,10 @@ def fakes(monkeypatch):
             raise fake.guidance_error
         return fake.guidance
 
-    def passes_guidance_check(answer, hits, error_code):
-        fake.guidance_check_calls += 1
-        return fake.guidance_check_ok
-
-    monkeypatch.setattr(pipeline.retriever, "search_manual", search_manual)
-    monkeypatch.setattr(pipeline.retriever, "search_history", search_history)
+    monkeypatch.setattr(pipeline.retriever, "search", search)
     monkeypatch.setattr(pipeline.generator, "generate_engineer_answer", generate_engineer_answer)
-    monkeypatch.setattr(pipeline.generator, "passes_answer_check", passes_answer_check)
+    monkeypatch.setattr(pipeline.generator, "passes_check", passes_check)
     monkeypatch.setattr(pipeline.generator, "generate_customer_guidance", generate_customer_guidance)
-    monkeypatch.setattr(pipeline.generator, "passes_guidance_check", passes_guidance_check)
     return fake
 
 
@@ -192,11 +184,12 @@ def test_다른_코드의_매뉴얼_청크는_빼고_설정한_건수만_남긴�
     other = chunk_hit("manual:srm:5:1", "S-999")
     same = chunk_hit("manual:srm:6:1", "S-104")
     common = chunk_hit("manual:srm:7:1")  # 코드가 없는 공통 절은 남긴다
-    other_row = chunk_hit("error:SRM:S-999", "S-999")  # 코드 표 행은 거르지 않는다
+    other_row = chunk_hit("error:SRM:S-999", "S-999")  # 다른 코드의 코드 표 행도 거른다
+    same_row = chunk_hit("error:SRM:S-104", "S-104")  # 신고 코드의 표 행은 남긴다
     same_late = chunk_hit("manual:srm:8:1", "S-104")
-    fakes.manual_hits = [other, same, other, common, other_row, same_late]
+    fakes.manual_hits = [other, same, other, common, other_row, same_row, same_late]
     ask("위치가 어긋나요")  # manual_k는 3
-    assert fakes.hits_seen == [[same, common, other_row, "history-hit"]]
+    assert fakes.hits_seen == [[same, common, same_row, "history-hit"]]
 
 
 def test_거르고_남은_근거가_모자라도_있는_만큼만_넘긴다(fakes):
@@ -330,11 +323,11 @@ def test_검색_결과가_없으면_보류하고_다시_찾지_않으며_생성�
 def test_근거가_있으면_모델에_맡겨_생성한_안내를_돌려준다(fakes):
     answer = ask_customer()
     assert answer is fakes.guidance
-    assert fakes.guidance_check_calls == 1
+    assert fakes.check_calls == 1
 
 
 def test_안내_검증에_실패하면_DependencyError(fakes):
-    fakes.guidance_check_ok = False
+    fakes.check_ok = False
     with pytest.raises(DependencyError):
         ask_customer()
 
@@ -343,7 +336,7 @@ def test_안내_생성기가_보류를_돌려주면_검증_없이_그대로_돌�
     hold = Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="보류")
     fakes.guidance = hold
     assert ask_customer() is hold
-    assert fakes.guidance_check_calls == 0
+    assert fakes.check_calls == 0
 
 
 @pytest.mark.parametrize("hold", [

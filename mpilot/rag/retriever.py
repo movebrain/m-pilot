@@ -33,54 +33,14 @@ if TYPE_CHECKING:
     from langchain_core.documents import Document
 
 
-def search_manual(equipment: Equipment | None, query: str, k: int) -> list[SearchHit]:
-    """설비 필터로 매뉴얼 근거를 검색한다.
+def search(kind: CitationKind, equipment: Equipment | None, query: str, k: int) -> list[SearchHit]:
+    """설비 필터를 건 유사도 검색으로 근거를 찾는다.
 
     Args:
-        equipment: 검색 대상 설비. 이 설비의 문서만 찾는다. `None`이면 필터 없이 4종 전체에서 찾는다
-            (신고 설비 자료만으로 근거가 부족할 때 pipeline이 쓰는 폴백 검색).
-        query: 검색 질의 문장.
-        k: 가져올 상위 건수.
-
-    Returns:
-        list[SearchHit]: `manual` 컬렉션의 상위 `k`건. 벡터 거리(`distance`)가 채워지며 가까운 순이다.
-            코드 표 행(`error:...`)과 매뉴얼 본문(`manual:...`)이 함께 나올 수 있다.
-
-    Raises:
-        ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
-        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
-    """
-    return _search_by_equipment(CitationKind.MANUAL, equipment, query, k)
-
-
-def search_history(equipment: Equipment | None, query: str, k: int) -> list[SearchHit]:
-    """설비 필터로 확정 이력 근거를 검색한다.
-
-    Args:
-        equipment: 검색 대상 설비. 이 설비의 이력만 찾는다. `None`이면 필터 없이 4종 전체에서 찾는다
-            (신고 설비 자료만으로 근거가 부족할 때 pipeline이 쓰는 폴백 검색).
-        query: 검색 질의 문장.
-        k: 가져올 상위 건수.
-
-    Returns:
-        list[SearchHit]: `history` 컬렉션의 상위 `k`건. 거리가 가까운 순이다.
-
-    Raises:
-        ValidationError: 질의가 비었거나 `k`가 1보다 작을 때.
-        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
-    """
-    return _search_by_equipment(CitationKind.HISTORY, equipment, query, k)
-
-
-def _search_by_equipment(
-    kind: CitationKind, equipment: Equipment | None, query: str, k: int
-) -> list[SearchHit]:
-    """설비 필터를 건 유사도 검색의 공통부. `search_manual`과 `search_history`가 쓴다.
-
-    Args:
-        kind: 검색할 컬렉션. `CitationKind.MANUAL` 또는 `CitationKind.HISTORY`.
+        kind: 검색할 컬렉션. `CitationKind.MANUAL`(코드 표 행 `error:...`과 매뉴얼 본문 `manual:...`) 또는
+            `CitationKind.HISTORY`(확정 이력).
         equipment: 검색 대상 설비. 메타데이터 `equipment`로 걸러 이 설비의 문서만 찾는다.
-            `None`이면 거르지 않는다.
+            `None`이면 거르지 않고 4종 전체에서 찾는다(신고 설비 자료로 답하지 못할 때 pipeline이 쓰는 폴백 검색).
         query: 검색 질의 문장. 공백만 있으면 안 된다.
         k: 가져올 상위 건수. 1 이상이어야 한다.
 

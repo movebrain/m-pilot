@@ -186,13 +186,11 @@
 
 | 모듈      | 함수 시그니처                                                                                           | 책임                                      | 예외                             |
 | --------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------- |
-| retriever | `search_manual(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                     | 설비 필터로 매뉴얼 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
-| retriever | `search_history(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                    | 설비 필터로 확정 이력 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
+| retriever | `search(kind: CitationKind, equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]` | 설비 필터로 `manual` 또는 `history` 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
 | generator | `set_chat_model(chat_model: BaseChatModel) -> None`                                                     | 답변 생성에 쓸 모델을 설정한다            | —                                |
 | generator | `generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer`                     | 고객 안내 답변을 생성한다                 | DependencyError                  |
 | generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False) -> Answer` | 엔지니어 대화 답변을 생성한다(`cross_equipment`는 다른 설비 근거가 섞인 폴백일 때 `True`) | DependencyError                  |
-| generator | `passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool`           | 고객 안내의 인용을 검사한다               | —                                |
-| generator | `passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
+| generator | `passes_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 고객 안내·엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
 | pipeline  | `run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Answer`                       | 고객 안내 처리 흐름을 실행한다            | ValidationError, DependencyError |
 | pipeline  | `run_engineer_answer(context: CaseContext, request: ChatRequest, settings: SearchSettings) -> Answer`   | 엔지니어 답변 처리 흐름을 실행한다        | ValidationError, DependencyError |
 | evaluate  | `run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]`                                 | 평가 문항을 실행하고 결과를 기록한다      | ValidationError, DependencyError |
@@ -351,7 +349,7 @@ scripts ──→ config, db/parser, db/rdb, models
 - 엔지니어 검색 개수는 manual·history 각 상위 3건(`manual_k`·`history_k`)에서 시작한다.
 - 대화 이력은 생성 입력에서만 줄이고 저장된 이력은 지우지 않는다.
 - 원문 밖의 원인·절차를 단정하지 않고, 증상 메모는 확인된 사실과 구분한다(프롬프트 규칙).
-- 고객 안내(`customer_guidance`)는 신고 코드의 `manual`만 검색해 인용한다(신고 설비 필터, 다른 코드의 매뉴얼 청크 제외, 폴백 없음). 검색 결과가 없거나 모델이 근거 부족으로 판정하면 보류(`held`)다. `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
+- 고객 안내(`customer_guidance`)는 신고 코드의 `manual`만 검색해 인용한다(신고 설비 필터, 다른 코드의 문서(매뉴얼 청크·코드 표 행) 제외, 폴백 없음). 검색 결과가 없거나 모델이 근거 부족으로 판정하면 보류(`held`)다. `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
 - 대상 코드는 신고 코드로 고정하며 pipeline 입력 계약은 §2.3.2를 따른다. 4종 밖 설비·다른 설비·사전에 없는 주제·다른 코드를 묻는 질문도 먼저 신고 설비 필터로 검색한다. 보류 여부는 설비·키워드·검색 거리로 미리 거르지 않고, 검색 결과로 답할 수 있는지를 모델이 판정한다(검색 거리 임계값은 두지 않는다). 엔지니어 답변에서 모델이 신고 설비 자료로 근거 부족이라 판정하면 설비 필터 없이 4종 전체를 질문 원문으로 한 번 더 검색해 다시 생성한다(폴백). 폴백 근거로 답하면 인용의 설비가 신고 설비와 달라도 통과시키고 `Answer.notice`에 다른 설비 자료를 포함했다는 고정 문구를 담으며, 그래도 근거가 없으면 insufficient_evidence다.
 - 파이프라인은 근거 확보 → 생성 → 검증 순이다. 고객 근거는 신고 코드의 `manual` 검색, 엔지니어 근거는 `manual`·`history` 검색이다. 근거 부족은 steps=[]인 Answer이며, 모델·검색 장애와 검증 실패는 DependencyError다. 저장은 service가 담당한다.
 - 출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가로 나눈다. 건별 사전 승인은 없다.
