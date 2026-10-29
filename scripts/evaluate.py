@@ -1,24 +1,29 @@
 """RAG 품질 평가 실행·기록 스크립트(수동 실행, CI에서는 돌리지 않는다).
 
 역할:
-    `data/eval_questions.csv`의 문항으로 엔지니어 대화(`rag.pipeline.run_engineer_answer`)를 실행하고
-    결과를 JSON 한 개로 남긴다.
+    `data/eval_questions.csv`의 문항으로 엔지니어 대화(`rag.pipeline.run_engineer_answer`)와 고객 안내
+    (`rag.pipeline.run_customer_guidance`)를 실행하고 결과를 JSON 한 개로 남긴다.
 
 책임(spec §2.7):
-    - 정량 지표는 엔지니어 대화에만 있다. 고객 안내는 집계하지 않는다.
+    - 문항의 `purpose`(`engineer_chat`·`customer_guidance`)별로 따로 집계한다. 고객 안내 문항의 `question`은
+      신고 증상 메모이며 비워도 된다. 고객 안내 문항의 코드는 셀프 가이드 후보여야 한다.
     - 문항은 답변 가능(`expected=answered`, 정답 근거 `gold_ref_ids`가 있다)과 답변 불가
       (`expected=insufficient_evidence`, `gold_ref_ids=[]`)로 나뉜다.
     - 지표와 합격선: 환각(답변 불가 문항 중 `answered`) 1건 이하, 엉뚱한 출처(답변 가능 문항 중 `answered`인데
-      인용에 `gold_ref_ids`가 없음) 1건 이하, 정답 적중(답변 가능 문항 중 `answered`이고 인용에 `gold_ref_ids`가
-      있음) 21건 이상. 과잉 보류(답변 가능 문항 중 보류)는 합격선이 없다. 정답 적중 21건은 초기 목표이며
+      인용이 정답 근거 기준에 못 미침) 1건 이하, 정답 적중(답변 가능 문항 중 `answered`이고 인용이 정답 근거
+      기준을 만족) 21건 이상. 과잉 보류(답변 가능 문항 중 보류)는 합격선이 없다. 정답 적중 21건은 초기 목표이며
       실측값이 아니다.
-    - 답변 가능 30개·답변 불가 20개에 못 미치면 합격 여부를 판정하지 않는다(평가 미완료).
+    - 정답 근거 기준: 엔지니어 대화는 인용에 `gold_ref_ids`가 하나라도 있으면 만족한다. 고객 안내는 고객이
+      수행할 수 있는 절차만 담아야 하므로 인용이 모두 `gold_ref_ids` 안에 있어야 만족한다.
+    - 목적별로 답변 가능 30개·답변 불가 20개에 못 미치면 합격 여부를 판정하지 않는다(평가 미완료). 전체 합격은
+      두 목적이 모두 합격일 때다(`evidence_threshold`를 둘이 공유한다).
     - 생성 실패(`DependencyError`)는 별도로 센다. 답변 가능 문항에서는 정답 적중이 아니고, 답변 불가 문항에서는
       환각이 아니다.
     - 기록 항목: `versions`(모델 이름, 프롬프트·문항 파일 해시), `settings`(검색 설정), `results`(문항별 판정·인용·
       결과 분류), `summary`(건수·합격선·합격 여부), `caveats`(작은 표본 해석 주의).
     - 후보 `evidence_threshold`마다 `.env`의 값을 바꿔 따로 실행한다. 결과 파일이 설정을 함께 남긴다.
-    - 사람 검수(생성된 고객 안내 전부, 엔지니어 `answered` 답변 최소 5건)는 이 스크립트 밖에서 한다.
+    - 사람 검수(생성된 고객 안내 전부, 엔지니어 `answered` 답변 최소 5건)는 이 스크립트 밖에서 한다. 고객 안내의
+      안전 수칙 준수는 자동으로 재지 않는다.
 
 실행 전제: 검색 색인이 만들어져 있어야 한다(앱을 한 번 시작하면 `service.prepare_search_index`가 만든다).
 
@@ -48,12 +53,18 @@ from mpilot.models import (
     ErrorCode,
     ValidationError,
     Verdict,
+    is_self_guide_candidate,
 )
 from mpilot.rag import generator, pipeline, prompts
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-_COLUMNS = ["equipment", "code", "question", "expected", "gold_ref_ids"]
+ENGINEER = "engineer_chat"
+CUSTOMER = "customer_guidance"
+_PURPOSES = (ENGINEER, CUSTOMER)
+_LABELS = {ENGINEER: "엔지니어 대화", CUSTOMER: "고객 안내"}
+
+_COLUMNS = ["purpose", "equipment", "code", "question", "expected", "gold_ref_ids"]
 
 MIN_ANSWERABLE = 30  # 답변 가능 문항 최소 수
 MIN_UNANSWERABLE = 20  # 답변 불가 문항 최소 수
@@ -64,14 +75,19 @@ MIN_HIT = 21  # 정답 적중 최소 건수(답변 가능 30개의 70%, 초기 �
 _CAVEATS = [
     "합격선은 이 문항 안의 결정 규칙이며 실제 환각률의 보증이 아니다.",
     "임계값 선택과 합격 판정에 같은 문항을 쓰므로 수치가 실제보다 낙관적이다.",
+    "고객 안내는 인용이 모두 정답 근거 안에 있어야 적중이고, 엔지니어 대화는 하나라도 있으면 적중이다.",
 ]
 
 
 @dataclass(frozen=True)
 class _Question:
-    """검증을 통과한 문항 한 줄. `no`는 데이터 행 번호(1부터)다."""
+    """검증을 통과한 문항 한 줄. `no`는 데이터 행 번호(1부터)다.
+
+    고객 안내 문항의 `question`은 신고 증상 메모이며 비어 있을 수 있다.
+    """
 
     no: int
+    purpose: str
     equipment: Equipment
     code: str
     question: str
@@ -119,13 +135,18 @@ def _read_questions(path: Path) -> list[_Question]:
         raise ValidationError(f"{path.name}: 문항이 없습니다.")
 
     questions: list[_Question] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for no, row in enumerate(rows, start=1):
         if None in row or any(v is None for v in row.values()):
             raise ValidationError(f"{no}번째 행: 열 개수가 머리글과 다릅니다.")
         values = {c: row[c].strip() for c in _COLUMNS}
-        if not all(values.values()):
+        purpose = values["purpose"]
+        # 고객 안내의 question은 선택 사항인 증상 메모라서 비워도 된다.
+        required = [c for c in _COLUMNS if not (c == "question" and purpose == CUSTOMER)]
+        if not all(values[c] for c in required):
             raise ValidationError(f"{no}번째 행: 빈 값이 있습니다(정답 근거가 없으면 gold_ref_ids는 [] 입니다).")
+        if purpose not in _PURPOSES:
+            raise ValidationError(f"{no}번째 행: purpose는 {' 또는 '.join(_PURPOSES)}여야 합니다: {purpose}")
         try:
             equipment = Equipment(values["equipment"])
         except ValueError:
@@ -141,15 +162,16 @@ def _read_questions(path: Path) -> list[_Question]:
             raise ValidationError(f"{no}번째 행: 답변 가능(answered) 문항은 gold_ref_ids가 비어 있으면 안 됩니다.")
         if expected == Verdict.INSUFFICIENT_EVIDENCE and gold:
             raise ValidationError(f"{no}번째 행: 답변 불가(insufficient_evidence) 문항의 gold_ref_ids는 [] 여야 합니다.")
-        try:
-            ChatRequest(question=values["question"], turns=[])
-        except PydanticValidationError:
-            raise ValidationError(f"{no}번째 행: question은 공백을 뺀 1~2,000자여야 합니다.") from None
-        key = (equipment.value, values["code"], values["question"])
+        if purpose == ENGINEER:
+            try:
+                ChatRequest(question=values["question"], turns=[])
+            except PydanticValidationError:
+                raise ValidationError(f"{no}번째 행: question은 공백을 뺀 1~2,000자여야 합니다.") from None
+        key = (purpose, equipment.value, values["code"], values["question"])
         if key in seen:
-            raise ValidationError(f"{no}번째 행: 같은 설비·코드·질문이 이미 있습니다.")
+            raise ValidationError(f"{no}번째 행: 같은 목적·설비·코드·질문이 이미 있습니다.")
         seen.add(key)
-        questions.append(_Question(no, equipment, values["code"], values["question"], expected, gold))
+        questions.append(_Question(no, purpose, equipment, values["code"], values["question"], expected, gold))
     return questions
 
 
@@ -161,6 +183,11 @@ def _find_error_code(question: _Question, cache: dict[Equipment, dict[str, Error
     if found is None:
         raise ValidationError(
             f"{question.no}번째 행: 에러코드 표에 없는 코드입니다: {question.equipment.value} {question.code}"
+        )
+    if question.purpose == CUSTOMER and not is_self_guide_candidate(found):
+        raise ValidationError(
+            f"{question.no}번째 행: 고객 안내 문항의 코드는 셀프 가이드 후보(심각도 상 아님, 고객사 조치)여야 합니다: "
+            f"{question.equipment.value} {question.code}"
         )
     return found
 
@@ -188,7 +215,11 @@ def _classify(question: _Question, answer: Answer | None) -> str:
         return "hallucination" if answered else "correct_hold"
     if not answered:
         return "over_hold"
-    return "hit" if _cited_ref_ids(answer) & set(question.gold_ref_ids) else "wrong_source"
+    cited, gold = _cited_ref_ids(answer), set(question.gold_ref_ids)
+    if question.purpose == CUSTOMER:
+        # 고객은 수행할 수 없는 절차를 인용받으면 위험하므로 인용이 모두 정답 근거 안에 있어야 한다.
+        return "hit" if cited and cited <= gold else "wrong_source"
+    return "hit" if cited & gold else "wrong_source"
 
 
 def _summarize(questions: list[_Question], outcomes: list[str]) -> dict[str, object]:
@@ -224,6 +255,26 @@ def _summarize(questions: list[_Question], outcomes: list[str]) -> dict[str, obj
     }
 
 
+def _summarize_all(questions: list[_Question], outcomes: list[str]) -> dict[str, object]:
+    """목적별 요약과 전체 완료·합격 여부를 만든다.
+
+    Args:
+        questions: 문항 목록.
+        outcomes: `questions`와 같은 순서의 결과 분류.
+
+    Returns:
+        dict[str, object]: 목적 이름(`engineer_chat`·`customer_guidance`)마다 `_summarize` 결과, 그리고 전체
+            `complete`(두 목적이 모두 완료), `passed`(두 목적이 모두 합격. 미완료이면 `None`).
+    """
+    by_purpose = {}
+    for purpose in _PURPOSES:
+        picked = [(q, o) for q, o in zip(questions, outcomes) if q.purpose == purpose]
+        by_purpose[purpose] = _summarize([q for q, _ in picked], [o for _, o in picked])
+    complete = all(s["complete"] for s in by_purpose.values())
+    passed = all(s["passed"] for s in by_purpose.values())
+    return {**by_purpose, "complete": complete, "passed": passed if complete else None}
+
+
 def _sha256(path: Path) -> str:
     """파일 내용의 SHA-256 16진 문자열. 읽을 수 없으면 `DependencyError`."""
     try:
@@ -254,7 +305,10 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
     questions = _read_questions(questions_path)
     config = load_config()
     cache: dict[Equipment, dict[str, ErrorCode]] = {}
-    contexts = [CaseContext(error_code=_find_error_code(q, cache), memo=None) for q in questions]
+    contexts = [
+        CaseContext(error_code=_find_error_code(q, cache), memo=(q.question or None) if q.purpose == CUSTOMER else None)
+        for q in questions
+    ]
 
     results: list[dict[str, object]] = []
     outcomes: list[str] = []
@@ -262,9 +316,12 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
         answer: Answer | None = None
         error: str | None = None
         try:
-            answer = pipeline.run_engineer_answer(
-                context, ChatRequest(question=question.question, turns=[]), config.search
-            )
+            if question.purpose == CUSTOMER:
+                answer = pipeline.run_customer_guidance(context, config.search)
+            else:
+                answer = pipeline.run_engineer_answer(
+                    context, ChatRequest(question=question.question, turns=[]), config.search
+                )
         except DependencyError as e:
             error = str(e)
         outcome = _classify(question, answer)
@@ -272,6 +329,7 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
         results.append(
             {
                 "row": question.no,
+                "purpose": question.purpose,
                 "equipment": question.equipment.value,
                 "code": question.code,
                 "question": question.question,
@@ -295,7 +353,7 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
         },
         "settings": config.search.model_dump(),
         "results": results,
-        "summary": _summarize(questions, outcomes),
+        "summary": _summarize_all(questions, outcomes),
         "caveats": _CAVEATS,
     }
     try:
@@ -307,8 +365,8 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
     return result
 
 
-def _format_summary(summary: dict[str, object]) -> str:
-    """`summary`를 터미널에 보여 줄 여러 줄 문자열로 만든다."""
+def _format_purpose(label: str, summary: dict[str, object]) -> list[str]:
+    """한 목적의 요약을 터미널에 보여 줄 줄 목록으로 만든다."""
     counts = summary["counts"]
     hallucination, wrong_source, hit = summary["hallucination"], summary["wrong_source"], summary["hit"]
     over_hold, failed = summary["over_hold"], summary["generation_failed"]
@@ -319,16 +377,26 @@ def _format_summary(summary: dict[str, object]) -> str:
             f"평가 미완료(답변 가능 {counts['answerable']}/{MIN_ANSWERABLE}, "
             f"답변 불가 {counts['unanswerable']}/{MIN_UNANSWERABLE})"
         )
-    return "\n".join(
-        [
-            f"결과: {verdict}",
-            f"환각 {hallucination['count']}/{hallucination['total']}건 (한도 {hallucination['limit']})",
-            f"엉뚱한 출처 {wrong_source['count']}/{wrong_source['total']}건 (한도 {wrong_source['limit']})",
-            f"정답 적중 {hit['count']}/{hit['total']}건 (최소 {hit['minimum']})",
-            f"과잉 보류 {over_hold['count']}/{over_hold['total']}건",
-            f"생성 실패 답변 가능 {failed['answerable']}건, 답변 불가 {failed['unanswerable']}건",
-        ]
-    )
+    return [
+        f"[{label}] {verdict}",
+        f"  환각 {hallucination['count']}/{hallucination['total']}건 (한도 {hallucination['limit']})",
+        f"  엉뚱한 출처 {wrong_source['count']}/{wrong_source['total']}건 (한도 {wrong_source['limit']})",
+        f"  정답 적중 {hit['count']}/{hit['total']}건 (최소 {hit['minimum']})",
+        f"  과잉 보류 {over_hold['count']}/{over_hold['total']}건",
+        f"  생성 실패 답변 가능 {failed['answerable']}건, 답변 불가 {failed['unanswerable']}건",
+    ]
+
+
+def _format_summary(summary: dict[str, object]) -> str:
+    """`summary`를 터미널에 보여 줄 여러 줄 문자열로 만든다. 전체 결과 다음에 목적별 결과가 온다."""
+    if summary["complete"]:
+        overall = "합격" if summary["passed"] else "불합격"
+    else:
+        overall = "평가 미완료"
+    lines = [f"결과: {overall}"]
+    for purpose in _PURPOSES:
+        lines += _format_purpose(_LABELS[purpose], summary[purpose])
+    return "\n".join(lines)
 
 
 def main() -> int:
