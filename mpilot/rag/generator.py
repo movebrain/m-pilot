@@ -72,11 +72,11 @@ def set_chat_model(chat_model: BaseChatModel) -> None:
 def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer:
     """고객 안내 답변을 생성한다.
 
-    매뉴얼에서 고객이 수행하도록 허용한 절차 원문(`hits`)만 근거로 쓴다. 과거 이력은 쓰지 않는다.
+    신고 코드의 매뉴얼 검색 근거(`hits`)만 근거로 쓴다. 과거 이력은 쓰지 않는다.
 
     Args:
         context: 신고 맥락. 대상 에러코드의 상세와 증상 메모.
-        hits: `retriever.fetch_customer_procedures`가 가져온 허용 절차 원문.
+        hits: `pipeline`이 신고 코드의 매뉴얼에서 검색해 가려 낸 근거.
 
     Returns:
         Answer: 단계마다 출처가 붙은 안내. 이 함수는 생성만 하며, 인용·안전 문구 검사는

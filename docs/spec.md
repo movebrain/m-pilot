@@ -175,14 +175,13 @@
 | --------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------- |
 | retriever | `search_manual(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                     | 설비 필터로 매뉴얼 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
 | retriever | `search_history(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                    | 설비 필터로 확정 이력 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
-| retriever | `fetch_customer_procedures(error_code: ErrorCode) -> list[SearchHit]`                                   | 고객이 수행할 매뉴얼 절차 원문을 가져온다 | DependencyError                  |
 | retriever | `has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool`                                  | 검색 결과가 근거로 충분한지 판단한다      | ValidationError                  |
 | generator | `set_chat_model(chat_model: BaseChatModel) -> None`                                                     | 답변 생성에 쓸 모델을 설정한다            | —                                |
 | generator | `generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer`                     | 고객 안내 답변을 생성한다                 | DependencyError                  |
 | generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False) -> Answer` | 엔지니어 대화 답변을 생성한다(`cross_equipment`는 다른 설비 근거가 섞인 폴백일 때 `True`) | DependencyError                  |
 | generator | `passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool`           | 고객 안내의 인용과 안전 문구를 검사한다   | —                                |
 | generator | `passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
-| pipeline  | `run_customer_guidance(context: CaseContext) -> Answer`                                                 | 고객 안내 처리 흐름을 실행한다            | DependencyError                  |
+| pipeline  | `run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Answer`                       | 고객 안내 처리 흐름을 실행한다            | ValidationError, DependencyError |
 | pipeline  | `run_engineer_answer(context: CaseContext, request: ChatRequest, settings: SearchSettings) -> Answer`   | 엔지니어 답변 처리 흐름을 실행한다        | ValidationError, DependencyError |
 | evaluate  | `run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]`                                 | 평가 문항을 실행하고 결과를 기록한다      | ValidationError, DependencyError |
 
@@ -259,7 +258,6 @@ stateDiagram-v2
 | ------ | --------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------- |
 | config | `load_config(env_path: Path \| None = None) -> AppConfig` | .env·환경 변수를 로드해 설정을 검증한다                                  | ValidationError, DependencyError |
 | models | `is_self_guide_candidate(error_code: ErrorCode) -> bool`  | 심각도·조치 구분만으로 셀프 가이드 후보 여부를 판정한다(§2.10 경로 결정) | —                                |
-| models | `has_customer_procedure(error_code: ErrorCode) -> bool`   | 허용 절차 ID 존재 여부를 판정한다(§2.10 경로 결정)                       | —                                |
 | models | `raise_if_case_completed(case: ServiceCase) -> None`      | 완료된 건의 질문 저장을 차단한다(§2.10 상태 전이)                        | InvalidStateError                |
 
 #### 2.4.2 공통 객체
@@ -341,9 +339,9 @@ scripts ──→ config, db/parser, db/rdb, models
 - 엔지니어 검색 개수는 manual·history 각 상위 3건(`manual_k`·`history_k`)에서 시작한다.
 - 대화 이력은 생성 입력에서만 줄이고 저장된 이력은 지우지 않는다.
 - 원문 밖의 원인·절차를 단정하지 않고, 증상 메모는 확인된 사실과 구분한다(프롬프트 규칙).
-- 고객 안내(`customer_guidance`)는 허용된 ID로 `manual` 원문을 직접 조회·인용한다(유사도 임계값 미적용). `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
+- 고객 안내(`customer_guidance`)는 신고 코드의 `manual`만 검색해 인용한다(신고 설비 필터, 다른 코드의 매뉴얼 청크 제외, 엔지니어와 같은 `evidence_threshold`, 폴백 없음). 근거가 부족하면 보류(`held`)다. `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
 - 대상 코드는 신고 코드로 고정하며 pipeline 입력 계약은 §2.3.2를 따른다. 4종 밖 설비·다른 설비·사전에 없는 주제·다른 코드를 묻는 질문도 먼저 신고 설비 필터로 검색한다. 보류 여부는 설비·키워드로 미리 거르지 않고 검색 결과의 근거 유무로만 정한다. 신고 설비 자료만으로 근거가 부족하면(`has_enough_evidence`가 거짓) 설비 필터 없이 4종 전체를 질문 원문으로 한 번 더 검색한다(폴백, 임계값은 1차와 같다). 폴백 근거로 답하면 인용의 설비가 신고 설비와 달라도 통과시키고 `Answer.notice`에 다른 설비 자료를 포함했다는 고정 문구를 담으며, 그래도 근거가 없으면 insufficient_evidence다.
-- 파이프라인은 근거 확보 → 생성 → 검증 순이다. 고객 근거는 직접 조회, 엔지니어 근거는 검색이다. 근거 부족은 steps=[]인 Answer이며, 모델·검색 장애와 검증 실패는 DependencyError다. 저장은 service가 담당한다.
+- 파이프라인은 근거 확보 → 생성 → 검증 순이다. 고객 근거는 신고 코드의 `manual` 검색, 엔지니어 근거는 `manual`·`history` 검색이다. 근거 부족은 steps=[]인 Answer이며, 모델·검색 장애와 검증 실패는 DependencyError다. 저장은 service가 담당한다.
 - 출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가로 나눈다. 건별 사전 승인은 없다.
 
 ### 2.7 RAG 평가 기준
@@ -356,12 +354,12 @@ scripts ──→ config, db/parser, db/rdb, models
 
 | 지표        | 정의                                                                                                                             | 합격선 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 인용 검증   | 공개된 답변의 인용이 모두 확보한 근거(검색 결과 또는 고객 허용 ID 직접 조회)에 있고 설비가 일치하는 비율(폴백으로 답한 건은 설비 일치를 제외)(평가 스크립트가 재검사) | 100%   |
+| 인용 검증   | 공개된 답변의 인용이 모두 확보한 근거(검색 결과)에 있고 설비가 일치하는 비율(폴백으로 답한 건은 설비 일치를 제외)(평가 스크립트가 재검사) | 100%   |
 | 정상 답변율 | 목적별 사전에 정상 답변 대상으로 분류한 문항 중 verdict=answered인 비율. 보류·실패도 분모에 포함                                 | ≥ 80%  |
 | 보류 정확도 | 근거 부족 문항에서 조치 단계 없이 맞는 판정을 낸 비율                                                             | ≥ 90%  |
 
 - 정상 답변율 80%는 초기 목표이며 실측 결과가 아니다. 목적별 정상 문항의 분모가 0이면 평가 미완료로 처리한다.
-- 사람 검수는 생성된 고객 안내 전부와 엔지니어 answered 답변 최소 5건을 대상으로 한다. 인용 원문이 답을 뒷받침하는지, 고객 안내가 허용 절차만 포함하는지 확인하고 기록한다. 엔지니어 답변이 5건 미만이면 전부 검수하되 표본 부족을 기록하고 최소 검수 조건을 충족한 것으로 처리하지 않는다.
+- 사람 검수는 생성된 고객 안내 전부와 엔지니어 answered 답변 최소 5건을 대상으로 한다. 인용 원문이 답을 뒷받침하는지, 고객 안내가 고객이 수행할 수 있는 절차만 포함하는지 확인하고 기록한다. 엔지니어 답변이 5건 미만이면 전부 검수하되 표본 부족을 기록하고 최소 검수 조건을 충족한 것으로 처리하지 않는다.
 - 근거 없는 조치·금지 절차가 발견되면 수정 후 재평가한다. 필수 안전 문구 자동 검증을 통과해도 사람 검수를 생략하지 않는다.
 - 고객 안내의 필수 안전 수칙 누락은 평가 지표로 집계하지 않는다. 실행 때마다 `passes_guidance_check`가 막고, 통과하지 못하면 가이드를 만들지 못한 것으로 보아 `support`로 접수한다.
 
@@ -477,7 +475,7 @@ erDiagram
 | `manual_id`                  | VARCHAR(64)  | NOT NULL |                           | 출처 PDF 식별자. 매뉴얼 테이블은 없다                      |
 | `page`                       | INTEGER      | NOT NULL | [앱] ≥ 1                  | 출처 쪽                                                    |
 | `section`                    | VARCHAR(255) | NOT NULL |                           | 출처 절                                                    |
-| `customer_procedure_ref_ids` | TEXT         | NOT NULL | [앱] 기본 `[]`            | 고객 수행이 허용된 매뉴얼 본문 문서 ID 배열. 가이드 검증용 |
+| `customer_procedure_ref_ids` | TEXT         | NOT NULL | [앱] 기본 `[]`            | (미사용) 고객 안내가 읽지 않는다. 후속 PR에서 제거          |
 | `required_safety_rules`      | TEXT         | NOT NULL | [앱] 기본 `[]`            | 고객 안내에 반드시 들어갈 안전 문구 배열. 가이드 검증용    |
 
 #### service_cases
@@ -559,7 +557,7 @@ erDiagram
   - `customer_procedure_ref_ids`는 자동으로 채운다. 매뉴얼 표 9-3은 `고객사 조치`를 "고객사가 본 매뉴얼의 조치 절차로 직접 해결할 수 있는 에러"로 정의하므로, 조치 구분이 `고객사 조치`인 코드에는 그 코드 행이 든 표 청크 ID(`manual:<manual_id>:<page>:<chunk_no>`)를 넣고, `엔지니어 필요`면 `[]`로 둔다.
   - `required_safety_rules`는 사람이 매뉴얼 원문과 대조해 작성한다. 다시 생성해도 기존 파일의 값을 코드별로 이어받는다.
   - 원자료 코드가 매뉴얼 표에 없거나 표 행 모양이 다르면 파일을 쓰지 않고 중단한다.
-- 고객 수행 절차가 식별되지 않아 `customer_procedure_ref_ids`가 `[]`인 코드는 가이드 없이 `guide_failure=no_customer_procedure`인 `support`로 접수한다.
+- `customer_procedure_ref_ids`는 고객 안내 경로가 더 이상 읽지 않는다(고객 안내는 신고 코드의 매뉴얼 검색 근거를 쓴다). 값이 `[]`여도 `고객사 조치` 코드는 가이드를 시도하고, 근거가 부족하면 `guide_failure=held`인 `support`로 접수한다. 이 열과 생성 로직은 후속 PR에서 제거한다.
 
 #### data/history_seed.csv
 

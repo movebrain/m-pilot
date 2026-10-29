@@ -470,18 +470,6 @@ def is_self_guide_candidate(error_code: ErrorCode) -> bool:
     return error_code.action_owner == ActionOwner.CUSTOMER
 
 
-def has_customer_procedure(error_code: ErrorCode) -> bool:
-    """고객이 수행하도록 허용된 매뉴얼 절차 ID가 있는지 판정한다(spec §2.10 경로 결정).
-
-    Args:
-        error_code: 신고한 에러코드 표의 행. `customer_procedure_ref_ids`만 읽는다.
-
-    Returns:
-        bool: 허용 절차 ID가 하나 이상 있으면 `True`, 비어 있으면 `False`.
-    """
-    return bool(error_code.customer_procedure_ref_ids)
-
-
 def raise_if_case_completed(case: ServiceCase) -> None:
     """완료된 건에 질문 저장·조치 결과 등록을 못 하게 막는다(spec §2.10 상태 전이).
 

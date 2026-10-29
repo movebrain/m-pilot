@@ -268,13 +268,6 @@ def test_customer_procedure_ids_point_to_same_equipment_manual_chunks(indexed):
                 assert doc.metadata["doc_type"] == "manual" and doc.metadata["equipment"] == equipment.value
 
 
-def test_customer_action_codes_have_procedures_and_can_be_fetched(indexed):
-    code = next(c for c in rdb.fetch_error_codes(Equipment.AGV) if c.action_owner is ActionOwner.CUSTOMER)
-    hits = retriever.fetch_customer_procedures(code)
-    assert len(hits) == len(code.customer_procedure_ref_ids) > 0
-    assert all(h.distance is None and h.equipment is Equipment.AGV for h in hits)
-
-
 def test_manual_search_is_filtered_by_equipment_and_sorted(indexed):
     for equipment in Equipment:
         hits = retriever.search_manual(equipment, "주행 인버터 과전류 점검", 5)

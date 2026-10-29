@@ -38,7 +38,6 @@ from mpilot.models import (
     Source,
     ValidationError,
     Verdict,
-    has_customer_procedure,
     is_self_guide_candidate,
     raise_if_case_completed,
 )
@@ -419,8 +418,7 @@ def _new_reported_case(case_id: str, error_code: ErrorCode, memo: str | None, cr
     메모에 [held]·[fail]을 넣으면 가이드 보류·생성 실패로 접수된다.
     """
     route, guide_failure, answer = Route.SUPPORT, None, None  # 기본은 엔지니어 처리
-    # 허용 절차가 없는 코드의 guide_failure 값은 spec에서 아직 정해지지 않아 NULL로 둠
-    if is_self_guide_candidate(error_code) and has_customer_procedure(error_code):
+    if is_self_guide_candidate(error_code):
         memo_text = memo or ""
         if "[held]" in memo_text:
             guide_failure = GuideFailure.HELD

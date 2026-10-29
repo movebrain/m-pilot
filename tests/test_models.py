@@ -14,7 +14,6 @@ from mpilot.models import (
     ServiceCase,
     Severity,
     Source,
-    has_customer_procedure,
     is_self_guide_candidate,
     raise_if_case_completed,
 )
@@ -65,11 +64,6 @@ def make_case(status: CaseStatus) -> ServiceCase:
 )
 def test_is_self_guide_candidate(severity, owner, expected):
     assert is_self_guide_candidate(make_code(severity, owner)) is expected
-
-
-def test_has_customer_procedure():
-    assert has_customer_procedure(make_code(refs=("MN-1", "MN-2"))) is True
-    assert has_customer_procedure(make_code(refs=())) is False
 
 
 @pytest.mark.parametrize("status", [CaseStatus.RECEIVED, CaseStatus.IN_PROGRESS])
