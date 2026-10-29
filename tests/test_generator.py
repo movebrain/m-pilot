@@ -153,6 +153,12 @@ def test_근거_태그에_설비는_폴백일_때만_적는다():
     assert "equipment=" not in generator._format_evidence([make_other_equipment_hit()])
 
 
+def test_고객_안내_지시문은_짧게_쓰라고_하지_않고_단계를_풀어_쓰게_한다():
+    assert "쉬운 말로 짧게" not in prompts.CUSTOMER_SYSTEM
+    assert "2~3문장" in prompts.CUSTOMER_SYSTEM
+    assert "2~3문장" in prompts.CUSTOMER_HUMAN
+
+
 @pytest.mark.parametrize("cross_equipment", [False, True])
 def test_폴백일_때만_엔지니어_시스템_지시문에_다른_설비_규칙을_붙인다(monkeypatch, cross_equipment):
     sent = []
