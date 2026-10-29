@@ -121,7 +121,7 @@
 │   │   │   └── chat.py                # 대화 저장·조회, 조치 확정, 확정 이력 조회
 │   │   └── vectordb.py                # 검색 자료 저장소 관리(색인 생성·이력 반영·원문 조회)
 │   ├── rag/                           # [RAG]
-│   │   ├── retriever.py               # 근거 검색과 근거 충분성 판단
+│   │   ├── retriever.py               # 근거 검색
 │   │   ├── generator.py               # 모델 호출과 답변 형식·인용 검증
 │   │   └── pipeline.py                # 고객 안내·엔지니어 답변의 단계 조립
 │   └── ui/                            # [UI]
@@ -188,7 +188,6 @@
 | --------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------- |
 | retriever | `search_manual(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                     | 설비 필터로 매뉴얼 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
 | retriever | `search_history(equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]`                    | 설비 필터로 확정 이력 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
-| retriever | `has_enough_evidence(hits: list[SearchHit], threshold: float) -> bool`                                  | 검색 결과가 근거로 충분한지 판단한다      | ValidationError                  |
 | generator | `set_chat_model(chat_model: BaseChatModel) -> None`                                                     | 답변 생성에 쓸 모델을 설정한다            | —                                |
 | generator | `generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer`                     | 고객 안내 답변을 생성한다                 | DependencyError                  |
 | generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False) -> Answer` | 엔지니어 대화 답변을 생성한다(`cross_equipment`는 다른 설비 근거가 섞인 폴백일 때 `True`) | DependencyError                  |
@@ -318,7 +317,7 @@ stateDiagram-v2
 | `CaseContext`    | `error_code: ErrorCode`, `memo: str \| None`                                                     | 신고 맥락(신고 코드의 상세와 증상 메모)을 pipeline·generator에 전달한다. |
 | `ChatRequest`    | `question: str`, `turns: list[ChatTurn]`                                                         | 엔지니어의 현재 질문과 저장된 대화를 한 번에 전달한다.                   |
 | `SearchHit`      | `ref_id`, `kind`, `equipment`, `code: str \| None`, `text`, `locator`, `distance: float \| None` | 검색 결과 한 건을 담는다.                                                |
-| `SearchSettings` | `manual_k: int`, `history_k: int`, `evidence_threshold: float`                                   | 엔지니어 검색 설정을 담는다.                                             |
+| `SearchSettings` | `manual_k: int`, `history_k: int`                                   | 엔지니어 검색 설정을 담는다.                                             |
 | `Chunk`          | `manual_id`, `equipment`, `page: int`, `section`, `chunk_no: int`, `version`, `text`             | 매뉴얼 청크 한 개와 출처 메타데이터를 담는다.                            |
 
 **설정(`config.py`)**
@@ -352,8 +351,8 @@ scripts ──→ config, db/parser, db/rdb, models
 - 엔지니어 검색 개수는 manual·history 각 상위 3건(`manual_k`·`history_k`)에서 시작한다.
 - 대화 이력은 생성 입력에서만 줄이고 저장된 이력은 지우지 않는다.
 - 원문 밖의 원인·절차를 단정하지 않고, 증상 메모는 확인된 사실과 구분한다(프롬프트 규칙).
-- 고객 안내(`customer_guidance`)는 신고 코드의 `manual`만 검색해 인용한다(신고 설비 필터, 다른 코드의 매뉴얼 청크 제외, 엔지니어와 같은 `evidence_threshold`, 폴백 없음). 근거가 부족하면 보류(`held`)다. `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
-- 대상 코드는 신고 코드로 고정하며 pipeline 입력 계약은 §2.3.2를 따른다. 4종 밖 설비·다른 설비·사전에 없는 주제·다른 코드를 묻는 질문도 먼저 신고 설비 필터로 검색한다. 보류 여부는 설비·키워드로 미리 거르지 않고 검색 결과의 근거 유무로만 정한다. 신고 설비 자료만으로 근거가 부족하면(`has_enough_evidence`가 거짓) 설비 필터 없이 4종 전체를 질문 원문으로 한 번 더 검색한다(폴백, 임계값은 1차와 같다). 폴백 근거로 답하면 인용의 설비가 신고 설비와 달라도 통과시키고 `Answer.notice`에 다른 설비 자료를 포함했다는 고정 문구를 담으며, 그래도 근거가 없으면 insufficient_evidence다.
+- 고객 안내(`customer_guidance`)는 신고 코드의 `manual`만 검색해 인용한다(신고 설비 필터, 다른 코드의 매뉴얼 청크 제외, 폴백 없음). 검색 결과가 없거나 모델이 근거 부족으로 판정하면 보류(`held`)다. `history` 컬렉션은 엔지니어 대화(`engineer_chat`)에서만 검색·인용한다.
+- 대상 코드는 신고 코드로 고정하며 pipeline 입력 계약은 §2.3.2를 따른다. 4종 밖 설비·다른 설비·사전에 없는 주제·다른 코드를 묻는 질문도 먼저 신고 설비 필터로 검색한다. 보류 여부는 설비·키워드·검색 거리로 미리 거르지 않고, 검색 결과로 답할 수 있는지를 모델이 판정한다(검색 거리 임계값은 두지 않는다). 엔지니어 답변에서 모델이 신고 설비 자료로 근거 부족이라 판정하면 설비 필터 없이 4종 전체를 질문 원문으로 한 번 더 검색해 다시 생성한다(폴백). 폴백 근거로 답하면 인용의 설비가 신고 설비와 달라도 통과시키고 `Answer.notice`에 다른 설비 자료를 포함했다는 고정 문구를 담으며, 그래도 근거가 없으면 insufficient_evidence다.
 - 파이프라인은 근거 확보 → 생성 → 검증 순이다. 고객 근거는 신고 코드의 `manual` 검색, 엔지니어 근거는 `manual`·`history` 검색이다. 근거 부족은 steps=[]인 Answer이며, 모델·검색 장애와 검증 실패는 DependencyError다. 저장은 service가 담당한다.
 - 출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가로 나눈다. 건별 사전 승인은 없다.
 
@@ -362,7 +361,7 @@ scripts ──→ config, db/parser, db/rdb, models
 `scripts/evaluate`가 `data/eval_questions.csv`로 실행하고 결과를 한 개의 dict로 `output_dir`에 JSON으로 남긴다. CI가 아니라 수동으로 실행하며, 목적(`customer_guidance`·`engineer_chat`)별로 따로 집계한다.
 
 - 문항: 목적별 10문항 이상. 정상 답변 대상·근거 부족(신고 설비 자료에 근거가 없는 질문)을 모두 포함하고 4종 설비에 나눈다. 다른 설비·컨베이어를 언급해도 신고 설비 자료에 근거가 있으면 정상 답변 대상이다. 문항은 데이터 작성자가 아닌 사람이 쓴다.
-- 임계값: 엔지니어 검색의 `evidence_threshold`는 보류 정확도와 정상 답변 비율을 함께 보고 정한다. 합격선을 바꾸면 이유를 평가 결과에 남긴다.
+- 합격선을 바꾸면 이유를 평가 결과에 남긴다.
 - 기록 항목: `versions`(데이터·모델·프롬프트 버전), `settings`(검색 설정), `results`(질문별 판정·인용), `summary`(목적별 지표).
 
 | 지표        | 정의                                                                                                                             | 합격선 |

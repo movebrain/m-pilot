@@ -62,7 +62,7 @@ def _config() -> AppConfig:
         manuals_dir=Path("data/manuals"),
         codes_path=Path("data/errorcodes.csv"),
         history_seed_path=Path("data/history_seed.csv"),
-        search=SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5),
+        search=SearchSettings(manual_k=3, history_k=3),
         demo_accounts={},
     )
 

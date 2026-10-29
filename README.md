@@ -141,7 +141,7 @@ flowchart TD
 │   │   │   └── chat.py     #   대화 저장·조회, 조치 확정, 확정 이력 조회
 │   │   └── vectordb.py     #   검색 자료 저장소 관리(색인·이력 반영·원문 조회)
 │   ├── rag/                # [RAG]
-│   │   ├── retriever.py    #   근거 검색과 근거 충분성 판단
+│   │   ├── retriever.py    #   근거 검색
 │   │   ├── generator.py    #   모델 호출과 답변 형식·인용 검증
 │   │   └── pipeline.py     #   고객 안내·엔지니어 답변의 단계 조립
 │   └── ui/                 # [UI] 고객 신고 목록·작성·상세, 엔지니어 대시보드·대화·조치 저장
@@ -217,7 +217,7 @@ python -m pytest -m "not db and not pdf"  # DB·실제 PDF 읽기를 뺀 빠른 
 | `openai_api_key` | 임베딩·답변 생성에 쓰는 OpenAI API 키 |
 | `chat_model_name`, `embedding_model_name` | 답변·임베딩 모델 |
 | `manuals_dir`, `codes_path`, `history_seed_path` | 매뉴얼 폴더, 에러코드 표, 서비스 이력 시드 경로 |
-| 검색 설정 | `manual_k`, `history_k`(처음엔 각 3건), `evidence_threshold` |
+| 검색 설정 | `manual_k`, `history_k`(처음엔 각 3건) |
 | `llm_timeout_seconds` | 모델 호출 제한 시간 (기본 60초) |
 | 데모 계정 | 고객·엔지니어 데모 계정 2개 |
 
