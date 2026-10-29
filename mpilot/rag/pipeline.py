@@ -92,10 +92,10 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
     신고 코드의 매뉴얼 검색(신고 설비 필터, 다른 코드 청크 제외) → 근거 충분성 판단 → 생성 → 검증 순으로 진행한다.
     엔지니어 답변과 달리 폴백(필터 없는 재검색)과 `history` 검색은 하지 않는다. 근거가 부족하거나 생성 결과의
     `verdict`가 `answered`가 아니면 추측하지 않고 `passes_guidance_check`를 부르지 않은 채, 보류 모양
-    (`steps=[]`, `notice` 있음)만 확인해 그 `Answer`를 돌려준다. `answered`이면 인용·안전 문구를 검증한다.
+    (`steps=[]`, `notice` 있음)만 확인해 그 `Answer`를 돌려준다. `answered`이면 인용을 검증한다.
 
     Args:
-        context: 신고 맥락. 대상 에러코드의 상세(필수 안전 문구 포함)와 증상 메모.
+        context: 신고 맥락. 대상 에러코드의 상세와 증상 메모.
         settings: 검색 설정. `manual_k`와 `evidence_threshold`만 쓴다.
 
     Returns:
@@ -105,7 +105,7 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
 
     Raises:
         ValidationError: `manual_k`가 1보다 작을 때(`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
-        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패, 보류 판정 형식 오류일 때
+        DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비 검증 실패, 보류 판정 형식 오류일 때
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
     error_code = context.error_code
@@ -120,7 +120,7 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
             raise DependencyError("고객 안내의 보류 판정 형식 검증에 실패했습니다.")
         return answer
     if not generator.passes_guidance_check(answer, hits, error_code):
-        raise DependencyError("고객 안내의 인용 또는 안전 문구 검증에 실패했습니다.")
+        raise DependencyError("고객 안내의 인용 검증에 실패했습니다.")
     return answer
 
 

@@ -62,7 +62,6 @@ MEMO_MAX_CHARS = 2000  # 증상 메모 최대 글자 수(spec §3.3 customer_mem
 #   _now_for_db()            지금 시각을 DATETIME 저장용 값으로
 #   _to_db_time(value)       시간대가 있는 시각을 DATETIME 저장용 값으로(시드 적재 등)
 #   _from_db_time(value)     DATETIME에서 꺼낸 값에 UTC 시간대 붙이기
-#   _to_json_list(values)    문자열 목록을 JSON 배열 문자열로
 #   _row_to_error_code(row)  error_codes 행 → ErrorCode
 #   _row_to_service_case(row) service_cases 행 → ServiceCase
 #   _row_to_resolution(row)  resolutions 행 → Resolution
@@ -130,18 +129,6 @@ def _from_db_time(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=UTC)
 
 
-def _to_json_list(values: list[str]) -> str:
-    """문자열 목록을 JSON 배열 문자열로 바꾼다(한글은 그대로 둔다).
-
-    Args:
-        values: 저장할 문자열 목록(예: `required_safety_rules`).
-
-    Returns:
-        str: JSON 배열 문자열. 빈 목록이면 `[]`.
-    """
-    return json.dumps(values, ensure_ascii=False)
-
-
 def _row_to_error_code(row) -> ErrorCode:
     """`error_codes` 한 행을 `ErrorCode`로 바꾼다.
 
@@ -149,7 +136,7 @@ def _row_to_error_code(row) -> ErrorCode:
         row: `select(error_codes)` 결과 행.
 
     Returns:
-        ErrorCode: `required_safety_rules`를 JSON에서 되돌린 에러코드 표 한 행.
+        ErrorCode: 에러코드 표 한 행.
 
     Raises:
         DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
@@ -166,9 +153,8 @@ def _row_to_error_code(row) -> ErrorCode:
             manual_id=row.manual_id,
             page=row.page,
             section=row.section,
-            required_safety_rules=json.loads(row.required_safety_rules),
         )
-    except ValueError:  # json 오류와 pydantic 검증 오류는 모두 ValueError다
+    except ValueError:  # pydantic 검증 오류는 ValueError다
         raise DependencyError(
             f"저장된 에러코드의 형식이 올바르지 않습니다: {row.equipment}:{row.code}"
         ) from None
@@ -341,7 +327,8 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
     """에러코드 CSV를 검증해 적재한다.
 
     필수값, `(equipment, code)` 중복, 설비 4종, 출처(`manual_id`, `page`, `section`)를 검증한다.
-    `required_safety_rules` 열은 JSON 배열 문자열이며 비어 있으면 `[]`다. 틀린 값은 고치지 않고 적재를 멈춘다.
+    머리글에 DB 컬럼이 모두 있어야 하며, 그 밖의 열(사람 검수 참고용 `required_safety_rules` 등)은 읽지 않는다.
+    틀린 값은 고치지 않고 적재를 멈춘다.
 
     Args:
         path: 에러코드 CSV 경로(`AppConfig.codes_path`, `data/errorcodes.csv`).
@@ -362,8 +349,8 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
         raise DependencyError(f"파일을 읽을 수 없습니다({type(e).__name__}): {path}") from None
     except (pd.errors.ParserError, pd.errors.EmptyDataError) as e:
         raise ValidationError(f"{Path(path).name}: CSV 형식이 올바르지 않습니다: {e}") from None
-    if set(df.columns) != set(columns) or df.empty:
-        raise ValidationError(f"{Path(path).name}: 머리글이 {list(columns)}와 다르거나 데이터가 없습니다.")
+    if not set(columns) <= set(df.columns) or df.empty:
+        raise ValidationError(f"{Path(path).name}: 머리글에 {list(columns)}가 모두 있어야 하며 데이터도 있어야 합니다.")
     rows = df.to_dict("records")
 
     codes, seen = [], set()
@@ -377,26 +364,16 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
             if limit and len(row[c]) > limit:
                 raise ValidationError(f"{no}번째 행: {c}는 {limit}자 이하여야 합니다.")
         try:
-            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. `required_safety_rules`는 JSON 배열 문자열이다.
-            code = ErrorCode(**{
-                **row,
-                "required_safety_rules": json.loads(row["required_safety_rules"]),
-            })
-        except ValueError as e:  # JSON 오류, pydantic 오류 모두 ValueError
+            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. DB 컬럼 밖의 열은 읽지 않는다.
+            code = ErrorCode(**{c: row[c] for c in columns})
+        except ValueError as e:  # pydantic 오류는 ValueError다
             raise ValidationError(f"{no}번째 행 값이 올바르지 않습니다: {e}") from None
         if (code.equipment, code.code) in seen:
             raise ValidationError(f"{no}번째 행: (equipment, code) 중복 {code.equipment}/{code.code}")
         seen.add((code.equipment, code.code))
         codes.append(code)
 
-    # 검증을 통과한 값을 저장한다. `required_safety_rules`는 공통 도구로 JSON 문자열로 되돌린다.
-    values = [
-        {
-            **c.model_dump(mode="json"),
-            "required_safety_rules": _to_json_list(c.required_safety_rules),
-        }
-        for c in codes
-    ]
+    values = [c.model_dump(mode="json") for c in codes]  # 검증을 통과한 값을 저장한다.
     try:
         with engine.begin() as conn:  # 한 트랜잭션: 실패하면 아무것도 남지 않는다
             conn.execute(insert(error_codes), values)

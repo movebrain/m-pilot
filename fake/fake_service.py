@@ -337,7 +337,6 @@ def _load_error_codes() -> dict[tuple[Equipment, str], ErrorCode]:
             manual_id=manual_id,
             page=1,
             section=_MOCK,
-            required_safety_rules=[],
         )
     return codes
 

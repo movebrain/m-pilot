@@ -6,7 +6,7 @@
 책임:
     - 고객 안내와 엔지니어 답변을 프롬프트(`prompts/`)로 생성한다. 모든 단계(`AnswerStep`)에는 출처가 1개 이상 붙는다.
     - 원문 밖의 원인·절차를 단정하지 않는다. 증상 메모는 확인된 사실과 구분한다(프롬프트 규칙).
-    - 검증: 인용이 확보한 근거에 실제로 있고 설비가 일치하는지, 고객 안내에는 필수 안전 문구가 들어 있는지 검사한다.
+    - 검증: 인용이 확보한 근거에 실제로 있고 설비가 일치하는지 검사한다.
       출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가가 맡는다.
     - 검증을 통과하지 못한 답은 보여 주지 않는다. 이 모듈은 통과 여부만 알려 주고, 실패를 `DependencyError`로
       올리는 일은 `pipeline`이 맡는다(spec §2.6).
@@ -79,7 +79,7 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
         hits: `pipeline`이 신고 코드의 매뉴얼에서 검색해 가려 낸 근거.
 
     Returns:
-        Answer: 단계마다 출처가 붙은 안내. 이 함수는 생성만 하며, 인용·안전 문구 검사는
+        Answer: 단계마다 출처가 붙은 안내. 이 함수는 생성만 하며, 인용 검사는
             `passes_guidance_check`가 한다.
 
     Raises:
@@ -87,8 +87,6 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
     """
     # 신고된 에러코드 정보를 꺼내서 짧은 이름으로 둔다.
     error_code = context.error_code
-    # 이 에러코드에서 꼭 들어가야 하는 안전 문구 목록을 꺼낸다.
-    safety_rules = error_code.required_safety_rules
     # 지시문 틀의 빈칸을 채워서 AI에게 보낼 질문글을 만든다.
     human = prompts.CUSTOMER_HUMAN.format(
         # 설비 이름(예: AGV)
@@ -101,8 +99,6 @@ def generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> A
         severity=error_code.severity.value,
         # 고객이 쓴 메모. 너무 길거나 위험한 글자는 다듬어서 넣는다.
         memo=_format_memo_for_prompt(context.memo),
-        # 안전 문구를 줄줄이 적는다. 하나도 없으면 "(없음)"을 넣는다.
-        safety_rules=_bullet_lines(safety_rules) or prompts.NO_SAFETY_RULES,
         # 근거 자료(매뉴얼 절차)를 AI가 읽기 좋은 모양으로 넣는다.
         evidence=_format_evidence(hits),
     )
@@ -157,15 +153,14 @@ def generate_engineer_answer(
 
     #답변 검사 (보여 줘도 되는지 판단)
 def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool:
-    """고객 안내의 인용과 안전 문구를 검사한다.
+    """고객 안내의 인용을 검사한다.
 
-    인용이 모두 `hits`에 있고(`locator` 포함) 설비가 일치하는지, `error_code.required_safety_rules`의 문구가
-    빠지지 않았는지 확인한다.
+    인용이 모두 `hits`에 있고(`locator` 포함) 설비가 일치하는지, 인용이 매뉴얼 근거인지 확인한다.
 
     Args:
         answer: 검사할 고객 안내.
         hits: 안내 생성에 쓴 매뉴얼 검색 근거(인용의 기준).
-        error_code: 신고한 에러코드. 필수 안전 문구 목록을 읽는다.
+        error_code: 신고한 에러코드. 설비를 읽는다.
 
     Returns:
         bool: 모두 통과하면 `True`. 하나라도 어긋나면 `False`다.
@@ -190,8 +185,7 @@ def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: Err
         for c in step.citations:
             if c.kind.value != "manual":
                 return False
-    # 마지막으로 꼭 들어가야 할 안전 문구가 다 있는지 확인하고, 그 결과(True/False)를 돌려준다.
-    return _contains_all_safety_rules(answer, error_code.required_safety_rules)
+    return True
 
 
 def passes_answer_check(
@@ -274,24 +268,6 @@ def _same_locator(source: str, cited: str) -> bool:
     return cited in (_collapse_whitespace(source), _collapse_whitespace(_escape_tag_text(source)))
 
 
-def _contains_all_safety_rules(answer: Answer, rules: list[str]) -> bool:
-    """필수 안전 문구가 단계 본문이나 안내 문구(notice)에 모두 들어 있는지 본다."""
-    # 꼭 넣어야 할 안전 문구가 원래 없다면
-    if not rules:
-        # 검사할 게 없으니 합격.
-        return True
-    # 각 단계의 글을 모아서 목록으로 만든다.
-    texts = [step.text for step in answer.steps]
-    # 안내 문구(notice)가 있다면
-    if answer.notice:
-        # 그 글도 목록에 더한다.
-        texts.append(answer.notice)
-    # 모은 글을 한 줄로 이어 붙이고, 공백 차이는 없앤다. 이 안에서 문구를 찾는다.
-    haystack = _collapse_whitespace(" ".join(texts))
-    # 안전 문구가 하나씩 전부 그 글 안에 있어야 합격. (빈 문구는 건너뛴다)
-    return all(_collapse_whitespace(rule) in haystack for rule in rules if rule.strip())
-
-
 def _is_answered(answer: Answer) -> bool:
     """답변 상태가 'answered'(답했음)인지 알려 준다."""
     return answer.verdict.value == "answered"
@@ -313,12 +289,6 @@ def _format_memo_for_prompt(memo: str | None) -> str:
     # 너무 길면 앞에서부터 자른 뒤(바꾼 글자가 중간에 잘리지 않게) 태그 글자를 바꿔서 돌려준다.
     return _escape_tag_text(memo.strip()[:_MAX_MEMO_CHARS])
 
-
-def _bullet_lines(items: list[str]) -> str:
-    lines = []
-    for item in items:
-        lines.append(f"- {item}")
-    return "\n".join(lines)
 
 
 def _escape_tag_text(text: str) -> str:

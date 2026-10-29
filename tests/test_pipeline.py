@@ -33,7 +33,6 @@ def make_context(equipment: str = "SRM", code: str = "S-104") -> CaseContext:
         equipment=equipment, code=code, name="주행 위치 편차", severity="하",
         action_owner="고객사 조치", cause="엔코더 커넥터", action="커넥터 재체결",
         manual_id="SRM_SPEC_v1", page=41, section="9.4",
-        required_safety_rules=[],
     )
     return CaseContext(error_code=error_code, memo="")
 
@@ -73,7 +72,7 @@ def fakes(monkeypatch):
         allow_flags=[],  # 인용 검증 호출마다 넘긴 allow_other_equipment
         check_calls=0,
         # 고객 안내
-        guidance_check_ok=True,  # 인용·안전 문구 검증을 통과하는가
+        guidance_check_ok=True,  # 인용 검증을 통과하는가
         guidance_error=None,  # 안내 생성 장애로 던질 예외
         guidance=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
         guidance_hits_seen=[],  # 안내 생성 호출마다 넘긴 근거

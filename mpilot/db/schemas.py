@@ -5,8 +5,7 @@
     `rdb`가 이 정의를 가져다 쓴다.
 
 정의한 테이블:
-    - `error_codes`: PK `(equipment, code)`. 에러코드 표 한 행과 가이드 검증용 목록 열 1개
-      (`required_safety_rules`, JSON 배열 문자열).
+    - `error_codes`: PK `(equipment, code)`. 에러코드 표 한 행.
     - `service_cases`: PK `case_id`. FK `(equipment, code)` → `error_codes`.
       `customer_memo`(TEXT, NULL), `source`, `status`, `route`, `guide_failure`,
       `self_guide_answer`(TEXT, NULL, JSON 문자열), `created_at`(DATETIME, NOT NULL),
@@ -76,8 +75,6 @@ error_codes = Table(
     Column("manual_id", String(64), nullable=False),  # 출처 PDF 식별자
     Column("page", Integer, nullable=False),  # 출처 쪽(1 이상)
     Column("section", String(255), nullable=False),  # 출처 절
-    # 아래 열은 JSON 배열 문자열이다. MySQL은 TEXT에 기본값을 둘 수 없어 `[]`는 rdb가 넣는다.
-    Column("required_safety_rules", Text, nullable=False),
     **TABLE_OPTIONS,
 )
 

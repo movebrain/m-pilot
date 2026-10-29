@@ -61,7 +61,7 @@
 | 대분류 | 소분류                        | 이벤트                                                                                                                            |
 | ------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | RAG    | 근거 검색 (retriever)         | 엔지니어가 질문하면 같은 설비의 매뉴얼·과거 이력에서 근거를 찾고, 고객 신고에서는 지정된 고객 수행 절차만 가져온다.               |
-| RAG    | 답변 생성·검증 (generator)    | 고객이나 엔지니어가 요청하면 단계마다 출처가 붙은 답이 나오고, 출처가 근거와 다르거나 안전 수칙이 빠진 답은 보여주지 않는다.      |
+| RAG    | 답변 생성·검증 (generator)    | 고객이나 엔지니어가 요청하면 단계마다 출처가 붙은 답이 나오고, 출처가 근거와 다른 답은 보여주지 않는다.                          |
 | RAG    | 고객 안내 흐름 (pipeline)     | 고객이 신고하면 매뉴얼의 고객 수행 절차만으로 셀프 가이드가 나오고, 만들 수 없으면 추측하지 않고 엔지니어에게 접수된다.           |
 | RAG    | 엔지니어 답변 흐름 (pipeline) | 엔지니어가 신고 건에서 질문하면 신고한 에러코드를 기준으로 답하고, 신고한 설비의 자료에서 근거를 찾지 못하면 조치 없이 그 사실만 알린다. |
 | RAG    | RAG 평가 (pipeline)           | 평가를 실행하면 고객 안내와 엔지니어 답변이 따로 채점되어 인용 정확도·정상 답변율·보류 정확도가 기록된다.                         |
@@ -181,7 +181,7 @@
 | generator | `set_chat_model(chat_model: BaseChatModel) -> None`                                                     | 답변 생성에 쓸 모델을 설정한다            | —                                |
 | generator | `generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer`                     | 고객 안내 답변을 생성한다                 | DependencyError                  |
 | generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False) -> Answer` | 엔지니어 대화 답변을 생성한다(`cross_equipment`는 다른 설비 근거가 섞인 폴백일 때 `True`) | DependencyError                  |
-| generator | `passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool`           | 고객 안내의 인용과 안전 문구를 검사한다   | —                                |
+| generator | `passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: ErrorCode) -> bool`           | 고객 안내의 인용을 검사한다               | —                                |
 | generator | `passes_answer_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
 | pipeline  | `run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Answer`                       | 고객 안내 처리 흐름을 실행한다            | ValidationError, DependencyError |
 | pipeline  | `run_engineer_answer(context: CaseContext, request: ChatRequest, settings: SearchSettings) -> Answer`   | 엔지니어 답변 처리 흐름을 실행한다        | ValidationError, DependencyError |
@@ -284,7 +284,7 @@ stateDiagram-v2
 
 | 객체                 | 필드                                                                                                                                                                                                                         | 책임                                                                                                              |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ErrorCode`          | `equipment`, `code`, `name`, `severity: Severity`, `action_owner: ActionOwner`, `cause`, `action`, `manual_id`, `page: int`, `section`, `required_safety_rules: list[str]`          | 에러코드 표 한 행으로, 경로 결정과 답변의 근거가 된다.                                                            |
+| `ErrorCode`          | `equipment`, `code`, `name`, `severity: Severity`, `action_owner: ActionOwner`, `cause`, `action`, `manual_id`, `page: int`, `section`          | 에러코드 표 한 행으로, 경로 결정과 답변의 근거가 된다.                                                            |
 | `CaseInput`          | `equipment: Equipment`, `code: str`, `memo: str \| None`                                                                                                                                                                     | 고객이 제출한 신고 입력값을 담는다.                                                                               |
 | `ServiceCase`        | `case_id`, `equipment`, `code`, `memo: str \| None`, `source: Source`, `status`, `route`, `guide_failure: GuideFailure \| None`, `guidance_answer: Answer \| None`, `created_at: datetime`, `completed_at: datetime \| None` | 신고 건 하나의 현재 상태를 담는다.                                                                                |
 | `Resolution`         | `cause`, `action`, `result`                                                                                                                                                                                                  | 엔지니어가 작성한 원인·조치·결과이며 입력과 확정 기록이 같은 구조다(셀프 가이드는 `ServiceCase.guidance_answer`). |
@@ -362,8 +362,7 @@ scripts ──→ config, db/parser, db/rdb, models
 
 - 정상 답변율 80%는 초기 목표이며 실측 결과가 아니다. 목적별 정상 문항의 분모가 0이면 평가 미완료로 처리한다.
 - 사람 검수는 생성된 고객 안내 전부와 엔지니어 answered 답변 최소 5건을 대상으로 한다. 인용 원문이 답을 뒷받침하는지, 고객 안내가 고객이 수행할 수 있는 절차만 포함하는지 확인하고 기록한다. 엔지니어 답변이 5건 미만이면 전부 검수하되 표본 부족을 기록하고 최소 검수 조건을 충족한 것으로 처리하지 않는다.
-- 근거 없는 조치·금지 절차가 발견되면 수정 후 재평가한다. 필수 안전 문구 자동 검증을 통과해도 사람 검수를 생략하지 않는다.
-- 고객 안내의 필수 안전 수칙 누락은 평가 지표로 집계하지 않는다. 실행 때마다 `passes_guidance_check`가 막고, 통과하지 못하면 가이드를 만들지 못한 것으로 보아 `support`로 접수한다.
+- 근거 없는 조치·금지 절차가 발견되면 수정 후 재평가한다. 고객 안내의 안전 수칙 준수는 자동으로 검증하지 않으므로 사람 검수로만 확인한다.
 
 ### 2.10 도메인 규칙
 
@@ -381,7 +380,7 @@ scripts ──→ config, db/parser, db/rdb, models
 | ------------------------------------------------------------- | ------------ | ---------------------------- |
 | `answered`                                                    | `self_guide` | NULL(`guidance_answer` 저장) |
 | 보류(근거 부족)                               | `support`    | `held`                       |
-| 모델·검색 장애, 제한 시간 초과, 인용·설비·안전 수칙 검증 실패 | `support`    | `generation_failed`          |
+| 모델·검색 장애, 제한 시간 초과, 인용·설비 검증 실패           | `support`    | `generation_failed`          |
 
 #### 상태 전이
 
@@ -477,7 +476,6 @@ erDiagram
 | `manual_id`                  | VARCHAR(64)  | NOT NULL |                           | 출처 PDF 식별자. 매뉴얼 테이블은 없다                      |
 | `page`                       | INTEGER      | NOT NULL | [앱] ≥ 1                  | 출처 쪽                                                    |
 | `section`                    | VARCHAR(255) | NOT NULL |                           | 출처 절                                                    |
-| `required_safety_rules`      | TEXT         | NOT NULL | [앱] 기본 `[]`            | 고객 안내에 반드시 들어갈 안전 문구 배열. 가이드 검증용    |
 
 #### service_cases
 
@@ -550,12 +548,12 @@ erDiagram
 
 에러코드 표의 정본이다.
 
-- 열은 `error_codes` 컬럼과 같다: `equipment,code,name,severity,action_owner,cause,action,manual_id,page,section,required_safety_rules`. `required_safety_rules` 열은 JSON 배열 문자열이고 비어 있으면 `[]`다.
+- 열은 `error_codes` 컬럼(`equipment,code,name,severity,action_owner,cause,action,manual_id,page,section`)과 같고, 사람 검수 참고용 `required_safety_rules` 열이 CSV에만 더 있다. 이 열은 JSON 배열 문자열이며 비어 있으면 `[]`다. 적재(`init_db`)는 이 열을 읽지 않고 DB·검색·고객 안내도 쓰지 않는다.
 - 필수값·중복(`equipment`, `code`)·설비 4종·출처(`manual_id`, `page`, `section`)를 검증하고 자동 보정하지 않는다.
 - `python -m scripts.build_error_codes`가 원자료 `data/raw/error_code_table.csv`(5열)와 매뉴얼 4종의 에러 코드 일람 표(9.2절, `parse_manuals` 청크)를 `(equipment, code)`로 합쳐 만든다.
   - `equipment`, `code`, `name`, `severity`, `action_owner`는 원자료 값을 쓴다. 매뉴얼 표와 다르면 고치지 않고 경고만 낸다.
   - `cause`, `action`은 그 코드 행의 "발생 조건 · 원인"과 "조치" 칸이고, `manual_id`, `page`, `section`은 그 행이 든 청크의 출처다.
-  - `required_safety_rules`는 사람이 매뉴얼 원문과 대조해 작성한다. 다시 생성해도 기존 파일의 값을 코드별로 이어받는다.
+  - `required_safety_rules`는 사람이 매뉴얼 원문과 대조해 작성하는 검수 참고용 값이다. 다시 생성해도 기존 파일의 값을 코드별로 이어받는다.
   - 원자료 코드가 매뉴얼 표에 없거나 표 행 모양이 다르면 파일을 쓰지 않고 중단한다.
 - 고객 수행 절차 목록 열은 두지 않는다. `고객사 조치` 코드는 신고 코드의 매뉴얼 검색 근거로 가이드를 시도하고, 근거가 부족하면 `guide_failure=held`인 `support`로 접수한다(§2.6, §2.10).
 

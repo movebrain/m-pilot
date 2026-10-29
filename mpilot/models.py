@@ -212,7 +212,6 @@ class ErrorCode(_Model):
         manual_id: 출처 PDF 식별자.
         page: 출처 쪽(1 이상).
         section: 출처 절.
-        required_safety_rules: 고객 안내에 반드시 들어가야 할 안전 문구 목록. 가이드 검증용.
     """
 
     equipment: Equipment
@@ -225,7 +224,6 @@ class ErrorCode(_Model):
     manual_id: str
     page: int = Field(ge=1)
     section: str
-    required_safety_rules: list[str] = Field(default_factory=list)
 
 
 class CaseInput(_Model):

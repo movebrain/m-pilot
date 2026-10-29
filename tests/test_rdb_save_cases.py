@@ -60,7 +60,6 @@ def rdb(rdb_db):
                 manual_id="srm_manual",
                 page=12,
                 section="11.1",
-                required_safety_rules="[]",
             )
         )
     return rdb_db
