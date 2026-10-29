@@ -86,6 +86,7 @@ def _make_test_db_url() -> str | None:
 def rdb_db():
     """테스트 DB에 연결하고 빈 테이블 4개를 만든 뒤 `rdb` 모듈을 넘겨준다."""
     from mpilot.db import rdb
+    from mpilot.db.rdb import _common
     from mpilot.models import DependencyError
 
     env = _read_env()
@@ -103,8 +104,9 @@ def rdb_db():
     yield rdb
 
     # 다음 테스트가 연결 전 상태에서 시작하도록 연결을 닫는다.
-    rdb._engine.dispose()
-    rdb._engine = None
+    # 엔진은 rdb._common 한 곳에 있으므로 그 모듈을 직접 고친다(패키지 rdb에는 _engine이 없다).
+    _common._engine.dispose()
+    _common._engine = None
 
 
 MANUALS_DIR = ROOT / "data" / "manuals"

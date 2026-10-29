@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from mpilot.db.rdb import _common
 from mpilot.db.schemas import error_codes
 from mpilot.models import DependencyError, Equipment, ValidationError
 
@@ -66,7 +67,7 @@ def valid_code_rows() -> list[dict]:
 
 def count_rows(rdb) -> int:
     """`error_codes` 표의 행 수."""
-    with rdb._get_engine().connect() as conn:
+    with _common._get_engine().connect() as conn:
         return len(conn.execute(select(error_codes)).all())
 
 
@@ -215,7 +216,7 @@ def test_functions_require_connect(tmp_path):
     # DB가 없어도 도는 테스트: connect 전에 부르면 DependencyError.
     from mpilot.db import rdb as rdb_module
 
-    assert rdb_module._engine is None
+    assert _common._engine is None
     with pytest.raises(DependencyError):
         rdb_module.fetch_error_codes(Equipment.AGV)
     with pytest.raises(DependencyError):
