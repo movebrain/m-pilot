@@ -240,6 +240,12 @@ python -m pytest -m "not db and not pdf"  # DB·실제 PDF 읽기를 뺀 빠른 
 
 정상 답변율 80%는 초기 목표이며 실측 결과가 아닙니다. 사람 검수는 생성된 고객 안내 전부와 엔지니어 `answered` 답변 최소 5건을 대상으로 합니다. 고객 안내의 안전 수칙 준수는 자동 검증하지 않고 이 검수로 확인합니다.
 
+## 시연 자동 배포
+
+`develop` 푸시에서 일반·MySQL·PDF 테스트가 모두 통과하면 ARM64 이미지를 비공개 GHCR에 발행하고 SSH로 배포합니다. 최초 서버 준비와 비밀 설정 등록이 필요하며, 동작 방식은 [배포 문서](deploy/README.md)를 따릅니다.
+
+고객 경로는 `/mpilot/customer/`, 엔지니어 경로는 `/mpilot/engineer/`입니다. 재배포에서는 MySQL 데이터를 유지하고, 앱 기동 실패 시 이전 이미지로 복구합니다.
+
 ## 개발 규칙
 
 - **브랜치**: `main` ← `develop` ← `<type>/<설명>` 순서로 병합합니다. 작업 브랜치는 `develop`으로 squash 병합하고, `develop`은 `main`으로 merge commit합니다. `main`·`develop`에는 직접 push하지 않고 force push도 하지 않습니다.

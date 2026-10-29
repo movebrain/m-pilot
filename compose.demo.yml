@@ -1,0 +1,73 @@
+name: mpilot-demo
+
+x-app: &app
+  image: ${MPILOT_IMAGE:?image digest required}
+  platform: linux/arm64
+  restart: unless-stopped
+  environment: &app-env
+    MYSQL_HOST: mysql
+    MYSQL_PORT: "3306"
+    MYSQL_DATABASE: ${MYSQL_DATABASE:?required}
+    MYSQL_USER: ${MYSQL_USER:?required}
+    MYSQL_PASSWORD: ${MYSQL_PASSWORD:?required}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:?required}
+    OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:?required}
+    OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:?required}
+    EVIDENCE_THRESHOLD: ${EVIDENCE_THRESHOLD:?required}
+    DEMO_CUSTOMER_ID: ${DEMO_CUSTOMER_ID:?required}
+    DEMO_CUSTOMER_PASSWORD: ${DEMO_CUSTOMER_PASSWORD:?required}
+    DEMO_ENGINEER_ID: ${DEMO_ENGINEER_ID:?required}
+    DEMO_ENGINEER_PASSWORD: ${DEMO_ENGINEER_PASSWORD:?required}
+    MANUAL_K: ${MANUAL_K:-3}
+    HISTORY_K: ${HISTORY_K:-3}
+    LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+  depends_on:
+    mysql:
+      condition: service_healthy
+  healthcheck:
+    test: [CMD, python, -c, "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['APP_PORT']+'/config',timeout=5)"]
+    interval: 10s
+    timeout: 6s
+    start_period: 20m
+    retries: 3
+
+services:
+  mysql:
+    image: mysql:8.0@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+    platform: linux/arm64
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?required}
+      MYSQL_USER: ${MYSQL_USER:?required}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?required}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u "$$MYSQL_USER" "$$MYSQL_DATABASE" -e "SELECT 1" >/dev/null 2>&1']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  customer:
+    <<: *app
+    command: [python, app_customer.py]
+    ports: ["127.0.0.1:17860:7860"]
+    environment:
+      <<: *app-env
+      APP_PORT: "7860"
+      GRADIO_ROOT_PATH: /mpilot/customer
+
+  engineer:
+    <<: *app
+    command: [python, app_engineer.py]
+    ports: ["127.0.0.1:17861:7861"]
+    environment:
+      <<: *app-env
+      APP_PORT: "7861"
+      GRADIO_ROOT_PATH: /mpilot/engineer
+
+volumes:
+  mysql-data:
+    name: mpilot-demo-mysql-data
