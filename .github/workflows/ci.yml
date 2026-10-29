@@ -9,10 +9,55 @@ on:
 permissions:
   contents: read
 
+# 테스트를 마커(tests/conftest.py)로 세 job에 나눠 병렬로 돌린다.
+#   unit: DB·실제 PDF가 필요 없는 테스트    db: MySQL이 필요한 테스트    pdf: 합본 매뉴얼 PDF를 읽는 느린 테스트
 jobs:
-  test:
+  # PR이 PDF 읽기 테스트에 영향을 주는 파일을 건드렸는지 본다.
+  # push(develop·main)는 항상 돌려 develop에서 파싱 캐시를 만들어 두고, 그 캐시를 모든 PR이 쓴다.
+  # shortcut: 파서가 읽는 파일 목록을 손으로 적었다. 파서가 mpilot.models 밖의 모듈을 읽게 되면 여기에도 더한다.
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 25  # 합본 매뉴얼 PDF를 읽는 파서 테스트가 길다(약 10분)
+    outputs:
+      pdf: ${{ steps.diff.outputs.pdf }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # PR 기준 커밋과 비교하려면 이력이 있어야 한다
+
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          pdf=true
+          if [ "$EVENT" = pull_request ]; then
+            files=$(git diff --name-only "$BASE_SHA" HEAD)
+            if ! grep -qE '^(data/manuals/|mpilot/db/parser/|mpilot/models\.py$|tests/conftest\.py$|tests/test_parser_|tests/test_disk_parse_cache\.py$|requirements\.txt$|\.github/workflows/ci\.yml$)' <<< "$files"; then
+              pdf=false
+            fi
+          fi
+          echo "pdf=$pdf" >> "$GITHUB_OUTPUT"
+
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 테스트 실행 (DB·PDF 제외)
+        run: python -m pytest -m "not db and not pdf" --durations=15
+
+  db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       # 시연용 DB와 분리된 테스트 DB. 러너가 헬스체크 통과를 기다리고 job이 끝나면 정리한다.
       # shortcut: 서비스 컨테이너는 실행 인자를 못 줘 서버 콜레이션이 MySQL 기본값(utf8mb4_0900_ai_ci)이다.
@@ -50,6 +95,25 @@ jobs:
       - name: 의존성 설치
         run: pip install -r requirements.txt
 
+      - name: 테스트 실행 (DB)
+        run: python -m pytest -m db --durations=15
+
+  pdf:
+    needs: changes
+    if: needs.changes.outputs.pdf == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25  # 합본 매뉴얼 PDF를 읽는 파서 테스트가 길다(캐시 없이 약 10분)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
       # 합본 매뉴얼 PDF 읽기 결과(tests/conftest.py의 디스크 캐시). PDF·parser 패키지·의존성이 바뀌면 키가 달라져 새로 읽는다.
       # PR 브랜치에서 만든 캐시는 그 PR만 쓰고, develop에서 만든 캐시는 모든 PR이 쓴다.
       - name: 파싱 캐시 복원
@@ -58,5 +122,5 @@ jobs:
           path: .pytest_parse_cache
           key: parse-${{ hashFiles('data/manuals/*.pdf', 'mpilot/db/parser/*.py', 'tests/conftest.py', 'requirements.txt') }}
 
-      - name: 테스트 실행
-        run: python -m pytest
+      - name: 테스트 실행 (PDF)
+        run: python -m pytest -m pdf --durations=15

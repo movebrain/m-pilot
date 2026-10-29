@@ -23,6 +23,25 @@ from sqlalchemy.engine import URL
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# 실제 매뉴얼 PDF를 읽는 fixture. 이 fixture를 쓰는 테스트에는 `pdf` 마커가 붙는다.
+PDF_FIXTURES = {"disk_parse", "real_page_texts", "real_tables"}
+
+
+def pytest_collection_modifyitems(items) -> None:
+    """DB·실제 PDF를 쓰는 테스트에 `db`·`pdf` 마커를 붙인다. CI가 `-m`으로 job을 나누는 기준이다.
+
+    fixture 이름으로 정하므로 `rdb_db`나 PDF fixture를 쓰는 테스트는 따로 표시하지 않는다.
+    fixture 없이 PDF를 직접 여는 테스트만 `@pytest.mark.pdf`를 직접 단다.
+
+    Args:
+        items: 수집된 테스트 목록.
+    """
+    for item in items:
+        if "rdb_db" in item.fixturenames:
+            item.add_marker(pytest.mark.db)
+        if PDF_FIXTURES & set(item.fixturenames):
+            item.add_marker(pytest.mark.pdf)
+
 
 def _read_env() -> dict:
     """`.env` 값 위에 환경 변수를 덮어쓴 설정을 돌려준다. 빈 값은 없는 것으로 본다.

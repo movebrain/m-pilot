@@ -65,6 +65,7 @@ def test_read_manual_identity_rejects_missing_or_mixed(footers):
         _read_manual_identity(footers)
 
 
+@pytest.mark.pdf  # PDF를 직접 열어 conftest의 PDF fixture를 거치지 않으므로 마커를 직접 단다
 @pytest.mark.parametrize(
     ("file_name", "manual_id", "version"),
     [
