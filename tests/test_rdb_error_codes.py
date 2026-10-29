@@ -53,7 +53,6 @@ def code_row(eq: Equipment, error_code: str, **overrides) -> dict:
         "manual_id": f"{eq.name.lower()}_manual",
         "page": "12",
         "section": "11.1",
-        "customer_procedure_ref_ids": json.dumps([f"manual:{eq.name.lower()}_manual:12:1"]),
         "required_safety_rules": json.dumps(["전원을 차단한다"], ensure_ascii=False),
     }
     row.update(overrides)
@@ -84,19 +83,17 @@ def test_load_error_codes_stores_rows_and_fetch_returns_them(rdb, tmp_path):
     fetched = rdb.fetch_error_codes(Equipment.SRM)
     assert [c.code for c in fetched] == ["S101"]
     assert fetched[0].page == 12
-    assert fetched[0].customer_procedure_ref_ids == ["manual:srm_manual:12:1"]
     assert fetched[0].required_safety_rules == ["전원을 차단한다"]
 
 
 def test_load_error_codes_accepts_empty_lists_and_bom(rdb, tmp_path):
-    row = code_row(Equipment.AGV, "A001", customer_procedure_ref_ids="[]", required_safety_rules="[]")
+    row = code_row(Equipment.AGV, "A001", required_safety_rules="[]")
     path = tmp_path / "errorcodes.csv"
     write_csv(path, CODE_HEADER, [row])
     path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())  # 엑셀에서 저장한 CSV처럼 BOM을 붙인다
 
     loaded = rdb.load_error_codes_from_csv(path)
 
-    assert loaded[0].customer_procedure_ref_ids == []
     assert loaded[0].required_safety_rules == []
 
 
@@ -109,9 +106,9 @@ def test_load_error_codes_accepts_empty_lists_and_bom(rdb, tmp_path):
         code_row(Equipment.AGV, "A999", severity="최상"),  # 허용 밖 심각도
         code_row(Equipment.AGV, "A999", page="0"),  # 쪽은 1 이상
         code_row(Equipment.AGV, "A999", page="12쪽"),  # 쪽은 정수
-        code_row(Equipment.AGV, "A999", customer_procedure_ref_ids=""),  # 빈 목록은 []로 써야 한다
+        code_row(Equipment.AGV, "A999", required_safety_rules=""),  # 빈 목록은 []로 써야 한다
         code_row(Equipment.AGV, "A999", required_safety_rules="전원 차단"),  # JSON 배열 아님
-        code_row(Equipment.AGV, "A999", customer_procedure_ref_ids='"문자열"'),  # 배열 아님
+        code_row(Equipment.AGV, "A999", required_safety_rules='"문자열"'),  # 배열 아님
         code_row(Equipment.AGV, "A361"),  # 중복 키
         code_row(Equipment.AGV, "A" * 33),  # code VARCHAR(32) 초과
         code_row(Equipment.AGV, "A999", name="가" * 256),  # name VARCHAR(255) 초과

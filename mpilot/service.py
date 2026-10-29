@@ -418,39 +418,11 @@ def prepare_search_index() -> None:
         None: 색인이 준비된다.
 
     Raises:
-        ValidationError: 문서 ID 구성이나 허용 절차 ID 검증에 실패했을 때.
+        ValidationError: 문서 ID 구성에 실패했을 때.
         DependencyError: PDF·DB·임베딩·저장소 장애일 때. 이 경우 앱 시작을 중단한다.
     """
     config = _require_config()
     chunks = parser.parse_manuals(config.manuals_dir)
     codes = [row for equipment in Equipment for row in rdb.fetch_error_codes(equipment)]
-    _check_customer_procedure_ids(codes, {_chunk_ref_id(chunk) for chunk in chunks})
     histories = rdb.fetch_resolved_cases()
     vectordb.rebuild_search_index(chunks, codes, histories)
-
-
-def _chunk_ref_id(chunk: Chunk) -> str:
-    """매뉴얼 청크의 검색 문서 ID(`manual:<manual_id>:<쪽>:<chunk_no>`, spec §3.4)를 만든다."""
-    return f"manual:{chunk.manual_id}:{chunk.page}:{chunk.chunk_no}"
-
-
-def _check_customer_procedure_ids(codes: list[ErrorCode], chunk_ids: set[str]) -> None:
-    """에러코드 표의 허용 절차 ID가 모두 매뉴얼 청크에 있는지 확인한다.
-
-    Args:
-        codes: 설비 4종의 에러코드 표 행.
-        chunk_ids: 매뉴얼 청크의 문서 ID 모음.
-
-    Returns:
-        None: 모두 있으면 아무 일도 하지 않는다.
-
-    Raises:
-        ValidationError: 청크에 없는 허용 절차 ID가 하나라도 있을 때. 어느 코드인지만 알리고 고치지 않는다.
-    """
-    missing = [
-        f"{row.equipment}:{row.code}"
-        for row in codes
-        if any(ref_id not in chunk_ids for ref_id in row.customer_procedure_ref_ids)
-    ]
-    if missing:
-        raise ValidationError(f"매뉴얼에 없는 허용 절차 ID: {', '.join(missing)}")

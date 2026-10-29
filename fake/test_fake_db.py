@@ -260,14 +260,6 @@ def indexed():
             setattr(module, name, original)
 
 
-def test_customer_procedure_ids_point_to_same_equipment_manual_chunks(indexed):
-    for equipment in Equipment:
-        for code in rdb.fetch_error_codes(equipment):
-            for ref in code.customer_procedure_ref_ids:
-                doc = vectordb.get_document(CitationKind.MANUAL, ref)
-                assert doc.metadata["doc_type"] == "manual" and doc.metadata["equipment"] == equipment.value
-
-
 def test_manual_search_is_filtered_by_equipment_and_sorted(indexed):
     for equipment in Equipment:
         hits = retriever.search_manual(equipment, "주행 인버터 과전류 점검", 5)

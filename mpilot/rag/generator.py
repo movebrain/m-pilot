@@ -164,7 +164,7 @@ def passes_guidance_check(answer: Answer, hits: list[SearchHit], error_code: Err
 
     Args:
         answer: 검사할 고객 안내.
-        hits: 안내 생성에 쓴 허용 절차 원문(인용의 기준).
+        hits: 안내 생성에 쓴 매뉴얼 검색 근거(인용의 기준).
         error_code: 신고한 에러코드. 필수 안전 문구 목록을 읽는다.
 
     Returns:

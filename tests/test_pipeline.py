@@ -33,7 +33,7 @@ def make_context(equipment: str = "SRM", code: str = "S-104") -> CaseContext:
         equipment=equipment, code=code, name="주행 위치 편차", severity="하",
         action_owner="고객사 조치", cause="엔코더 커넥터", action="커넥터 재체결",
         manual_id="SRM_SPEC_v1", page=41, section="9.4",
-        customer_procedure_ref_ids=[], required_safety_rules=[],
+        required_safety_rules=[],
     )
     return CaseContext(error_code=error_code, memo="")
 

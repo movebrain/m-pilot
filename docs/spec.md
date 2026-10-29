@@ -282,7 +282,7 @@ stateDiagram-v2
 
 | 객체                 | 필드                                                                                                                                                                                                                         | 책임                                                                                                              |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ErrorCode`          | `equipment`, `code`, `name`, `severity: Severity`, `action_owner: ActionOwner`, `cause`, `action`, `manual_id`, `page: int`, `section`, `customer_procedure_ref_ids: list[str]`, `required_safety_rules: list[str]`          | 에러코드 표 한 행으로, 경로 결정과 답변의 근거가 된다.                                                            |
+| `ErrorCode`          | `equipment`, `code`, `name`, `severity: Severity`, `action_owner: ActionOwner`, `cause`, `action`, `manual_id`, `page: int`, `section`, `required_safety_rules: list[str]`          | 에러코드 표 한 행으로, 경로 결정과 답변의 근거가 된다.                                                            |
 | `CaseInput`          | `equipment: Equipment`, `code: str`, `memo: str \| None`                                                                                                                                                                     | 고객이 제출한 신고 입력값을 담는다.                                                                               |
 | `ServiceCase`        | `case_id`, `equipment`, `code`, `memo: str \| None`, `source: Source`, `status`, `route`, `guide_failure: GuideFailure \| None`, `guidance_answer: Answer \| None`, `created_at: datetime`, `completed_at: datetime \| None` | 신고 건 하나의 현재 상태를 담는다.                                                                                |
 | `Resolution`         | `cause`, `action`, `result`                                                                                                                                                                                                  | 엔지니어가 작성한 원인·조치·결과이며 입력과 확정 기록이 같은 구조다(셀프 가이드는 `ServiceCase.guidance_answer`). |
@@ -475,7 +475,6 @@ erDiagram
 | `manual_id`                  | VARCHAR(64)  | NOT NULL |                           | 출처 PDF 식별자. 매뉴얼 테이블은 없다                      |
 | `page`                       | INTEGER      | NOT NULL | [앱] ≥ 1                  | 출처 쪽                                                    |
 | `section`                    | VARCHAR(255) | NOT NULL |                           | 출처 절                                                    |
-| `customer_procedure_ref_ids` | TEXT         | NOT NULL | [앱] 기본 `[]`            | (미사용) 고객 안내가 읽지 않는다. 후속 PR에서 제거          |
 | `required_safety_rules`      | TEXT         | NOT NULL | [앱] 기본 `[]`            | 고객 안내에 반드시 들어갈 안전 문구 배열. 가이드 검증용    |
 
 #### service_cases
@@ -549,15 +548,14 @@ erDiagram
 
 에러코드 표의 정본이다.
 
-- 열은 `error_codes` 컬럼과 같다: `equipment,code,name,severity,action_owner,cause,action,manual_id,page,section,customer_procedure_ref_ids,required_safety_rules`. 두 목록 열은 JSON 배열 문자열이고 비어 있으면 `[]`다.
+- 열은 `error_codes` 컬럼과 같다: `equipment,code,name,severity,action_owner,cause,action,manual_id,page,section,required_safety_rules`. `required_safety_rules` 열은 JSON 배열 문자열이고 비어 있으면 `[]`다.
 - 필수값·중복(`equipment`, `code`)·설비 4종·출처(`manual_id`, `page`, `section`)를 검증하고 자동 보정하지 않는다.
 - `python -m scripts.build_error_codes`가 원자료 `data/raw/error_code_table.csv`(5열)와 매뉴얼 4종의 에러 코드 일람 표(9.2절, `parse_manuals` 청크)를 `(equipment, code)`로 합쳐 만든다.
   - `equipment`, `code`, `name`, `severity`, `action_owner`는 원자료 값을 쓴다. 매뉴얼 표와 다르면 고치지 않고 경고만 낸다.
   - `cause`, `action`은 그 코드 행의 "발생 조건 · 원인"과 "조치" 칸이고, `manual_id`, `page`, `section`은 그 행이 든 청크의 출처다.
-  - `customer_procedure_ref_ids`는 자동으로 채운다. 매뉴얼 표 9-3은 `고객사 조치`를 "고객사가 본 매뉴얼의 조치 절차로 직접 해결할 수 있는 에러"로 정의하므로, 조치 구분이 `고객사 조치`인 코드에는 그 코드 행이 든 표 청크 ID(`manual:<manual_id>:<page>:<chunk_no>`)를 넣고, `엔지니어 필요`면 `[]`로 둔다.
   - `required_safety_rules`는 사람이 매뉴얼 원문과 대조해 작성한다. 다시 생성해도 기존 파일의 값을 코드별로 이어받는다.
   - 원자료 코드가 매뉴얼 표에 없거나 표 행 모양이 다르면 파일을 쓰지 않고 중단한다.
-- `customer_procedure_ref_ids`는 고객 안내 경로가 더 이상 읽지 않는다(고객 안내는 신고 코드의 매뉴얼 검색 근거를 쓴다). 값이 `[]`여도 `고객사 조치` 코드는 가이드를 시도하고, 근거가 부족하면 `guide_failure=held`인 `support`로 접수한다. 이 열과 생성 로직은 후속 PR에서 제거한다.
+- 고객 수행 절차 목록 열은 두지 않는다. `고객사 조치` 코드는 신고 코드의 매뉴얼 검색 근거로 가이드를 시도하고, 근거가 부족하면 `guide_failure=held`인 `support`로 접수한다(§2.6, §2.10).
 
 #### data/history_seed.csv
 
@@ -587,11 +585,11 @@ erDiagram
 | 확정 현장 조치 | `history` | `history:<case_id>`                    | 설비, 코드, case_id, 완료 시각 |
 
 - ID는 `:`로 구분한다. 설비 이름의 공백(`Mini Loader`)은 그대로 쓰고, 구성 요소에 `:`가 있으면 적재 오류다. `chunk_no`는 쪽 안에서 1부터 매긴다.
-- 청킹 규칙과 청크 ID 형식(`manual:<manual_id>:<page>:<chunk_no>`)은 1주차 초에 확정하고 동결한다. `customer_procedure_ref_ids`를 생성하기 전에 확정해야 하며, 동결 뒤에 바꾸면 `data/errorcodes.csv`를 다시 생성해야 하므로 바꾸지 않는다.
+- 청킹 규칙과 청크 ID 형식(`manual:<manual_id>:<page>:<chunk_no>`)은 1주차 초에 확정하고 동결한다. 저장된 셀프 가이드의 인용이 이 ID로 원문을 다시 찾으므로 동결 뒤에는 바꾸지 않는다.
 - 검색은 신고 설비 필터가 기본이다. 필터 없는 검색은 신고 설비 자료만으로 근거가 부족할 때의 폴백뿐이다(§2.6). `history`에는 `resolutions` 행이 있는 건(시드 포함)만 넣고 `case_id`로 중복을 제거한다.
 - 이력 본문은 설비·코드·메모와 확정된 원인·조치·결과다. 자동 가이드·대화는 넣지 않는다.
 - DB(`rdb`)의 확정 이력이 정본이다. 같은 `case_id`는 upsert이고 전체 재생성은 같은 ID를 쓴다. DB와 Chroma의 원자성은 가정하지 않으며, 반영 실패는 건별로 저장하지 않고 앱 재시작의 전체 재생성으로 복구한다. 재생성은 컬렉션을 삭제하고 다시 만든다(원자 교체 없음, 실패하면 시작을 중단하고 다시 시작한다).
-- 색인 생성은 모든 `customer_procedure_ref_ids`가 `manual` 컬렉션에 실제로 있는지 검증하고 없으면 실패한다.
+- 색인 생성은 문서 ID 구성 요소에 `:`가 있거나 `manual` 문서 ID가 겹치면 실패한다.
 - PoC에서 원자료·파싱/청킹 규칙·문서 ID·원문은 검수 후 동결한다. 확정 이력 추가와 동일 자료의 재색인만 허용하며 같은 ID는 같은 원문을 유지한다. 과거 인용 원문은 현재 인덱스에서 조회하고 별도 스냅샷은 저장하지 않는다.
 
 ---

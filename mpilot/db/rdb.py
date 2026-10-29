@@ -134,7 +134,7 @@ def _to_json_list(values: list[str]) -> str:
     """문자열 목록을 JSON 배열 문자열로 바꾼다(한글은 그대로 둔다).
 
     Args:
-        values: 저장할 문자열 목록(예: `customer_procedure_ref_ids`).
+        values: 저장할 문자열 목록(예: `required_safety_rules`).
 
     Returns:
         str: JSON 배열 문자열. 빈 목록이면 `[]`.
@@ -149,7 +149,7 @@ def _row_to_error_code(row) -> ErrorCode:
         row: `select(error_codes)` 결과 행.
 
     Returns:
-        ErrorCode: 목록 열 2개를 JSON에서 되돌린 에러코드 표 한 행.
+        ErrorCode: `required_safety_rules`를 JSON에서 되돌린 에러코드 표 한 행.
 
     Raises:
         DependencyError: 저장된 값이 깨져 업무 객체로 바꿀 수 없을 때.
@@ -166,7 +166,6 @@ def _row_to_error_code(row) -> ErrorCode:
             manual_id=row.manual_id,
             page=row.page,
             section=row.section,
-            customer_procedure_ref_ids=json.loads(row.customer_procedure_ref_ids),
             required_safety_rules=json.loads(row.required_safety_rules),
         )
     except ValueError:  # json 오류와 pydantic 검증 오류는 모두 ValueError다
@@ -342,7 +341,7 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
     """에러코드 CSV를 검증해 적재한다.
 
     필수값, `(equipment, code)` 중복, 설비 4종, 출처(`manual_id`, `page`, `section`)를 검증한다.
-    두 목록 열은 JSON 배열 문자열이며 비어 있으면 `[]`다. 틀린 값은 고치지 않고 적재를 멈춘다.
+    `required_safety_rules` 열은 JSON 배열 문자열이며 비어 있으면 `[]`다. 틀린 값은 고치지 않고 적재를 멈춘다.
 
     Args:
         path: 에러코드 CSV 경로(`AppConfig.codes_path`, `data/errorcodes.csv`).
@@ -378,10 +377,9 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
             if limit and len(row[c]) > limit:
                 raise ValidationError(f"{no}번째 행: {c}는 {limit}자 이하여야 합니다.")
         try:
-            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. 목록 열 2개는 JSON 배열 문자열이다.
+            # 설비 4종·심각도·조치 구분·쪽(≥1)은 models가 검증한다. `required_safety_rules`는 JSON 배열 문자열이다.
             code = ErrorCode(**{
                 **row,
-                "customer_procedure_ref_ids": json.loads(row["customer_procedure_ref_ids"]),
                 "required_safety_rules": json.loads(row["required_safety_rules"]),
             })
         except ValueError as e:  # JSON 오류, pydantic 오류 모두 ValueError
@@ -391,11 +389,10 @@ def load_error_codes_from_csv(path: Path) -> list[ErrorCode]:
         seen.add((code.equipment, code.code))
         codes.append(code)
 
-    # 검증을 통과한 값을 저장한다. 목록 열은 공통 도구로 JSON 문자열로 되돌린다.
+    # 검증을 통과한 값을 저장한다. `required_safety_rules`는 공통 도구로 JSON 문자열로 되돌린다.
     values = [
         {
             **c.model_dump(mode="json"),
-            "customer_procedure_ref_ids": _to_json_list(c.customer_procedure_ref_ids),
             "required_safety_rules": _to_json_list(c.required_safety_rules),
         }
         for c in codes

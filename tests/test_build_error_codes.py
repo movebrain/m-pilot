@@ -49,7 +49,6 @@ def test_read_manual_code_rows_takes_cells_and_source():
     assert s101["cause"] == "센서 오염"
     assert s101["action"] == "작업자: CMD-09 RESET 1회 재시도. 정비자: 센서 청소"
     assert (s101["manual_id"], s101["page"], s101["section"]) == ("HMX-SRM-TSM-001", 22, "9.2 에러 코드 일람")
-    assert s101["ref_id"] == "manual:HMX-SRM-TSM-001:22:6"  # 그 행이 들어 있는 청크 ID
     assert rows[("SRM", "S102")]["action_owner"] == "엔지니어 필요"
 
 
@@ -98,14 +97,13 @@ def manual_rows():
     return build.read_manual_code_rows([table_chunk([S101_ROW, S102_ROW])])
 
 
-def test_build_rows_links_customer_procedure_only_for_customer_action():
+def test_build_rows_follows_raw_order_with_empty_safety_rules():
     raws = [raw(), raw("S102", "과속도 트립", "상", "엔지니어 필요")]
 
     codes, warnings = build.build_rows(raws, manual_rows(), {})
 
     s101, s102 = codes
-    assert s101.customer_procedure_ref_ids == ["manual:HMX-SRM-TSM-001:22:6"]
-    assert s102.customer_procedure_ref_ids == []
+    assert (s101.code, s102.code) == ("S101", "S102")
     assert s101.required_safety_rules == [] and s102.required_safety_rules == []
     assert warnings == []
 
@@ -124,7 +122,6 @@ def test_build_rows_keeps_raw_values_and_warns_on_mismatch():
     [code], warnings = build.build_rows([raw(severity="하", action_owner="엔지니어 필요")], manual_rows(), {})
 
     assert (code.severity, code.action_owner) == ("하", "엔지니어 필요")
-    assert code.customer_procedure_ref_ids == []  # 원자료 조치 구분을 따른다
     mismatch = [w for w in warnings if w.startswith("SRM/S101")]
     assert len(mismatch) == 2  # severity, action_owner
 
@@ -201,9 +198,8 @@ def test_write_codes_matches_loader_format(tmp_path):
 
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        assert reader.fieldnames == build.OUTPUT_COLUMNS  # error_codes 12열과 같은 순서
+        assert reader.fieldnames == build.OUTPUT_COLUMNS  # error_codes 11열과 같은 순서
         [row] = list(reader)
-    assert json.loads(row["customer_procedure_ref_ids"]) == ["manual:HMX-SRM-TSM-001:22:6"]
     assert row["required_safety_rules"] == "[]"
     assert row["page"] == "22"
 

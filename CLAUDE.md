@@ -54,8 +54,7 @@
 
 ## 4. 사람이 정한다 (AI는 선택지와 근거만 정리)
 
-- 에러코드 표의 심각도·조치 구분 값과 `required_safety_rules`: 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다. `customer_procedure_ref_ids`는 `scripts.build_error_codes`가 조치 구분과 매뉴얼 표 청크로 만든다. 고객 안내는 이 값을 읽지 않으며 후속 PR에서 제거한다.
-- 평가 문항은 데이터를 만든 사람이 쓴다. 인용·고객 안내 사람 검수와 `evidence_threshold` 확정도 사람이 한다(spec §2.7).
+- 에러코드 표의 심각도·조치 구분 값과 `required_safety_rules`: 매뉴얼 원문과 사람이 대조해 쓴다(spec §3.4). AI가 CSV에서 바꾸지 않는다.- 평가 문항은 데이터를 만든 사람이 쓴다. 인용·고객 안내 사람 검수와 `evidence_threshold` 확정도 사람이 한다(spec §2.7).
 - 계약 변경의 최종 판단, 범위(spec §4) 변경, PR 리뷰·머지, 충돌 해결 시 어느 쪽을 살릴지.
 
 ## 5. 깨뜨리면 안 되는 도메인 규칙

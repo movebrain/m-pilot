@@ -37,7 +37,7 @@ def make_error_code() -> ErrorCode:
     return ErrorCode(
         equipment="SRM", code="S-104", name="주행 위치 편차", severity="하", action_owner="고객사 조치",
         cause="엔코더 커넥터", action="커넥터 재체결", manual_id="SRM_SPEC_v1", page=41, section="9.4",
-        customer_procedure_ref_ids=[], required_safety_rules=[],
+        required_safety_rules=[],
     )
 
 

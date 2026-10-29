@@ -30,18 +30,17 @@ from mpilot.models import (
 PROCEDURE_ID = "manual:agv_rev1_1:8:2"  # 가짜 안내가 인용하는 근거 ID
 
 
-def _code(code: str, severity: Severity, owner: ActionOwner, procedures: list[str]) -> ErrorCode:
+def _code(code: str, severity: Severity, owner: ActionOwner) -> ErrorCode:
     return ErrorCode(
         equipment=Equipment.AGV, code=code, name=f"{code} 에러", severity=severity, action_owner=owner,
         cause="원인", action="조치", manual_id="agv_rev1_1", page=8, section="2.4 배터리",
-        customer_procedure_ref_ids=procedures,
     )
 
 
 CODES = {
-    "SELF": _code("A120", Severity.LOW, ActionOwner.CUSTOMER, []),  # 셀프 가이드 후보(허용 절차 목록이 비어도 근거는 검색)
-    "HIGH": _code("A301", Severity.HIGH, ActionOwner.CUSTOMER, [PROCEDURE_ID]),  # 심각도 상
-    "ENGINEER": _code("A205", Severity.MEDIUM, ActionOwner.ENGINEER, []),  # 엔지니어 필요
+    "SELF": _code("A120", Severity.LOW, ActionOwner.CUSTOMER),  # 셀프 가이드 후보
+    "HIGH": _code("A301", Severity.HIGH, ActionOwner.CUSTOMER),  # 심각도 상
+    "ENGINEER": _code("A205", Severity.MEDIUM, ActionOwner.ENGINEER),  # 엔지니어 필요
 }
 
 ANSWERED = Answer(

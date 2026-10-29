@@ -2,17 +2,13 @@
 
 역할:
     원자료 에러코드 표(`data/raw/error_code_table.csv`, 5열)와 매뉴얼 4종의 에러 코드 일람 표(9.2절)를 합쳐
-    `error_codes` 12열 정본(`data/errorcodes.csv`)을 만든다(spec §3.4).
+    `error_codes` 11열 정본(`data/errorcodes.csv`)을 만든다(spec §3.4).
 
 책임:
     - `equipment`·`code`·`name`·`severity`·`action_owner`는 원자료 CSV 값을 그대로 쓴다.
       매뉴얼 표의 값과 다르면 고치지 않고 경고로만 알린다(심각도·조치 구분은 사람이 정한 값이다).
     - `cause`·`action`·`manual_id`·`page`·`section`은 `parser.parse_manuals`가 만든 9.2절 표 청크에서
       그 코드의 행을 찾아 채운다. 출처는 그 행이 들어 있는 청크의 쪽·절이다.
-    - `customer_procedure_ref_ids`는 조치 구분이 `고객사 조치`인 코드에만 그 행이 들어 있는 청크 ID
-      (`manual:<manual_id>:<page>:<chunk_no>`)를 넣고, `엔지니어 필요`면 `[]`로 둔다.
-      매뉴얼 표 9-3이 `고객사 조치`를 "고객사가 본 매뉴얼의 조치 절차로 직접 해결할 수 있는 에러"로 정의하므로,
-      매뉴얼이 고객 수행을 명시한 절차는 그 코드 행의 조치 칸이다.
     - `required_safety_rules`는 사람이 쓴다. 이미 정본 파일이 있으면 그 값을 코드별로 이어받고, 없으면 `[]`다.
     - 원자료에 있는 코드가 매뉴얼 표에 없거나 표 행 모양이 다르면 파일을 쓰지 않고 중단한다.
     - 앱 예외(`MpilotError` 하위)는 안내 메시지를 출력하고 종료 코드 1로 바꾼다.
@@ -30,7 +26,7 @@ import sys
 from pathlib import Path
 
 from mpilot.db.parser import parse_manuals
-from mpilot.models import ActionOwner, Chunk, DependencyError, ErrorCode, MpilotError, ValidationError
+from mpilot.models import Chunk, DependencyError, ErrorCode, MpilotError, ValidationError
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW_CODES_PATH = ROOT / "data" / "raw" / "error_code_table.csv"
@@ -39,8 +35,7 @@ OUTPUT_PATH = ROOT / "data" / "errorcodes.csv"  # AppConfig.codes_path와 같은
 
 RAW_COLUMNS = ["equipment", "code", "name", "severity", "action_owner"]
 OUTPUT_COLUMNS = RAW_COLUMNS + [
-    "cause", "action", "manual_id", "page", "section",
-    "customer_procedure_ref_ids", "required_safety_rules",
+    "cause", "action", "manual_id", "page", "section", "required_safety_rules",
 ]
 CODE_TABLE_SECTION = "9.2"  # 매뉴얼 4종 모두 9.2절이 에러 코드 일람이다
 # 표 9-4 머리글: 코드 | 명칭 | 대상 모델 | 심각도 | 조치 구분 | 발생 조건 · 원인 | 조치
@@ -102,7 +97,7 @@ def read_manual_code_rows(chunks: list[Chunk]) -> dict[tuple[str, str], dict]:
 
     Returns:
         dict[tuple[str, str], dict]: `(equipment, code)` → 매뉴얼 행 값
-            (`name`, `severity`, `action_owner`, `cause`, `action`, `manual_id`, `page`, `section`, `ref_id`).
+            (`name`, `severity`, `action_owner`, `cause`, `action`, `manual_id`, `page`, `section`).
 
     Raises:
         ValidationError: 표 행의 칸 수가 다르거나 같은 코드가 두 번 나올 때.
@@ -133,7 +128,6 @@ def read_manual_code_rows(chunks: list[Chunk]) -> dict[tuple[str, str], dict]:
                 "manual_id": chunk.manual_id,
                 "page": chunk.page,
                 "section": chunk.section,
-                "ref_id": ref_id,
             }
     return rows
 
@@ -180,7 +174,7 @@ def build_rows(
     manual_rows: dict[tuple[str, str], dict],
     safety_rules: dict[tuple[str, str], list[str]],
 ) -> tuple[list[ErrorCode], list[str]]:
-    """원자료 행과 매뉴얼 행을 합쳐 에러코드 표 12열을 만든다.
+    """원자료 행과 매뉴얼 행을 합쳐 에러코드 표 11열을 만든다.
 
     Args:
         raw_rows: `read_raw_codes` 결과.
@@ -208,8 +202,6 @@ def build_rows(
                 warnings.append(
                     f"{key[0]}/{key[1]} {column}: 원자료 '{raw[column]}', 매뉴얼 '{manual[column]}'(원자료 값을 씀)"
                 )
-        # 매뉴얼 표 9-3: 고객사 조치 = 고객사가 매뉴얼의 조치 절차로 직접 해결할 수 있는 에러.
-        refs = [manual["ref_id"]] if raw["action_owner"] == ActionOwner.CUSTOMER.value else []
         try:
             codes.append(ErrorCode(
                 equipment=raw["equipment"],
@@ -222,7 +214,6 @@ def build_rows(
                 manual_id=manual["manual_id"],
                 page=manual["page"],
                 section=manual["section"],
-                customer_procedure_ref_ids=refs,
                 required_safety_rules=safety_rules.get(key, []),
             ))
         except ValueError as e:  # pydantic 검증 오류
@@ -235,7 +226,7 @@ def build_rows(
 
 
 def write_codes(path: Path, codes: list[ErrorCode]) -> None:
-    """에러코드 행을 정본 CSV로 쓴다. 두 목록 열은 JSON 배열 문자열이다.
+    """에러코드 행을 정본 CSV로 쓴다. `required_safety_rules` 열은 JSON 배열 문자열이다.
 
     Args:
         path: 쓸 경로.
@@ -251,7 +242,6 @@ def write_codes(path: Path, codes: list[ErrorCode]) -> None:
             for c in codes:
                 writer.writerow({
                     **c.model_dump(mode="json"),
-                    "customer_procedure_ref_ids": json.dumps(c.customer_procedure_ref_ids, ensure_ascii=False),
                     "required_safety_rules": json.dumps(c.required_safety_rules, ensure_ascii=False),
                 })
     except OSError as e:
@@ -276,8 +266,7 @@ def main() -> int:
 
     for warning in warnings:
         print(f"[경고] {warning}")
-    customer = sum(1 for c in codes if c.customer_procedure_ref_ids)
-    print(f"{OUTPUT_PATH.name} 생성: {len(codes)}건(허용 절차 연결 {customer}건, 경고 {len(warnings)}건)")
+    print(f"{OUTPUT_PATH.name} 생성: {len(codes)}건(경고 {len(warnings)}건)")
     return 0
 
 

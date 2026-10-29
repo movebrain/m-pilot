@@ -19,7 +19,7 @@ from mpilot.models import (
 )
 
 
-def make_code(severity=Severity.LOW, owner=ActionOwner.CUSTOMER, refs=("MN-1",)) -> ErrorCode:
+def make_code(severity=Severity.LOW, owner=ActionOwner.CUSTOMER) -> ErrorCode:
     return ErrorCode(
         equipment=Equipment.AGV,
         code="R001",
@@ -31,7 +31,6 @@ def make_code(severity=Severity.LOW, owner=ActionOwner.CUSTOMER, refs=("MN-1",))
         manual_id="agv",
         page=1,
         section="1",
-        customer_procedure_ref_ids=list(refs),
     )
 
 

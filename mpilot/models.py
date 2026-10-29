@@ -96,11 +96,7 @@ class Route(StrEnum):
 
 
 class GuideFailure(StrEnum):
-    """셀프 가이드 후보가 엔지니어 접수된 사유.
-
-    주의: spec §3.4는 `no_customer_procedure`도 언급하지만 §2.4.2 열거형에는 없다.
-    값을 추가할지는 spec 확인 뒤에 정한다.
-    """
+    """셀프 가이드 후보가 엔지니어 접수된 사유."""
 
     HELD = "held"
     GENERATION_FAILED = "generation_failed"
@@ -216,8 +212,6 @@ class ErrorCode(_Model):
         manual_id: 출처 PDF 식별자.
         page: 출처 쪽(1 이상).
         section: 출처 절.
-        customer_procedure_ref_ids: 고객 수행이 허용된 매뉴얼 본문 문서 ID 목록. 가이드 검증용.
-            비어 있으면 그 코드는 고객 안내 없이 엔지니어에게 접수된다.
         required_safety_rules: 고객 안내에 반드시 들어가야 할 안전 문구 목록. 가이드 검증용.
     """
 
@@ -231,7 +225,6 @@ class ErrorCode(_Model):
     manual_id: str
     page: int = Field(ge=1)
     section: str
-    customer_procedure_ref_ids: list[str] = Field(default_factory=list)
     required_safety_rules: list[str] = Field(default_factory=list)
 
 

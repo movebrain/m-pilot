@@ -63,7 +63,7 @@ def chunk(manual_id="srm_spec", page=12, no=1, text="11.6 스테이션 인계 �
     )
 
 
-def code(refs=(), equipment=Equipment.SRM, code_="S135") -> ErrorCode:
+def code(equipment=Equipment.SRM, code_="S135") -> ErrorCode:
     return ErrorCode(
         equipment=equipment,
         code=code_,
@@ -75,7 +75,6 @@ def code(refs=(), equipment=Equipment.SRM, code_="S135") -> ErrorCode:
         manual_id="srm_spec",
         page=12,
         section="11.6",
-        customer_procedure_ref_ids=list(refs),
     )
 
 
@@ -113,7 +112,7 @@ def ids_of(store) -> set[str]:
 def test_rebuild_fills_both_collections_with_spec_ids(stores):
     vectordb.rebuild_search_index(
         chunks=[chunk(no=1), chunk(no=2)],
-        codes=[code(refs=["manual:srm_spec:12:1"])],
+        codes=[code()],
         histories=[case()],
     )
     assert ids_of(stores[CitationKind.MANUAL]) == {
@@ -152,10 +151,10 @@ def test_rebuild_replaces_previous_index(stores):
     assert ids_of(stores[CitationKind.HISTORY]) == {"history:A-1"}
 
 
-def test_rebuild_rejects_missing_customer_procedure_without_touching_index(stores):
+def test_rebuild_rejects_invalid_ids_without_touching_index(stores):
     vectordb.rebuild_search_index([chunk()], [code()], [case()])
-    with pytest.raises(ValidationError, match="manual:srm_spec:99:1"):
-        vectordb.rebuild_search_index([chunk()], [code(refs=["manual:srm_spec:99:1"])], [case()])
+    with pytest.raises(ValidationError):
+        vectordb.rebuild_search_index([chunk(manual_id="srm:spec")], [code()], [case()])
     # 검증 실패는 기존 색인을 지우기 전에 멈춘다.
     assert "manual:srm_spec:12:1" in ids_of(stores[CitationKind.MANUAL])
 
@@ -267,29 +266,7 @@ def test_index_history_wraps_store_failure(stores, monkeypatch):
         vectordb.index_history(case())
 
 
-# --- 리뷰 반영: 허용 절차 ID 엄격 검증, 컬렉션 비우기 실패 -------------------------
-
-
-def test_rebuild_rejects_error_row_as_customer_procedure(stores):
-    # 허용 절차는 매뉴얼 본문(manual:)만 된다. 코드 표 행(error:)은 절차가 아니다.
-    with pytest.raises(ValidationError, match="매뉴얼 본문"):
-        vectordb.rebuild_search_index([chunk()], [code(refs=["error:SRM:S135"])], [])
-
-
-def test_rebuild_rejects_procedure_of_other_equipment(stores):
-    agv_chunk = Chunk(
-        manual_id="agv_spec",
-        equipment=Equipment.AGV,
-        page=3,
-        section="8.4",
-        chunk_no=1,
-        version="rev1.1",
-        text="AGV 절차",
-    )
-    with pytest.raises(ValidationError, match="다른 설비"):
-        vectordb.rebuild_search_index(
-            [chunk(), agv_chunk], [code(refs=["manual:agv_spec:3:1"])], []
-        )
+# --- 리뷰 반영: 컬렉션 비우기 실패 -------------------------------------------
 
 
 def test_rebuild_reset_failure_is_dependency_error_and_writes_nothing(stores, monkeypatch):

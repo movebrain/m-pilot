@@ -55,7 +55,6 @@ def rdb(rdb_db):
                 manual_id="srm_manual",
                 page=12,
                 section="11.1",
-                customer_procedure_ref_ids='["manual:srm_manual:12:1"]',
                 required_safety_rules="[]",
             )
         )
@@ -102,7 +101,6 @@ def test_fetch_resolved_cases_returns_case_detail(rdb):
     assert case.memo == "현장 증상"  # DB 컬럼 customer_memo → 모델 필드 memo
     assert case.guidance_answer is None
     assert detail.error_code.code == "S101"
-    assert detail.error_code.customer_procedure_ref_ids == ["manual:srm_manual:12:1"]
     assert (detail.resolution.cause, detail.resolution.action, detail.resolution.result) == (
         "센서 오염", "센서 청소", "정상 동작 확인"
     )

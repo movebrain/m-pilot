@@ -39,7 +39,6 @@ def add_error_code(conn, equipment="SRM", code="S101"):
             manual_id="HMX-SRM-TSM-001",
             page=12,
             section="9.4 에러 코드 일람",
-            customer_procedure_ref_ids='["manual:HMX-SRM-TSM-001:12:1"]',
             required_safety_rules='["전원을 차단한다"]',
         )
     )
@@ -102,7 +101,6 @@ def test_nullable_columns_follow_spec():
     assert service_cases.c.self_guide_answer.nullable
     assert service_cases.c.completed_at.nullable
     assert not service_cases.c.created_at.nullable
-    assert not error_codes.c.customer_procedure_ref_ids.nullable
     assert not error_codes.c.required_safety_rules.nullable
     assert not chat_turns.c.answer.nullable
 
@@ -238,7 +236,6 @@ def test_load_case_detail_without_resolution(rdb_db):
     assert isinstance(detail, CaseDetail)
     assert detail.service_case.memo == "크레인이 멈췄어요"
     assert detail.service_case.created_at == datetime(2026, 10, 27, 0, 0, tzinfo=UTC)
-    assert detail.error_code.customer_procedure_ref_ids == ["manual:HMX-SRM-TSM-001:12:1"]
     assert detail.resolution is None
 
 
@@ -268,7 +265,7 @@ def test_broken_stored_value_is_dependency_error(rdb_db):
         add_error_code(conn)
         add_case(conn)
         conn.execute(
-            update(error_codes).values(customer_procedure_ref_ids="깨진 JSON")
+            update(error_codes).values(required_safety_rules="깨진 JSON")
         )
         conn.execute(update(service_cases).values(status="unknown"))
     with rdb_db._engine.connect() as conn:
