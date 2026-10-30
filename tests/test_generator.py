@@ -183,3 +183,49 @@ def test_폴백일_때만_엔지니어_시스템_지시문에_다른_설비_규�
     request = ChatRequest.model_construct(question="질문", turns=[])
     generator.generate_engineer_answer(context, [make_hit()], request, cross_equipment=cross_equipment)
     assert (prompts.ENGINEER_CROSS_EQUIPMENT_RULES in sent[0]) is cross_equipment
+
+
+# --- 질문 라우팅 -------------------------------------------------------
+class _RouteModel:
+    """구조화 출력으로 정해 둔 설비를 돌려주고, 받은 메시지를 남기는 가짜 모델."""
+
+    def __init__(self, equipment):
+        self.equipment = equipment
+        self.messages = None
+
+    def with_structured_output(self, schema):
+        self.schema = schema
+        return self
+
+    def invoke(self, messages):
+        self.messages = messages
+        return self.schema(equipment=self.equipment)
+
+
+def test_라우팅은_모델이_고른_설비를_돌려주고_질문을_이스케이프한다(monkeypatch):
+    model = _RouteModel(Equipment.AGV)
+    monkeypatch.setattr(generator, "_chat_model", model)
+    context = CaseContext(error_code=make_error_code(), memo="")
+    assert generator.route_question(context, INJECTION) is Equipment.AGV
+    human = model.messages[1].content
+    assert "SRM" in human  # 신고 설비를 알려 준다
+    assert human.count("</question>") == 1
+
+
+def test_라우팅_모델_호출_실패는_DependencyError(monkeypatch, capsys):
+    error = RuntimeError("요청 내용 비밀 메모")
+    monkeypatch.setattr(generator, "_chat_model", _FailingModel(error))
+    with pytest.raises(DependencyError) as info:
+        generator.route_question(CaseContext(error_code=make_error_code(), memo=""), "질문")
+    assert "요청 내용 비밀 메모" not in capsys.readouterr().out
+    assert info.value.__cause__ is error
+
+
+def test_모델이_없으면_라우팅은_DependencyError(monkeypatch):
+    monkeypatch.setattr(generator, "_chat_model", None)
+    with pytest.raises(DependencyError):
+        generator.route_question(CaseContext(error_code=make_error_code(), memo=""), "질문")
+
+
+def test_엔지니어_질문_틀은_출처_없는_단계를_만들지_말라고_한다():
+    assert "출처 없는 단계로 따로 쓰지 않습니다" in prompts.ENGINEER_HUMAN

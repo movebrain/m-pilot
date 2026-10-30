@@ -5,6 +5,7 @@
 
 책임:
     - 고객 안내와 엔지니어 답변을 프롬프트(`prompts/`)로 생성한다. 모든 단계(`AnswerStep`)에는 출처가 1개 이상 붙는다.
+    - 엔지니어 질문이 어느 설비를 묻는지 모델로 판별한다(`route_question`, 규칙으로 못 정한 질문만).
     - 원문 밖의 원인·절차를 단정하지 않는다. 증상 메모는 확인된 사실과 구분한다(프롬프트 규칙).
     - 검증: 인용이 확보한 근거에 실제로 있고 설비가 일치하는지 검사한다(`passes_check`, 고객 안내와 엔지니어 답변 공용).
       출처 ID 검증은 내용의 정확성·안전성을 증명하지 않는다. 그 부분은 프롬프트 제약과 사람의 사후 평가가 맡는다.
@@ -24,6 +25,7 @@
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from pydantic import BaseModel
 
 from mpilot.models import (
     Answer,
@@ -117,6 +119,47 @@ def generate_engineer_answer(
     )
     system = prompts.ENGINEER_SYSTEM + (prompts.ENGINEER_CROSS_EQUIPMENT_RULES if cross_equipment else "")
     return _invoke([SystemMessage(content=system), HumanMessage(content=human)])
+
+
+class RouteDecision(BaseModel):
+    """질문 라우팅 결과. 엔지니어 질문이 가리키는 설비다.
+
+    Attributes:
+        equipment: 질문이 묻는 설비. 특정 설비를 가리키지 않거나 4종 밖 설비면 신고 설비다.
+    """
+
+    equipment: Equipment
+
+
+def route_question(context: CaseContext, question: str) -> Equipment:
+    """엔지니어 질문이 4종 중 어느 설비에 대한 것인지 모델에 묻는다.
+
+    `pipeline`이 설비 이름·에러코드 규칙으로 정하지 못한 질문에만 부른다(동의어·우회 표현 처리용).
+
+    Args:
+        context: 신고 맥락. 신고 설비를 기본값으로 알려 준다.
+        question: 앞뒤 공백을 지운 현재 질문.
+
+    Returns:
+        Equipment: 질문이 묻는 설비. 특정 설비를 가리키지 않으면 신고 설비다.
+
+    Raises:
+        DependencyError: 모델이 설정되지 않았거나 호출이 실패했을 때.
+    """
+    if _chat_model is None:
+        raise DependencyError("답변 생성 모델이 설정되지 않았습니다(set_chat_model 호출 필요).")
+    human = prompts.ROUTER_HUMAN.format(
+        equipment=context.error_code.equipment.value, question=_escape_tag_text(question)
+    )
+    try:
+        result = _chat_model.with_structured_output(RouteDecision).invoke(
+            [SystemMessage(content=prompts.ROUTER_SYSTEM), HumanMessage(content=human)]
+        )
+    except Exception as exc:
+        # 예외 본문에 요청 내용이 섞일 수 있어 종류만 남긴다.
+        print("질문 라우팅 모델 호출 실패:", type(exc).__name__)
+        raise DependencyError("질문 라우팅 모델 호출에 실패했습니다.") from exc
+    return result.equipment
 
 
 def passes_check(
