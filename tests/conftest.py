@@ -132,6 +132,21 @@ MANUALS_DIR = ROOT / "data" / "manuals"
 PARSE_CACHE_DIR = ROOT / ".pytest_parse_cache"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_chunk_cache():
+    """`parse_manuals`의 앱용 청크 디스크 캐시(#161)를 테스트 동안 끈다.
+
+    테스트는 PDF 읽기 함수를 가짜로 바꿔 끼우므로, 캐시를 켜 두면 가짜 결과가 `data/cache`에 남아 앱이 그것을 불러오거나
+    지난 테스트의 캐시 때문에 바꿔 끼운 함수가 불리지 않을 수 있다. 모듈 범위 fixture(`real_chunks` 등)보다 먼저 꺼야 해서
+    세션 범위로 둔다. 캐시 자체는 `test_parser_cache.py`가 임시 폴더에서 다시 켜고 확인한다.
+    """
+    from mpilot.db import parser
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(parser, "_CACHE_ENABLED", False)
+        yield
+
+
 class _DiskParse:
     """실제 매뉴얼 PDF를 읽는 두 함수(표 추출, 쪽별 본문 추출)에 디스크 캐시를 씌운다.
 

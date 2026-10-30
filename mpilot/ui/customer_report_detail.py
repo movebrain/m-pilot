@@ -22,6 +22,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 import gradio as gr
 
 from mpilot import service
@@ -100,9 +102,10 @@ def guide_steps_html(answer: Answer) -> str:
     """
     lines = []
     for no, step in enumerate(answer.steps, start=1):
-        sources = ", ".join(common.citation_label(c) for c in step.citations)
+        # 단계 문구는 LLM이 만든 값이라 `gr.HTML`에 넣기 전에 이스케이프한다.
+        sources = escape(", ".join(common.citation_label(c) for c in step.citations))
         source_html = f'<div style="font-size:12px;opacity:.6;margin-top:2px">{sources}</div>' if sources else ""
-        lines.append(f'<div style="margin:12px 0">{no}. {step.text}{source_html}</div>')
+        lines.append(f'<div style="margin:12px 0">{no}. {escape(step.text)}{source_html}</div>')
     return "".join(lines)
 
 
