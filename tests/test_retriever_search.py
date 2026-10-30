@@ -1,4 +1,4 @@
-"""설비 필터 검색 테스트(retriever.search_manual, search_history). 가짜 저장소로 DB 파트 없이 검증한다."""
+"""설비 필터 검색 테스트(retriever.search). 가짜 저장소로 DB 파트 없이 검증한다."""
 
 import pytest
 from langchain_core.documents import Document
@@ -110,7 +110,7 @@ def history_store() -> FakeStore:
 @pytest.mark.parametrize("equipment", [Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV])
 def test_manual_returns_only_given_equipment(install_store, equipment):
     install_store(manual=manual_store())
-    hits = retriever.search_manual(equipment, NAME, 5)
+    hits = retriever.search(CitationKind.MANUAL, equipment, NAME, 5)
     assert hits
     assert {h.equipment for h in hits} == {equipment}
 
@@ -121,78 +121,78 @@ def test_manual_returns_only_given_equipment(install_store, equipment):
 )
 def test_history_returns_only_given_equipment(install_store, equipment, expected):
     install_store(hist=history_store())
-    hits = retriever.search_history(equipment, NAME, 5)
+    hits = retriever.search(CitationKind.HISTORY, equipment, NAME, 5)
     assert {h.ref_id.removeprefix("history:") for h in hits} == expected
 
 
 def test_filter_and_k_are_passed_to_store(install_store):
     store = manual_store()
     install_store(manual=store)
-    retriever.search_manual(Equipment.SRM, NAME, 3)
+    retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3)
     assert store.calls == [{"query": NAME, "k": 3, "filter": {"equipment": "SRM"}}]
 
 
 def test_results_sorted_by_distance_and_mix_error_rows_with_body(install_store):
     install_store(manual=manual_store())
-    hits = retriever.search_manual(Equipment.SRM, NAME, 5)
+    hits = retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 5)
     assert [h.distance for h in hits] == [0.10, 0.15]
     assert [h.ref_id.split(":")[0] for h in hits] == ["error", "manual"]
 
 
 def test_history_sorted_by_distance(install_store):
     install_store(hist=history_store())
-    hits = retriever.search_history(Equipment.SRM, NAME, 5)
+    hits = retriever.search(CitationKind.HISTORY, Equipment.SRM, NAME, 5)
     assert [h.distance for h in hits] == [0.05, 0.30]
 
 
 def test_history_returns_exactly_k(install_store):
     install_store(hist=history_store())
-    assert len(retriever.search_history(Equipment.SRM, NAME, 2)) == 2
+    assert len(retriever.search(CitationKind.HISTORY, Equipment.SRM, NAME, 2)) == 2
 
 
 def test_no_match_returns_empty_list(install_store):
     install_store(manual=manual_store(), hist=history_store())
-    assert retriever.search_manual(Equipment.AGV, NAME, 3) == []
-    assert retriever.search_history(Equipment.AGV, NAME, 3) == []
+    assert retriever.search(CitationKind.MANUAL, Equipment.AGV, NAME, 3) == []
+    assert retriever.search(CitationKind.HISTORY, Equipment.AGV, NAME, 3) == []
 
 
 @pytest.mark.parametrize("query", ["", "   ", "\n\t"])
-@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
-def test_blank_query_is_validation_error(install_store, search, query):
+@pytest.mark.parametrize("kind", [CitationKind.MANUAL, CitationKind.HISTORY])
+def test_blank_query_is_validation_error(install_store, kind, query):
     install_store(manual=manual_store(), hist=history_store())
     with pytest.raises(ValidationError):
-        search(Equipment.SRM, query, 3)
+        retriever.search(kind, Equipment.SRM, query, 3)
 
 
 @pytest.mark.parametrize("k", [0, -1])
-@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
-def test_k_below_one_is_validation_error(install_store, search, k):
+@pytest.mark.parametrize("kind", [CitationKind.MANUAL, CitationKind.HISTORY])
+def test_k_below_one_is_validation_error(install_store, kind, k):
     install_store(manual=manual_store(), hist=history_store())
     with pytest.raises(ValidationError):
-        search(Equipment.SRM, NAME, k)
+        retriever.search(kind, Equipment.SRM, NAME, k)
 
 
-@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
-def test_store_failure_becomes_dependency_error(install_store, search):
+@pytest.mark.parametrize("kind", [CitationKind.MANUAL, CitationKind.HISTORY])
+def test_store_failure_becomes_dependency_error(install_store, kind):
     install_store(manual=BrokenStore(), hist=BrokenStore())
     with pytest.raises(DependencyError) as info:
-        search(Equipment.SRM, NAME, 3)
+        retriever.search(kind, Equipment.SRM, NAME, 3)
     assert isinstance(info.value.__cause__, RuntimeError)
 
 
-@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
-def test_none_distance_becomes_dependency_error(install_store, search):
+@pytest.mark.parametrize("kind", [CitationKind.MANUAL, CitationKind.HISTORY])
+def test_none_distance_becomes_dependency_error(install_store, kind):
     install_store(
         manual=FakeStore([(manual_body(Equipment.SRM, 1), None), (manual_body(Equipment.SRM, 2), 0.2)]),
         hist=FakeStore([(history(Equipment.SRM, "C-1", "S115"), None), (history(Equipment.SRM, "C-2", "S115"), 0.2)]),
     )
     with pytest.raises(DependencyError) as info:
-        search(Equipment.SRM, NAME, 3)
+        retriever.search(kind, Equipment.SRM, NAME, 3)
     assert isinstance(info.value.__cause__, TypeError)
 
 
-@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
-def test_get_store_dependency_error_propagates(monkeypatch, search):
+@pytest.mark.parametrize("kind", [CitationKind.MANUAL, CitationKind.HISTORY])
+def test_get_store_dependency_error_propagates(monkeypatch, kind):
     error = DependencyError("connect 전에 호출했다")
 
     def fail(kind):
@@ -200,12 +200,12 @@ def test_get_store_dependency_error_propagates(monkeypatch, search):
 
     monkeypatch.setattr(vectordb, "get_store", fail)
     with pytest.raises(DependencyError) as info:
-        search(Equipment.SRM, NAME, 3)
+        retriever.search(kind, Equipment.SRM, NAME, 3)
     assert info.value is error
 
 
-@pytest.mark.parametrize("search", [retriever.search_manual, retriever.search_history])
-def test_mpilot_error_from_store_is_not_converted(monkeypatch, search):
+@pytest.mark.parametrize("kind", [CitationKind.MANUAL, CitationKind.HISTORY])
+def test_mpilot_error_from_store_is_not_converted(monkeypatch, kind):
     error = ValidationError("지원하지 않는 종류")
 
     def fail(kind):
@@ -213,7 +213,7 @@ def test_mpilot_error_from_store_is_not_converted(monkeypatch, search):
 
     monkeypatch.setattr(vectordb, "get_store", fail)
     with pytest.raises(ValidationError) as info:
-        search(Equipment.SRM, NAME, 3)
+        retriever.search(kind, Equipment.SRM, NAME, 3)
     assert info.value is error
 
 
@@ -221,17 +221,17 @@ def test_malformed_metadata_becomes_dependency_error(install_store):
     broken = Document(id="manual:x:1:1", page_content="본문", metadata={"equipment": "SRM"})
     install_store(manual=FakeStore([(broken, 0.1)]))
     with pytest.raises(DependencyError):
-        retriever.search_manual(Equipment.SRM, NAME, 3)
+        retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3)
 
 
 def test_hit_fields_for_error_row_body_and_history(install_store):
     install_store(manual=manual_store(), hist=history_store())
-    row, body = retriever.search_manual(Equipment.SRM, NAME, 5)
+    row, body = retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 5)
     assert (row.kind, row.code, row.locator) == (CitationKind.MANUAL, "S115", "spec 12쪽 4.2")
     assert row.text == f"S115 {NAME}"
     assert (body.kind, body.code, body.locator) == (CitationKind.MANUAL, None, "SRM-spec 7쪽 5.1")
 
-    first = retriever.search_history(Equipment.SRM, NAME, 5)[0]
+    first = retriever.search(CitationKind.HISTORY, Equipment.SRM, NAME, 5)[0]
     assert (first.kind, first.code, first.locator) == (CitationKind.HISTORY, "S115", "접수 C-2 S115")
     assert first.distance == 0.05
 
@@ -239,8 +239,8 @@ def test_hit_fields_for_error_row_body_and_history(install_store):
 def test_equipment가_None이면_필터_없이_4종_전체에서_찾는다(install_store):
     manual, hist = manual_store(), history_store()
     install_store(manual=manual, hist=hist)
-    manual_hits = retriever.search_manual(None, NAME, 5)
-    history_hits = retriever.search_history(None, NAME, 5)
+    manual_hits = retriever.search(CitationKind.MANUAL, None, NAME, 5)
+    history_hits = retriever.search(CitationKind.HISTORY, None, NAME, 5)
     assert manual.calls == [{"query": NAME, "k": 5, "filter": None}]
     assert hist.calls == [{"query": NAME, "k": 5, "filter": None}]
     assert {h.equipment for h in manual_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}

@@ -36,7 +36,7 @@ from mpilot.models import (
     Verdict,
 )
 
-_SETTINGS = SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5)
+_SETTINGS = SearchSettings(manual_k=3, history_k=3)
 _CODE = ErrorCode(
     equipment=Equipment.SRM, code="S115", name="리프트 엔코더 편차", severity=Severity.HIGH,
     action_owner=ActionOwner.ENGINEER, cause="원인", action="조치", manual_id="srm_rev1_2", page=41,

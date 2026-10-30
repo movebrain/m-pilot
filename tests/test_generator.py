@@ -42,27 +42,22 @@ def make_error_code() -> ErrorCode:
 
 # --- 인용 locator ------------------------------------------------------
 def test_locator가_근거와_같으면_통과한다():
-    assert generator.passes_answer_check(make_answer("41쪽 9.4"), [make_hit()], Equipment.SRM) is True
+    assert generator.passes_check(make_answer("41쪽 9.4"), [make_hit()], Equipment.SRM) is True
 
 
-def test_ref_id가_같아도_locator가_다르면_엔지니어_답변_검증_실패():
+def test_ref_id가_같아도_locator가_다르면_검증_실패():
     answer = make_answer("전혀 다른 출처 99쪽")
-    assert generator.passes_answer_check(answer, [make_hit()], Equipment.SRM) is False
-
-
-def test_ref_id가_같아도_locator가_다르면_고객_안내_검증_실패():
-    answer = make_answer("전혀 다른 출처 99쪽")
-    assert generator.passes_guidance_check(answer, [make_hit()], make_error_code()) is False
+    assert generator.passes_check(answer, [make_hit()], Equipment.SRM) is False
 
 
 def test_locator의_공백_차이는_같은_출처로_본다():
-    assert generator.passes_answer_check(make_answer("  41쪽   9.4 "), [make_hit()], Equipment.SRM) is True
+    assert generator.passes_check(make_answer("  41쪽   9.4 "), [make_hit()], Equipment.SRM) is True
 
 
 def test_프롬프트에서_이스케이프된_locator도_같은_출처로_본다():
     hit = make_hit().model_copy(update={"locator": '41쪽 "9.4" & 부록'})
     answer = make_answer("41쪽 &quot;9.4&quot; &amp; 부록")
-    assert generator.passes_answer_check(answer, [hit], Equipment.SRM) is True
+    assert generator.passes_check(answer, [hit], Equipment.SRM) is True
 
 
 # --- 프롬프트 입력 이스케이프 ------------------------------------------
@@ -129,22 +124,30 @@ def make_other_equipment_hit() -> SearchHit:
 
 
 def test_다른_설비_근거_인용은_기본으로_검증_실패():
-    assert generator.passes_answer_check(make_answer("41쪽 9.4"), [make_other_equipment_hit()], Equipment.SRM) is False
+    assert generator.passes_check(make_answer("41쪽 9.4"), [make_other_equipment_hit()], Equipment.SRM) is False
 
 
 def test_다른_설비_근거_인용은_허용하면_통과한다():
     answer = make_answer("41쪽 9.4")
-    assert generator.passes_answer_check(answer, [make_other_equipment_hit()], Equipment.SRM, allow_other_equipment=True) is True
+    assert generator.passes_check(answer, [make_other_equipment_hit()], Equipment.SRM, allow_other_equipment=True) is True
 
 
 def test_다른_설비를_허용해도_없는_근거나_다른_locator는_검증_실패():
     hit = make_other_equipment_hit()
-    assert generator.passes_answer_check(make_answer("99쪽"), [hit], Equipment.SRM, allow_other_equipment=True) is False
-    assert generator.passes_answer_check(make_answer("41쪽 9.4"), [], Equipment.SRM, allow_other_equipment=True) is False
+    assert generator.passes_check(make_answer("99쪽"), [hit], Equipment.SRM, allow_other_equipment=True) is False
+    assert generator.passes_check(make_answer("41쪽 9.4"), [], Equipment.SRM, allow_other_equipment=True) is False
 
 
-def test_고객_안내_검증은_다른_설비_근거를_계속_막는다():
-    assert generator.passes_guidance_check(make_answer("41쪽 9.4"), [make_other_equipment_hit()], make_error_code()) is False
+def test_answered인데_단계가_없으면_검증_실패():
+    answer = Answer(verdict=Verdict.ANSWERED, steps=[], notice=None)
+    assert generator.passes_check(answer, [make_hit()], Equipment.SRM) is False
+
+
+def test_매뉴얼_근거만_있으면_이력_인용은_검증_실패():
+    # 고객 안내는 매뉴얼 검색 결과만 넘기므로, 이력 인용은 근거에 없어서 막힌다
+    citation = Citation(kind=CitationKind.HISTORY, ref_id="history:SRM-H-0001", locator="접수 SRM-H-0001 S-104")
+    answer = Answer(verdict=Verdict.ANSWERED, steps=[AnswerStep(text="조치", citations=[citation])], notice=None)
+    assert generator.passes_check(answer, [make_hit()], Equipment.SRM) is False
 
 
 def test_근거_태그에_설비는_폴백일_때만_적는다():

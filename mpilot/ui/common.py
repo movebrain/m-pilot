@@ -85,7 +85,10 @@ STICKY_TOOLBAR_CSS = f"""
 /* 신고 목록 표: 실제로 보이는 행은 table이 아니라 virtual-row/body-cell div다
    (table tbody tr는 열 너비 계산용 숨김 요소). 행을 누를 수 있다는 걸 보이려 커서를
    포인터로 바꾼다. body-cell 안 span(svelte-odwpey)이 자체로 cursor: text를 걸어 두므로
-   그것도 같이 덮어써야 한다. Gradio 기본 셀 선택 때 나오는 주황색 깜빡임 애니메이션은 끈다. */
+   그것도 같이 덮어써야 한다. Gradio 기본 셀 선택 때 나오는 주황색 깜빡임 애니메이션·배경과,
+   선택된 셀 테두리로 쓰는 주황색 inset box-shadow를 모두 끈다. 이 box-shadow는 `.cell-selected`
+   div 자체가 아니라 그 안의 span(svelte-odwpey)에 걸려 있어, span도 같이 꺼야 한다. 이 표는
+   누르면 바로 다른 화면으로 넘어가므로 선택 표시 자체가 필요 없다. */
 .gradio-container .virtual-row,
 .gradio-container .body-cell,
 .gradio-container .body-cell .cell-wrap,
@@ -96,6 +99,18 @@ STICKY_TOOLBAR_CSS = f"""
 .gradio-container .body-cell.flash.cell-selected {{
     animation: none !important;
     background: transparent !important;
+}}
+
+.gradio-container .body-cell.cell-selected,
+.gradio-container .body-cell.cell-selected span.svelte-odwpey {{
+    box-shadow: none !important;
+}}
+
+/* 셀을 선택하면 가장자리에 뜨는 주황색 `.selection-button`(끌어서 선택 범위를 늘리는 손잡이, 흰
+   화살표 아이콘)도 끈다. 이 표는 여러 칸을 끌어서 고르는 스프레드시트가 아니라 한 줄 누르면 바로
+   다른 화면으로 넘어가는 목록이라 필요 없다. */
+.gradio-container .selection-button {{
+    display: none !important;
 }}
 """
 """`gr.Blocks(css=...)`에 넣어 `STICKY_TOOLBAR_CLASS`를 고정 위치로 만드는 스타일."""
@@ -246,13 +261,28 @@ def page_label(page: int, total: int) -> str:
 PAGE_LABEL_CLASS = "mpilot-page-label"
 """페이지 표시 Markdown에 붙이는 `elem_classes` 값. 버튼과 높이·글자를 맞춘다."""
 
+PAGINATION_ROW_CLASS = "mpilot-pagination-row"
+"""이전/다음 버튼과 페이지 표시를 가운데로 모으고 간격을 좁히는 Row에 붙이는 `elem_classes` 값."""
+
 PAGINATION_CSS = f"""
+.{PAGE_LABEL_CLASS} {{
+    flex-grow: 0 !important;
+    flex-basis: auto !important;
+    width: auto !important;
+}}
+
 .{PAGE_LABEL_CLASS} p {{
     margin: 0 !important;
     text-align: center !important;
+    font-weight: 700 !important;
+}}
+
+.{PAGINATION_ROW_CLASS} {{
+    justify-content: center !important;
+    gap: 8px !important;
 }}
 """
-"""`gr.Blocks(css=...)`에 넣어 페이지 표시 문구를 버튼과 나란히 가운데 정렬하는 스타일."""
+"""`gr.Blocks(css=...)`에 넣어 페이지 표시 문구를 굵게, 버튼과 가까이 가운데 모아 보이는 스타일."""
 
 CENTER_ROW_CLASS = "mpilot-center-row"
 """Row 안 내용을 가운데로 모으는 `elem_classes` 값(확인 버튼처럼 혼자 있는 버튼을 가운데 두는 용도)."""
@@ -263,6 +293,13 @@ CENTER_ROW_CSS = f"""
 }}
 """
 """`gr.Blocks(css=...)`에 넣어 `CENTER_ROW_CLASS`의 내용을 가운데로 모으는 스타일."""
+
+PROSE_PADDING_CSS = """
+.prose {
+    padding: 0 !important;
+}
+"""
+"""`gr.Blocks(css=...)`에 넣어 Gradio Markdown 기본 타이포그래피(`.prose`)의 안쪽 여백을 없애는 스타일."""
 
 CENTERED_TEXT_CLASS = "mpilot-centered-text"
 """셀프 가이드·조치 결과처럼 가운데 정렬하고 글자 크기로 강약을 주는 Markdown에 붙이는 `elem_classes` 값."""
@@ -291,10 +328,107 @@ WIDE_GAP_ROW_CLASS = "mpilot-wide-gap-row"
 
 WIDE_GAP_ROW_CSS = f"""
 .{WIDE_GAP_ROW_CLASS} {{
-    gap: 48px !important;
+    gap: 20px !important;
 }}
 """
 """`gr.Blocks(css=...)`에 넣어 `WIDE_GAP_ROW_CLASS`의 좌우 간격을 넓히는 스타일."""
+
+CHAT_HISTORY_BOX_CLASS = "mpilot-chat-history-box"
+"""장애 분석 대화의 질문·답변 기록에 붙이는 `elem_classes` 값. 연회색 1px 테두리 안에 높이를 고정하고
+넘치면 스크롤되게 해, 대화가 없을 때(접수)·진행 중일 때(조치 중)·많이 쌓였을 때(조치 완료)
+모두 같은 모양으로 보이게 한다."""
+
+CHAT_HISTORY_BOX_CSS = f"""
+.{CHAT_HISTORY_BOX_CLASS} {{
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 8px !important;
+    padding: 16px !important;
+    height: 420px !important;
+    overflow-y: auto !important;
+}}
+
+.{CHAT_HISTORY_BOX_CLASS} :not(button):not(button *) {{
+    /* Gradio 기본 블록·prose 테두리가 겹쳐 보이지 않도록, 바깥 테두리 하나만 남긴다.
+       [원문보기] 버튼 자체는 제 모양을 유지해야 하므로 버튼과 그 안쪽은 건드리지 않는다. */
+    border: none !important;
+    box-shadow: none !important;
+    background: none !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `CHAT_HISTORY_BOX_CLASS`를 스크롤되는 고정 높이 박스로 보이는 스타일.
+안쪽 Gradio 기본 테두리는 모두 지워 바깥 테두리 하나만 보이게 한다(버튼은 예외)."""
+
+QUESTION_INPUT_ROW_CLASS = "mpilot-question-input-row"
+"""질문 입력창과 전송 버튼을 한 알약 모양 테두리 안에 나란히 두는 Row에 붙이는 `elem_classes` 값.
+높이를 고정해 `CHAT_HISTORY_BOX_CLASS`와 마찬가지로 신고 상태와 상관없이 같은 모양으로 보이게 한다."""
+
+QUESTION_INPUT_ROW_CSS = f"""
+.{QUESTION_INPUT_ROW_CLASS} {{
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 24px !important;
+    padding: 4px 6px 4px 20px !important;
+    align-items: center !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    max-height: 56px !important;
+}}
+
+.{QUESTION_INPUT_ROW_CLASS} .block,
+.{QUESTION_INPUT_ROW_CLASS} textarea {{
+    border: none !important;
+    box-shadow: none !important;
+    background: none !important;
+    padding: 0 !important;
+}}
+
+.{QUESTION_INPUT_ROW_CLASS} textarea {{
+    resize: none !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `QUESTION_INPUT_ROW_CLASS`를 알약 모양 단일 테두리로 보이는 스타일."""
+
+LIGHT_BORDER_BOX_CLASS = "mpilot-light-border-box"
+"""셀프 가이드·조치 결과처럼 배경색 없이 연회색 1px 테두리 안에 줄글만 두는 `elem_classes` 값."""
+
+LIGHT_BORDER_BOX_CSS = f"""
+.{LIGHT_BORDER_BOX_CLASS} {{
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 8px !important;
+    padding: 16px 24px !important;
+    max-width: 800px !important;
+    margin: 0 auto !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `LIGHT_BORDER_BOX_CLASS`를 배경 없는 연회색 테두리 박스로 보이는 스타일.
+접수내역 표와 같은 최대 너비(800px)를 둬서 폭을 맞춘다."""
+
+VIEW_SOURCE_BUTTON_CLASS = "mpilot-view-source-button"
+"""단계별 출처 옆 [원문보기] 버튼에 붙이는 `elem_classes` 값. 본문 글자 크기에 맞춘 작은 버튼으로 보인다."""
+
+VIEW_SOURCE_BUTTON_CSS = f"""
+.{VIEW_SOURCE_BUTTON_CLASS} {{
+    flex-grow: 0 !important;
+    min-width: fit-content !important;
+    width: fit-content !important;
+    height: auto !important;
+    padding: 4px 8px !important;
+    font-size: 12px !important;
+    white-space: nowrap !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `VIEW_SOURCE_BUTTON_CLASS`를 8px 안팎의 작은 버튼으로 보이는 스타일."""
+
+CHAT_NOTICE_CLASS = "mpilot-chat-notice"
+"""대화 기록이 비어 있을 때 보이는 안내 문구 중, 완료된 건(AI 대화 없이 완료)처럼 눈에 띄어야 하는
+문구에 붙이는 `elem_classes` 값. 가운데 정렬하고 본문보다 조금 큰 글자로 보인다."""
+
+CHAT_NOTICE_CSS = f"""
+.{CHAT_NOTICE_CLASS}, .{CHAT_NOTICE_CLASS} p {{
+    text-align: center !important;
+    font-size: 16px !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `CHAT_NOTICE_CLASS`를 가운데 정렬·조금 큰 글자로 보이는 스타일."""
 
 MODAL_OVERLAY_CLASS = "mpilot-modal-overlay"
 """출처 원문처럼 화면 전체를 덮는 모달의 바깥(반투명 배경) 레이어에 붙이는 `elem_classes` 값.
@@ -341,9 +475,9 @@ def pagination_row(initial_label: str | Callable[[], str] = "1 / 1"):
     Yields:
         tuple[gr.Button, gr.Markdown, gr.Button]: (이전 버튼, 페이지 표시, 다음 버튼).
     """
-    with gr.Row(equal_height=True):
+    with gr.Row(equal_height=True, elem_classes=[PAGINATION_ROW_CLASS]):
         prev_btn = gr.Button("‹ 이전", size="sm", scale=0, min_width=90)
-        label = gr.Markdown(initial_label, elem_classes=[PAGE_LABEL_CLASS])
+        label = gr.Markdown(initial_label, elem_classes=[PAGE_LABEL_CLASS], container=False, scale=0)
         next_btn = gr.Button("다음 ›", size="sm", scale=0, min_width=90)
         yield prev_btn, label, next_btn
 
@@ -360,7 +494,10 @@ ENGINEER_ACCENT = "#374151"
 
 
 def accent_css(role: Role | str) -> str:
-    """역할별 시그니처 색을 기본 버튼·선택 표시에 적용하는 스타일.
+    """역할별 시그니처 색을 기본 버튼·선택 표시·목록 행 호버에 적용하는 스타일.
+
+    목록 행(`.virtual-row`)의 Gradio 기본 호버색은 주황색이라 역할 시그니처 색과 어긋나므로,
+    고객은 옅은 남색, 엔지니어는 옅은 회색으로 바꾼다.
 
     Args:
         role: `Role` 값 또는 같은 문자열. 고객은 남색, 엔지니어는 진회색이다.
@@ -368,7 +505,9 @@ def accent_css(role: Role | str) -> str:
     Returns:
         str: `gr.Blocks(css=...)`에 더할 스타일.
     """
-    color = CUSTOMER_ACCENT if Role(role) == Role.CUSTOMER else ENGINEER_ACCENT
+    is_customer = Role(role) == Role.CUSTOMER
+    color = CUSTOMER_ACCENT if is_customer else ENGINEER_ACCENT
+    row_hover = "#e8eef7" if is_customer else "#f3f4f6"
     return f"""
 .gradio-container {{
     --button-primary-background-fill: {color} !important;
@@ -377,6 +516,10 @@ def accent_css(role: Role | str) -> str:
     --button-primary-border-color-hover: {color} !important;
     --checkbox-background-color-selected: {color} !important;
     --checkbox-border-color-selected: {color} !important;
+}}
+
+.gradio-container .virtual-row:hover {{
+    background: {row_hover} !important;
 }}
 """
 
@@ -422,10 +565,22 @@ def navbar_css(role: Role | str) -> str:
     color: white !important;
 }}
 
-.{NAVBAR_LOGO_CLASS} p {{
+.{NAVBAR_LOGO_CLASS} {{
+    flex-grow: 0 !important;
+    flex-basis: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
     font-size: 1.25rem !important;
     font-weight: 700 !important;
-    margin: 0 !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+}}
+
+.{NAVBAR_LOGO_CLASS}:hover {{
+    opacity: 0.85 !important;
 }}
 
 .{NAVBAR_MENU_CLASS} {{
@@ -453,19 +608,21 @@ def navbar_css(role: Role | str) -> str:
 """
 
 
-def build_navbar(title: str, nav_items: list[tuple[str, str]], screen: gr.State) -> None:
+def build_navbar(title: str, nav_items: list[tuple[str, str]], screen: gr.State, home_screen: str) -> None:
     """화면 맨 위 내비바(로고·메뉴)를 만든다. 역할의 앱이 한 번만 둔다.
 
     Args:
-        title: 왼쪽에 보일 로고·타이틀 문구.
+        title: 왼쪽에 보일 로고·타이틀 문구. 누르면 `home_screen`으로 돌아가는 버튼이다.
         nav_items: `(메뉴 라벨, 누르면 바꿀 screen 값)` 목록. 오른쪽에 순서대로 둔다.
-        screen: 공유 `screen` 상태. 메뉴를 누르면 그 화면으로 바꾼다.
+        screen: 공유 `screen` 상태. 로고·메뉴를 누르면 그 화면으로 바꾼다.
+        home_screen: 로고를 누르면 돌아갈 화면. 그 역할의 첫 화면(`first_screen(role)`)을 넘긴다.
 
     Returns:
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
     with gr.Row(elem_classes=[NAVBAR_CLASS]):
-        gr.Markdown(f"**{title}**", elem_classes=[NAVBAR_LOGO_CLASS])
+        logo_btn = gr.Button(title, elem_classes=[NAVBAR_LOGO_CLASS], scale=0)
+        logo_btn.click(lambda: home_screen, outputs=screen)
         with gr.Row(elem_classes=[NAVBAR_MENU_CLASS]):
             for label, target in nav_items:
                 nav_btn = gr.Button(label, elem_classes=[NAVBAR_LINK_CLASS], size="sm")
@@ -485,8 +642,9 @@ FONT_CSS = """
 def app_css(role: Role | str) -> str:
     """역할의 앱 전체에 적용할 스타일을 한데 모은다.
 
-    스티키 메뉴, 뒤로 가기 화살표, 페이지네이션, 가운데 정렬 Row·텍스트, 넓은 간격 Row, 모달, 글꼴,
-    역할별 시그니처 색, 상단 내비바 스타일을 합친다.
+    스티키 메뉴, 뒤로 가기 화살표, 페이지네이션, 가운데 정렬 Row·텍스트, 넓은 간격 Row, Markdown
+    기본 여백 제거, 스크롤 대화 기록 박스, 알약 모양 질문 입력 Row, 연회색 테두리 안내 박스, 대화
+    안내 문구, 모달, 글꼴, 역할별 시그니처 색, 상단 내비바 스타일을 합친다.
 
     Args:
         role: `Role` 값 또는 같은 문자열.
@@ -496,7 +654,10 @@ def app_css(role: Role | str) -> str:
     """
     return (
         STICKY_TOOLBAR_CSS + BACK_BUTTON_CSS + PAGINATION_CSS + CENTER_ROW_CSS + CENTERED_TEXT_CSS
-        + WIDE_GAP_ROW_CSS + MODAL_CSS + FONT_CSS + accent_css(role) + navbar_css(role)
+        + WIDE_GAP_ROW_CSS + PROSE_PADDING_CSS + CHAT_HISTORY_BOX_CSS + QUESTION_INPUT_ROW_CSS
+        + LIGHT_BORDER_BOX_CSS + VIEW_SOURCE_BUTTON_CSS + CHAT_NOTICE_CSS + MODAL_CSS + FONT_CSS
+        + accent_css(role)
+        + navbar_css(role)
     )
 
 # ---------------------------------------------------------------------------
@@ -704,32 +865,191 @@ def format_answer_markdown(answer: Answer, show_notice: bool = False) -> str:
     return "\n".join(lines)
 
 
-def info_box_html(
-    fields: list[tuple[str, str]], *, color: str = "#f4f4f5", align: str = "center", title: str | None = None,
-) -> str:
-    """`라벨 : 값` 줄을 둥근 박스 안에 세로로 나열한 HTML을 만든다.
+# info_table_html이 그리는 표의 공통 스타일 조각. 한 곳에 모아 두면 가로형·세로형이 서로 어긋나지 않는다.
+_TABLE_BORDER = "1px solid #e4e4e7"
+"""표 바깥 테두리·줄 사이 구분선에 쓰는 연회색 1px 선."""
 
-    고객 신고 상세·장애 분석 대화가 접수 정보를 똑같은 모양으로 보이는 데 함께 쓴다. 장애 분석 대화의
-    조치 결과처럼 다른 색·왼쪽 정렬이 필요하면 `color`·`align`으로 바꾼다.
+_TABLE_CELL_PADDING = "padding:6px 12px !important;margin:0 !important"
+"""모든 th·td에 공통으로 주는 안쪽 여백. Gradio 기본값을 밀어내려면 `!important`가 있어야 한다."""
+
+_TABLE_NO_BORDER = "border:none !important"
+"""Gradio 기본 테마가 table·tr·th·td에 걸어 둔 테두리를 지우는 선언. 우리가 원하는 구분선만 따로 그린다."""
+
+_TABLE_RESET_STYLE = f"border-collapse:collapse;width:100%;{_TABLE_NO_BORDER};" \
+    "margin:0 !important;padding:0 !important;border-spacing:0 !important"
+"""`<table>` 태그 자체에 줄 style. Gradio 기본 테마가 table에도 마진·패딩을 걸어 둬서,
+th·td만 지우면 회색 테두리 안쪽 위에 빈 여백이 남는다. table도 똑같이 지운다."""
+
+
+def _vertical_table_rows_html(fields: list[tuple[str, str]]) -> str:
+    """세로형 표(조치 결과 등)의 `<tr>` HTML을 라벨·값 한 줄씩 만든다.
+
+    라벨 칸은 값 칸이 넓어 보이도록 너비를 100px로 고정한다. 마지막 줄만 아래 구분선을 생략해
+    바깥 테두리와 겹쳐 보이지 않게 한다.
 
     Args:
-        fields: `(라벨, 값)` 목록. 보일 순서 그대로 한 줄씩 담는다.
-        color: 박스 배경색. 기본은 옅은 회색.
-        align: 박스 안 텍스트 정렬(`"center"` 또는 `"left"`). 기본은 가운데 정렬.
-        title: 박스 맨 위에 둘 제목. 없으면 생략한다.
+        fields: `(라벨, 값)` 목록. 위에서 아래로 그 순서대로 한 줄씩 담는다.
 
     Returns:
-        str: 최대 너비 300px인 박스 HTML. `title`·`label`·`value`는 이스케이프되어 들어간다.
+        str: `<tr>` 태그를 이어 붙인 HTML. `label`·`value`는 이스케이프되어 들어간다.
+    """
+    last_row_index = len(fields) - 1
+    row_html_list = []
+    for row_index, (label, value) in enumerate(fields):
+        is_last_row = row_index == last_row_index
+        bottom_border = "" if is_last_row else f";border-bottom:{_TABLE_BORDER} !important"
+
+        label_style = (
+            f"{_TABLE_CELL_PADDING};text-align:left;font-weight:700;font-size:14px;color:#71717a;"
+            f"{_TABLE_NO_BORDER};background:#f4f4f5 !important;"
+            f"max-width:100px !important;width:100px !important{bottom_border}"
+        )
+        value_style = (
+            f"{_TABLE_CELL_PADDING};text-align:left;font-size:15px;color:#27272a;"
+            f"{_TABLE_NO_BORDER};background:#ffffff !important{bottom_border}"
+        )
+        row_html_list.append(
+            f'<tr style="{_TABLE_NO_BORDER}">'
+            f'<th style="{label_style}">{escape(label)}</th>'
+            f'<td style="{value_style}">{escape(value)}</td>'
+            "</tr>"
+        )
+    return "".join(row_html_list)
+
+
+def _split_into_groups(fields: list[tuple[str, str]], columns_per_row: int | None) -> list[list[tuple[str, str]]]:
+    """가로형 표의 필드를 한 줄에 둘 열 수만큼씩 끊는다.
+
+    Args:
+        fields: `(라벨, 값)` 목록.
+        columns_per_row: 한 줄에 둘 열 수. 없으면 끊지 않고 전부 한 줄로 묶는다.
+
+    Returns:
+        list[list[tuple[str, str]]]: 줄마다 담길 필드 묶음 목록.
+    """
+    if not columns_per_row:
+        return [fields]
+    return [fields[start:start + columns_per_row] for start in range(0, len(fields), columns_per_row)]
+
+
+def _horizontal_group_html(group: list[tuple[str, str]], *, is_first_group: bool) -> str:
+    """가로형 표에서 한 묶음(열 제목 줄 + 값 줄)의 `<tr>` HTML 두 개를 만든다.
+
+    Args:
+        group: 그 줄에 나란히 보일 `(라벨, 값)` 목록.
+        is_first_group: 표의 첫 묶음이면 `True`. 첫 묶음이 아니면 위쪽에 구분선을 그어 앞 묶음과
+            나눠 보이게 한다.
+
+    Returns:
+        str: 열 제목 줄 `<tr>`과 값 줄 `<tr>`을 이어 붙인 HTML.
+    """
+    top_border = "" if is_first_group else f";border-top:{_TABLE_BORDER} !important"
+
+    header_cells = []
+    for label, _ in group:
+        header_style = (
+            f"{_TABLE_CELL_PADDING};text-align:left;font-weight:700;font-size:14px;color:#18181b;"
+            f"{_TABLE_NO_BORDER};background:#f4f4f5 !important;"
+            f"border-bottom:{_TABLE_BORDER} !important{top_border}"
+        )
+        header_cells.append(f'<th style="{header_style}">{escape(label)}</th>')
+
+    value_cells = []
+    for _, value in group:
+        value_style = (
+            f"{_TABLE_CELL_PADDING};text-align:left;font-size:15px;color:#27272a;"
+            f"{_TABLE_NO_BORDER};background:#ffffff !important"
+        )
+        value_cells.append(f'<td style="{value_style}">{escape(value)}</td>')
+
+    header_row = f'<tr style="{_TABLE_NO_BORDER}">{"".join(header_cells)}</tr>'
+    value_row = f'<tr style="{_TABLE_NO_BORDER}">{"".join(value_cells)}</tr>'
+    return header_row + value_row
+
+
+def _note_row_html(note: tuple[str, str], column_count: int) -> str:
+    """증상 메모처럼 긴 항목을 표 맨 아래 전체 너비 한 줄로 보여 줄 `<tr>` HTML을 만든다.
+
+    Args:
+        note: `(라벨, 값)`.
+        column_count: 표의 한 줄당 열 수. 이 값으로 `colspan`을 줘서 전체 너비를 채운다.
+
+    Returns:
+        str: 위쪽에 구분선을 그은 전체 너비 `<tr>` HTML.
+    """
+    note_label, note_value = note
+    cell_style = (
+        f"{_TABLE_CELL_PADDING};{_TABLE_NO_BORDER};background:#ffffff !important;"
+        f"border-top:{_TABLE_BORDER} !important"
+    )
+    label_html = f'<span style="color:#71717a;font-weight:700;font-size:14px">{escape(note_label)}</span>'
+    value_html = f'<div style="font-size:15px;color:#27272a;margin-top:4px">{escape(note_value)}</div>'
+    return (
+        f'<tr style="{_TABLE_NO_BORDER}">'
+        f'<td colspan="{column_count}" style="{cell_style}">{label_html}{value_html}</td>'
+        "</tr>"
+    )
+
+
+def info_table_html(
+    fields: list[tuple[str, str]], *, title: str | None = None, max_width: str | None = None,
+    min_width: str | None = None, vertical: bool = False, center: bool = False,
+    note: tuple[str, str] | None = None, columns_per_row: int | None = None,
+) -> str:
+    """접수 내역·조치 결과처럼 여러 항목을 신고 목록 표와 같은 모양의 칼럼 표로 만든다.
+
+    기본(가로형)은 신고 목록 표(`gr.Dataframe`)와 같은 느낌으로 라벨을 열 제목(연회색 배경), 값을 그
+    아래 한 행(흰 배경)으로 나란히 보여 준다(접수 내역). `vertical=True`면 라벨·값을 한 줄씩 나란히
+    쌓은 세로형 표를 만든다(조치 결과처럼 값이 문장이라 여러 열로 늘어놓기 어려울 때 쓴다). 세로형의
+    라벨 칸은 값 칸이 넓게 보이도록 너비를 100px로 고정한다. 두 모양 모두 테두리·안쪽 여백·글자
+    크기·라벨(연회색)·값(흰색) 배경을 같게 둬서 한 화면에 나란히 둬도 같은 디자인처럼 보이게 한다.
+
+    Args:
+        fields: `(라벨, 값)` 목록. 보일 순서 그대로 담는다(가로형은 왼쪽부터 열, 세로형은 위부터 줄).
+        title: 표 위에 둘 제목. 없으면 생략한다.
+        max_width: 바깥 컨테이너의 최대 너비. 없으면 칸 너비를 다 쓴다.
+        min_width: 바깥 컨테이너의 최소 너비. 열이 많은 가로형이 너무 좁아지지 않게 잡아 둔다.
+        vertical: `True`면 라벨·값을 한 줄씩 쌓은 세로형 표로 만든다. 가로형(기본)은 각 필드가 열이다.
+        center: `True`면 칸 가운데에 띄운다(고객 신고 상세처럼 본문 전체가 가운데 정렬인 화면용).
+            기본은 왼쪽 정렬이다(장애 분석 대화처럼 뒤로 가기·제목이 왼쪽에 붙는 화면과 줄을 맞춘다).
+        note: 가로형에서 증상 메모처럼 길어질 수 있어 열로 두기 어려운 항목. `(라벨, 값)`을 표 맨 아래
+            전체 너비 한 줄로 내려 보여 준다. 세로형에는 쓰지 않는다(이미 한 줄씩 쌓는 모양이다).
+        columns_per_row: 가로형에서 한 줄에 둘 열 수. 주면 `fields`를 이 수만큼씩 끊어 여러 줄(열 제목
+            행+값 행 묶음)로 내려 쌓는다. 없으면(기본) 모든 열을 한 줄에 그대로 둔다. 세로형에는 쓰지 않는다.
+
+    Returns:
+        str: 옅은 테두리의 표 HTML. `title`·`label`·`value`는 이스케이프되어 들어간다.
     """
     # `gr.HTML`은 내용을 정화하지 않는다. 고객 메모·엔지니어 입력이 들어오므로 값마다 이스케이프한다.
-    heading = f'<div style="font-weight:700;margin-bottom:8px">{escape(title)}</div>' if title else ""
-    rows = "".join(
-        f'<div style="margin:3px 0"><span style="color:#71717a">{escape(label)}</span> : {escape(value)}</div>'
-        for label, value in fields
-    )
+    if vertical:
+        rows_html = _vertical_table_rows_html(fields)
+    else:
+        groups = _split_into_groups(fields, columns_per_row)
+        rows_html = "".join(
+            _horizontal_group_html(group, is_first_group=group_index == 0)
+            for group_index, group in enumerate(groups)
+        )
+        if note is not None:
+            column_count = columns_per_row or len(fields)
+            rows_html += _note_row_html(note, column_count)
+
+    table_html = f'<table style="{_TABLE_RESET_STYLE}"><tbody>{rows_html}</tbody></table>'
+
+    heading_html = ""
+    if title:
+        heading_html = f'<div style="font-weight:700;font-size:16px;margin-bottom:6px">{escape(title)}</div>'
+
+    container_width_style = ""
+    if max_width:
+        container_width_style += f"max-width:{max_width};"
+    if min_width:
+        container_width_style += f"min-width:{min_width};"
+    container_margin = "margin:0 auto" if center else "margin:0"
+
     return (
-        f'<div style="max-width:300px;margin:0 auto;background:{color};border-radius:8px;'
-        f'padding:16px;text-align:{align}">{heading}{rows}</div>'
+        f'<div style="{container_width_style}{container_margin}">{heading_html}'
+        f'<div style="border:{_TABLE_BORDER};overflow:hidden">{table_html}</div>'
+        "</div>"
     )
 
 

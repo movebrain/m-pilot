@@ -20,13 +20,31 @@ from __future__ import annotations
 import gradio as gr
 
 from mpilot import service
-from mpilot.models import CustomerCaseResult
+from mpilot.models import CaseStatus, CustomerCaseResult
 from mpilot.ui import common
 
 SCREEN = common.SCREEN_CUSTOMER_LIST
 
 TABLE_HEADERS = ["접수번호", "설비", "코드", "에러명", "상태", "접수 시각"]
 """신고 표의 열 이름. `case_rows`가 만드는 행의 순서와 같다."""
+
+SELF_GUIDE_COMPLETED_LABEL = "조치완료(셀프가이드 안내)"
+"""셀프 가이드로 완료된 건의 상태 칸 문구. 고객 목록에는 경로(route) 칸이 따로 없어, 엔지니어가
+조치한 건과 구분하도록 상태 라벨 자체를 다르게 쓴다."""
+
+
+def row_status_label(case: CustomerCaseResult) -> str:
+    """표의 상태 칸에 보일 라벨을 만든다.
+
+    Args:
+        case: 고객 공개 신고.
+
+    Returns:
+        str: 셀프 가이드로 완료된 건은 `SELF_GUIDE_COMPLETED_LABEL`, 그 밖은 `common.status_label` 그대로.
+    """
+    if case.status == CaseStatus.COMPLETED and case.guidance_answer is not None:
+        return SELF_GUIDE_COMPLETED_LABEL
+    return common.status_label(case.status)
 
 
 def case_rows(cases: list[CustomerCaseResult]) -> list[list[str]]:
@@ -36,7 +54,8 @@ def case_rows(cases: list[CustomerCaseResult]) -> list[list[str]]:
         cases: `service.list_customer_cases`가 돌려준 공개 신고 목록(최신순).
 
     Returns:
-        list[list[str]]: `TABLE_HEADERS` 순서의 행 목록. 상태는 화면 라벨, 시각은 한국 시간이다.
+        list[list[str]]: `TABLE_HEADERS` 순서의 행 목록. 상태는 화면 라벨(`row_status_label`),
+            시각은 한국 시간이다.
     """
     return [
         [
@@ -44,7 +63,7 @@ def case_rows(cases: list[CustomerCaseResult]) -> list[list[str]]:
             str(c.equipment),
             c.code,
             c.error_name,
-            common.status_label(c.status),
+            row_status_label(c),
             common.format_datetime(c.created_at),
         ]
         for c in cases

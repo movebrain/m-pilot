@@ -20,7 +20,6 @@ ENV = {
     "DEMO_CUSTOMER_PASSWORD": "c-pw",
     "DEMO_ENGINEER_ID": "engineer",
     "DEMO_ENGINEER_PASSWORD": "e-pw",
-    "EVIDENCE_THRESHOLD": "0.5",
 }
 
 
@@ -44,7 +43,6 @@ def test_loads_values_and_defaults(clean_env, tmp_path):
     assert config.db_url.get_secret_value() == "mysql+pymysql://u:p%40ss%2Fword@127.0.0.1:3307/db"
     assert config.search.manual_k == 3
     assert config.search.history_k == 3
-    assert config.search.evidence_threshold == 0.5
     assert config.llm_timeout_seconds == 60
     assert config.demo_accounts["customer"].role is Role.CUSTOMER
     assert config.demo_accounts["engineer"].role is Role.ENGINEER
@@ -70,27 +68,6 @@ def test_missing_required_value(clean_env, tmp_path):
         load_config(path)
 
 
-def test_evidence_threshold_has_no_default(clean_env, tmp_path):
-    path = write_env(tmp_path, EVIDENCE_THRESHOLD="")
-
-    with pytest.raises(ValidationError, match="EVIDENCE_THRESHOLD"):
-        load_config(path)
-
-
-@pytest.mark.parametrize("value", ["-0.1", "nan", "inf", "-inf"])
-def test_evidence_threshold_must_be_finite_and_non_negative(clean_env, tmp_path, value):
-    path = write_env(tmp_path, EVIDENCE_THRESHOLD=value)
-
-    with pytest.raises(ValidationError, match="evidence_threshold"):
-        load_config(path)
-
-
-def test_evidence_threshold_zero_is_allowed(clean_env, tmp_path):
-    config = load_config(write_env(tmp_path, EVIDENCE_THRESHOLD="0"))
-
-    assert config.search.evidence_threshold == 0
-
-
 def test_demo_accounts_must_be_two_distinct_ids(clean_env, tmp_path):
     path = write_env(tmp_path, DEMO_ENGINEER_ID="customer")
 
@@ -99,7 +76,7 @@ def test_demo_accounts_must_be_two_distinct_ids(clean_env, tmp_path):
 
 
 def test_bad_number_format(clean_env, tmp_path):
-    path = write_env(tmp_path, EVIDENCE_THRESHOLD="abc")
+    path = write_env(tmp_path, MANUAL_K="abc")
 
     with pytest.raises(ValidationError, match="형식"):
         load_config(path)

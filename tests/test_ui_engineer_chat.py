@@ -69,28 +69,39 @@ def _turn(no: int, *citations: Citation) -> ChatTurn:
 
 def test_case_summary_shows_case_fields():
     text = chat.case_summary_html(_detail())
-    for expected in ("SC-1", "SRM", "S115", "리프트 엔코더 편차", "상", "조치 중", "2026-10-28 10:00"):
+    for expected in ("접수내역", "SC-1", "SRM", "S115", "리프트 엔코더 편차", "상", "조치 중", "2026-10-28 10:00"):
         assert expected in text
 
 
-def test_chat_markdown_empty_and_order():
-    assert chat.chat_markdown([]) == chat.EMPTY_CHAT_NOTICE
-    assert chat.chat_markdown([], completed=True) == chat.COMPLETED_NO_CHAT_NOTICE  # 완료 건은 질문 안내를 하지 않는다
-    text = chat.chat_markdown([_turn(1, MANUAL), _turn(2)])
-    assert text.index("질문1") < text.index("질문2")
-    assert "근거가 부족합니다." in text  # 근거 부족은 안내만 보인다
+def test_chat_state_of_dumps_turns_to_plain_dicts():
+    # gr.render가 상태를 해시하려 하므로, list 필드를 가진 ChatTurn을 그대로 담지 않고 dict로 바꾼다.
+    turns = [_turn(1, MANUAL), _turn(2)]
+    state = chat.chat_state_of(turns, completed=True)
+    assert state["completed"] is True
+    assert [t["question"] for t in state["turns"]] == ["질문1", "질문2"]
+    assert state["turns"][0]["answer"]["steps"][0]["citations"][0]["ref_id"] == MANUAL.ref_id
+    assert chat.chat_state_of([], completed=False) == {"turns": [], "completed": False}
 
 
 def test_resolution_html_only_for_completed():
     text = chat.resolution_html(_detail(CaseStatus.COMPLETED))
     for expected in ("엔코더 케이블 접촉 불량", "커넥터 재체결", "정상 동작 확인"):
         assert expected in text
-    assert chat.NO_RESOLUTION_NOTICE in chat.resolution_html(_detail())
 
 
-def test_citations_are_unique_in_order():
-    turns = [_turn(1, MANUAL), _turn(2), _turn(3, HISTORY, MANUAL)]
-    assert chat.citations_of(turns) == [MANUAL, HISTORY]
+def test_resolution_html_shows_blank_fields_before_completion():
+    # 조치 결과가 없어도 라벨(조치 결과·원인·조치 내용·결과)은 똑같이 보이고 값만 공란이다.
+    text = chat.resolution_html(_detail())
+    for label in ("조치 결과", "원인", "조치 내용", "결과"):
+        assert label in text
+    assert "엔코더 케이블 접촉 불량" not in text
+
+
+def test_citation_source_text_joins_label_and_body_in_order(monkeypatch):
+    monkeypatch.setattr(chat.service, "get_citation_text", lambda c: f"원문:{c.ref_id}")
+    text = chat.citation_source_text([MANUAL, HISTORY])
+    assert chat.common.citation_label(MANUAL) in text and f"원문:{MANUAL.ref_id}" in text
+    assert text.index(MANUAL.ref_id) < text.index(HISTORY.ref_id)
 
 
 def test_can_ask_only_before_completed():
@@ -129,26 +140,33 @@ def screen(monkeypatch):
 
 
 def test_enter_loads_case_and_chat(screen):
-    column, summary, text, record, pick, box, found, question, resolve, send, next_screen = (
+    column, summary, state, record, box, source_text, question, resolve, send, next_screen = (
         screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
     )
-    assert column.visible and "SC-1" in summary and "질문1" in text and chat.NO_RESOLUTION_NOTICE in record
-    assert pick.visible and found == [MANUAL]
+    assert column.visible and "SC-1" in summary and "조치 결과" in record
+    assert [t["question"] for t in state["turns"]] == [t.question for t in screen["turns"]]
+    assert state["completed"] is False
+    assert not box.visible and source_text == ""  # 원문 모달은 새로 불러올 때 닫혀 있다
     assert question.visible and question.interactive and resolve.visible and send.visible and send.interactive
+    assert question.placeholder == chat.QUESTION_PLACEHOLDER
     assert next_screen == gr.skip()
 
 
 def test_enter_completed_case_is_read_only(screen):
+    # 질문 입력창·전송 버튼은 화면 구조 유지를 위해 숨기지 않고 비활성화만 한다. [조치 결과 작성]만 숨긴다.
     screen["detail"] = _detail(CaseStatus.COMPLETED)
-    _, _, text, record, *_, question, resolve, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
-    assert "질문1" in text and "커넥터 재체결" in record  # 대화 기록과 조치 결과가 보인다
-    assert not question.visible and not resolve.visible and not send.visible
+    _, _, state, record, *_, question, resolve, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
+    assert state["completed"] and "커넥터 재체결" in record  # 대화 기록과 조치 결과가 보인다
+    assert question.visible and not question.interactive
+    assert question.placeholder == chat.QUESTION_PLACEHOLDER_COMPLETED
+    assert not resolve.visible
+    assert send.visible and not send.interactive
 
 
 def test_enter_completed_case_without_chat(screen):
     screen["detail"], screen["turns"] = _detail(CaseStatus.COMPLETED), []
-    _, _, text, *_ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
-    assert text == chat.COMPLETED_NO_CHAT_NOTICE
+    _, _, state, *_ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
+    assert state == {"turns": [], "completed": True}
 
 
 def test_enter_unknown_case_goes_back(screen):
@@ -175,18 +193,5 @@ def test_send_failure_keeps_question_and_shows_fixed_text(screen):
 
 def test_after_send_reloads_and_unlocks(screen):
     screen["turns"] = [_turn(1, MANUAL), _turn(2)]
-    summary, text, *_, send = screen["handlers"]["on_after_send"]("SC-1")  # send_btn이 맨 끝
-    assert "질문2" in text and send.interactive
-
-
-def test_source_pick_shows_original(screen):
-    box, text = screen["handlers"]["on_source_pick"]("0", [MANUAL])
-    assert isinstance(box, gr.Column) and box.visible and text == f"원문:{MANUAL.ref_id}"
-    box, text = screen["handlers"]["on_source_pick"](None, [MANUAL])
-    assert not box.visible and text == ""
-
-
-def test_source_close_hides_modal_and_clears_pick(screen):
-    # 고른 출처를 비워야 같은 출처를 다시 골라도 change가 발생해 모달이 열린다.
-    box, pick, text = screen["handlers"]["on_source_close"]()
-    assert isinstance(box, gr.Column) and not box.visible and pick is None and text == ""
+    summary, state, *_, send = screen["handlers"]["on_after_send"]("SC-1")  # send_btn이 맨 끝
+    assert len(state["turns"]) == 2 and send.interactive

@@ -120,7 +120,7 @@ def build_app(role: Role) -> gr.Blocks:
         role_state = gr.State(role)
         case_id = gr.State(None)
         screen = gr.State(common.first_screen(role))
-        common.build_navbar(title, NAV_ITEMS[role], screen)
+        common.build_navbar(title, NAV_ITEMS[role], screen, common.first_screen(role))
         for build_screen in SCREEN_BUILDERS[role]:
             build_screen(role_state, case_id, screen)
         gr.Markdown(common.VIRTUAL_DATA_BANNER, elem_classes=[common.CENTERED_TEXT_CLASS])

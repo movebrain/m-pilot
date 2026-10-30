@@ -25,11 +25,8 @@ def test_offline_dummies_satisfy_load_config(env: dict[str, str], tmp_path: Path
     empty_env_file.write_text("", encoding="utf-8")
 
     run._set_dummy_env(offline=True)
-    run._apply_evidence_threshold(None)
 
-    config = load_config(env_path=empty_env_file)  # 필수 값이 모두 채워졌으면 예외가 없다
-
-    assert config.search.evidence_threshold == 1.0
+    load_config(env_path=empty_env_file)  # 필수 값이 모두 채워졌으면 예외가 없다
 
 
 def test_real_value_in_environment_is_kept(env: dict[str, str]) -> None:
@@ -59,39 +56,7 @@ def test_empty_value_in_env_file_counts_as_missing(env: dict[str, str], tmp_path
     assert "MYSQL_USER" not in env  # 파일에 값이 있으면 더미로 가리지 않는다
 
 
-def test_evidence_threshold_defaults_to_one(env: dict[str, str]) -> None:
-    assert run._apply_evidence_threshold(None) == "1.0"
-    assert env["EVIDENCE_THRESHOLD"] == "1.0"
-
-
-def test_evidence_threshold_keeps_value_from_environment(env: dict[str, str]) -> None:
-    env["EVIDENCE_THRESHOLD"] = "1.3"
-
-    assert run._apply_evidence_threshold(None) == "1.3"
-
-
-def test_evidence_threshold_option_wins_over_environment(env: dict[str, str]) -> None:
-    env["EVIDENCE_THRESHOLD"] = "1.3"
-
-    assert run._apply_evidence_threshold(0.9) == "0.9"
-    assert env["EVIDENCE_THRESHOLD"] == "0.9"
-
-
-def test_evidence_threshold_in_env_file_is_overridden_by_default(env: dict[str, str], tmp_path: Path) -> None:
-    # 환경변수가 .env보다 우선한다. .env.example을 복사한 값(예전 0.5)도 이 도구에서는 쓰이지 않는다.
-    (tmp_path / ".env").write_text("EVIDENCE_THRESHOLD=0.5\n", encoding="utf-8")
-
-    run._apply_evidence_threshold(None)
-
-    assert env["EVIDENCE_THRESHOLD"] == "1.0"
-
-
-@pytest.mark.parametrize("value", ["-0.1", "nan", "inf"])
-def test_invalid_evidence_threshold_is_rejected(value: str) -> None:
-    with pytest.raises(SystemExit):
-        run._parse_args(["--evidence-threshold", value])
-
-
-def test_evidence_threshold_option_is_parsed() -> None:
-    assert run._parse_args(["--evidence-threshold", "1.2"]).evidence_threshold == 1.2
-    assert run._parse_args([]).evidence_threshold is None
+def test_parse_args_flags() -> None:
+    assert run._parse_args([]).both is False
+    args = run._parse_args(["--offline", "--both"])
+    assert (args.offline, args.both) == (True, True)

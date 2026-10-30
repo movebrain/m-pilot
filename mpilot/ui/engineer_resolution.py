@@ -38,23 +38,37 @@ NOT_INDEXED_NOTICE = "조치 완료로 등록했습니다. 검색 반영은 실�
 COMPLETED_NOTICE = "이미 조치 완료된 건이라 더 등록할 수 없습니다."
 """완료된 건에 들어왔을 때 보이는 안내."""
 
+COLUMNS_PER_ROW = 3
+"""접수내역 표의 한 줄당 열 수. 왼쪽 좁은 열 안이라 항목 6개를 한 줄에 다 두면 좁아져 3개씩 나눈다."""
 
-def case_summary_markdown(detail: CaseDetail) -> str:
-    """신고 정보를 화면용 Markdown으로 만든다.
+
+def case_summary_html(detail: CaseDetail) -> str:
+    """신고 정보를 장애 분석 대화와 같은 모양의 '접수내역' 칼럼 표 HTML로 만든다.
+
+    장애 분석 대화 화면(`engineer_chat.case_summary_html`)과 같은 필드·모양을 써서, 두 화면을 오갈 때
+    구조가 일관되게 보이도록 한다. 왼쪽 열 안에 있으므로 고정 너비를 강제하지 않고 열 너비를 그대로
+    따른다. 증상 메모는 길어질 수 있어 열에 넣지 않고 표 맨 아래 전체 너비 한 줄로 내려 보여 준다.
 
     Args:
         detail: `service.get_engineer_case`가 돌려준 신고 상세.
 
     Returns:
-        str: 접수번호·설비·코드·에러명·심각도·상태·증상 메모를 담은 Markdown.
+        str: 접수번호·상태·설비·심각도·접수 시각·에러코드를 열로, 증상 메모를 아래 한 줄로 담은 HTML
+            (`common.info_table_html`).
     """
     case = detail.service_case
-    return "\n\n".join([
-        f"**접수번호** {case.case_id} · **상태** {common.status_label(case.status)}",
-        f"**설비** {case.equipment} · **코드** {case.code} · **에러명** {detail.error_code.name}"
-        f" · **심각도** {detail.error_code.severity}",
-        f"**증상 메모** {case.memo or '-'}",
-    ])
+    fields = [
+        ("접수번호", case.case_id),
+        ("상태", common.status_label(case.status)),
+        ("설비", str(case.equipment)),
+        ("심각도", str(detail.error_code.severity)),
+        ("접수 시각", common.format_datetime(case.created_at)),
+        ("에러코드", f"{case.code} · {detail.error_code.name}"),
+    ]
+    return common.info_table_html(
+        fields, title="접수내역", max_width="100%", columns_per_row=COLUMNS_PER_ROW,
+        note=("증상 메모", case.memo or "-"),
+    )
 
 
 def build_resolution(cause: str | None, action: str | None, result: str | None) -> Resolution:
@@ -103,16 +117,15 @@ def build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: 
     with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
         with common.back_button_row("## 조치 이력 저장") as back_btn:
             pass
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1):  # 왼쪽: 신고 정보
-                gr.Markdown("### 신고 정보")
-                summary = gr.Markdown()
-            with gr.Column(scale=1):  # 오른쪽: 조치 결과 입력
+        with gr.Row(equal_height=False, elem_classes=[common.WIDE_GAP_ROW_CLASS]):
+            with gr.Column(scale=4):  # 왼쪽: 접수내역
+                summary = gr.HTML()
+            with gr.Column(scale=6):  # 오른쪽: 조치 결과 입력
                 gr.Markdown("### 조치 결과")
                 cause = gr.Textbox(label="실제 원인 (고객에게 공개되지 않습니다)", lines=3, max_length=FIELD_MAX_LENGTH)
                 action = gr.Textbox(label="실제 조치", lines=3, max_length=FIELD_MAX_LENGTH)
                 result = gr.Textbox(label="조치 결과", lines=3, max_length=FIELD_MAX_LENGTH)
-        confirm_btn = gr.Button("조치 완료로 확정", variant="primary")
+                confirm_btn = gr.Button("조치 완료로 확정", variant="primary")
 
     inputs = [cause, action, result]
 
@@ -132,7 +145,7 @@ def build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: 
         if not open_:
             gr.Info(COMPLETED_NOTICE)
         boxes = tuple(gr.Textbox(value="", interactive=open_) for _ in inputs)
-        return (gr.Column(visible=True), case_summary_markdown(detail)) + boxes + (gr.Button(interactive=open_), gr.skip())
+        return (gr.Column(visible=True), case_summary_html(detail)) + boxes + (gr.Button(interactive=open_), gr.skip())
 
     def on_confirm(selected: str | None, cause_text: str | None, action_text: str | None, result_text: str | None):
         # 확정에 성공하면 결과를 안내하고 대시보드로 간다. 실패하면 입력을 남겨 다시 시도하게 한다.
