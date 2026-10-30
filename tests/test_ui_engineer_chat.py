@@ -75,7 +75,7 @@ def _turn(no: int, *citations: Citation) -> ChatTurn:
 
 def test_case_summary_shows_case_fields():
     text = chat.case_summary_html(_detail())
-    for expected in ("SC-1", "SRM", "S115", "리프트 엔코더 편차", "상", "조치 중", "2026-10-28 10:00"):
+    for expected in ("접수내역", "SC-1", "SRM", "S115", "리프트 엔코더 편차", "상", "조치 중", "2026-10-28 10:00"):
         assert expected in text
 
 
@@ -166,6 +166,7 @@ def test_enter_loads_case_and_chat(screen):
     assert state["completed"] is False
     assert not box.visible and source_text == ""  # 원문 모달은 새로 불러올 때 닫혀 있다
     assert question.visible and question.interactive and resolve.visible and send.visible and send.interactive
+    assert question.placeholder == chat.QUESTION_PLACEHOLDER
     assert next_screen == gr.skip()
 
 
@@ -175,6 +176,7 @@ def test_enter_completed_case_is_read_only(screen):
     _, _, state, record, *_, question, resolve, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
     assert state["completed"] and "커넥터 재체결" in record  # 대화 기록과 조치 결과가 보인다
     assert question.visible and not question.interactive
+    assert question.placeholder == chat.QUESTION_PLACEHOLDER_COMPLETED
     assert not resolve.visible
     assert send.visible and not send.interactive
 

@@ -49,21 +49,31 @@ RESOLUTION_BOX_COLOR = "#e0f2fe"
 VIEW_SOURCE_LABEL = "원문보기"
 """단계별 출처 옆에 두는 작은 버튼 문구. 누르면 모달로 그 단계의 출처 원문을 보여 준다."""
 
-INFO_BOX_MAX_WIDTH = "100%"
-"""왼쪽 정보 열의 접수 정보·조치 결과 박스 최대 너비. 고객 신고 상세(300px)와 달리 열 너비를 다 쓴다."""
+COLUMNS_PER_ROW = 3
+"""접수내역 표의 한 줄당 열 수. 항목이 6개라 한 줄에 다 두면 각 열이 너무 좁아져 3개씩 두 줄로 나눈다."""
+
+QUESTION_PLACEHOLDER = "질문을 입력하세요"
+"""질문을 보낼 수 있는 건의 입력창 플레이스홀더."""
+
+QUESTION_PLACEHOLDER_COMPLETED = "조치가 완료되었습니다"
+"""완료된 건의 입력창 플레이스홀더. 더 이상 질문을 보낼 일이 없음을 알린다."""
 
 
 def case_summary_html(detail: CaseDetail) -> str:
-    """신고 정보를 옅은 회색 박스 안에 `라벨 : 값` 줄로 세로 나열한 HTML로 만든다.
+    """신고 정보를 '접수내역' 제목을 단, 신고 목록 표와 같은 모양의 칼럼 표로 만든다.
 
-    고객 신고 상세의 접수 정보 박스(`customer_report_detail.info_html`)와 같은 모양이되, 왼쪽 열
-    너비에 맞춰 더 넓다(`common.info_box_html`, `INFO_BOX_MAX_WIDTH`).
+    고객 신고 상세의 접수 정보 표(`customer_report_detail.info_html`)와 기본 모양은 같되
+    (`common.info_table_html`), 조치 결과와 같은 좁은 왼쪽 열 안에 있으므로 고정 너비를 두지 않고
+    열 너비를 그대로 따른다. 항목도 6개로 더 많아 한 줄에 다 두면 좁아지므로 3열씩 두 줄로 나눠
+    보여 준다(`COLUMNS_PER_ROW`). 증상 메모는 길어질 수 있어 열에 넣지 않고 표 맨 아래 전체 너비
+    한 줄로 내려 보여 준다.
 
     Args:
         detail: `service.get_engineer_case`가 돌려준 신고 상세.
 
     Returns:
-        str: 접수번호·상태·설비·심각도·접수 시각·에러코드·증상 메모를 한 줄씩 담은 HTML.
+        str: 접수번호·상태·설비(1행)·심각도·접수 시각·에러코드(2행)를 열로, 증상 메모를 아래 한 줄로
+            담은 HTML.
     """
     case = detail.service_case
     fields = [
@@ -73,9 +83,11 @@ def case_summary_html(detail: CaseDetail) -> str:
         ("심각도", str(detail.error_code.severity)),
         ("접수 시각", common.format_datetime(case.created_at)),
         ("에러코드", f"{case.code} · {detail.error_code.name}"),
-        ("증상 메모", case.memo or "-"),
     ]
-    return common.info_box_html(fields, max_width=INFO_BOX_MAX_WIDTH)
+    return common.info_table_html(
+        fields, title="접수내역", max_width="100%", columns_per_row=COLUMNS_PER_ROW,
+        note=("증상 메모", case.memo or "-"),
+    )
 
 
 def chat_state_of(turns: list[ChatTurn], completed: bool, waiting_customer: bool = False) -> dict:
@@ -98,16 +110,19 @@ def chat_state_of(turns: list[ChatTurn], completed: bool, waiting_customer: bool
 
 
 def resolution_html(detail: CaseDetail) -> str:
-    """확정된 조치 결과를 연한 하늘색 박스 안에 왼쪽 정렬로 담은 HTML로 만든다. 엔지니어 화면이라 원인도 보인다.
+    """확정된 조치 결과를 세로형 표로 담은 HTML로 만든다. 엔지니어 화면이라 원인도 보인다.
 
-    박스·라벨(조치 결과·원인·조치 내용·결과)은 조치 결과가 있든 없든 똑같이 보인다. 확정된 조치가
-    없으면 값만 공란으로 둔다.
+    표·라벨(조치 결과·원인·조치 내용·결과)은 조치 결과가 있든 없든 똑같이 보인다. 확정된 조치가
+    없으면 값만 공란으로 둔다. 접수내역 표(`case_summary_html`)와 테두리·여백·글자 크기·라벨(연회색)·
+    값(흰색) 배경을 같게 둬서 두 표가 한 디자인처럼 보이게 한다(`common.info_table_html`). 대화 옆
+    좁은 왼쪽 열 안에 접수내역과 함께 있으므로, 고정 너비를 강제하지 않고 열 너비를 그대로 따른다
+    (강제하면 대화창 쪽으로 넘친다).
 
     Args:
         detail: 신고 상세.
 
     Returns:
-        str: 원인·조치 내용·결과를 담은 왼쪽 정렬 박스 HTML. 조치 결과가 없으면 값이 모두 빈 칸이다.
+        str: 원인·조치 내용·결과를 담은 세로형 표 HTML. 조치 결과가 없으면 값이 모두 빈 칸이다.
     """
     record = detail.resolution
     fields = [
@@ -115,8 +130,8 @@ def resolution_html(detail: CaseDetail) -> str:
         ("조치 내용", record.action if record else ""),
         ("결과", record.result if record else ""),
     ]
-    return common.info_box_html(
-        fields, color=RESOLUTION_BOX_COLOR, align="left", title="조치 결과", max_width=INFO_BOX_MAX_WIDTH,
+    return common.info_table_html(
+        fields, title="조치 결과", vertical=True, max_width="100%",
     )
 
 
@@ -182,7 +197,7 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
         with common.back_button_row("## 장애 분석 대화") as back_btn:
             resolve_btn = gr.Button("조치 결과 작성", scale=0, min_width=140)
         with gr.Row(equal_height=False, elem_classes=[common.WIDE_GAP_ROW_CLASS]):
-            with gr.Column(scale=4):  # 왼쪽: 신고 정보 + 조치 결과(확정 전엔 안내 문구)
+            with gr.Column(scale=4):  # 왼쪽: 접수내역 + 조치 결과(확정 전엔 안내 문구)
                 summary = gr.HTML()
                 resolution = gr.HTML()
             with gr.Column(scale=6):  # 오른쪽: 대화
@@ -236,7 +251,7 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
 
                 with gr.Row(elem_classes=[common.QUESTION_INPUT_ROW_CLASS]):
                     question = gr.Textbox(
-                        show_label=False, placeholder="질문을 입력하세요", lines=1,
+                        show_label=False, placeholder=QUESTION_PLACEHOLDER, lines=1,
                         max_length=QUESTION_MAX_LENGTH, container=False, scale=8,
                     )
                     send_btn = gr.Button("전송", variant="primary", scale=0, min_width=72)
@@ -256,11 +271,12 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
         # 완료된 건과 고객 확인 전 셀프 가이드 건은 읽기 전용: 질문 입력창·전송 버튼은 그대로 두고 비활성화만 한다(화면 구조를 신고
         # 상태와 상관없이 그대로 유지하기 위해 숨기지 않는다). [조치 결과 작성]만 숨긴다.
         # send_btn은 잠금 해제 때문에 맨 끝에 둔다. 신고를 새로 불러올 때마다 열려 있던 원문 모달은 닫는다.
+        placeholder = QUESTION_PLACEHOLDER if open_ else QUESTION_PLACEHOLDER_COMPLETED
         return (
             case_summary_html(detail), chat_state_of(turns, completed, waiting_customer),
             resolution_html(detail) + guide_box_html(detail),
             gr.Column(visible=False), "",
-            gr.Textbox(visible=True, interactive=open_), gr.Button(visible=open_),
+            gr.Textbox(visible=True, interactive=open_, placeholder=placeholder), gr.Button(visible=open_),
             gr.Button(visible=True, interactive=open_),
         )
 

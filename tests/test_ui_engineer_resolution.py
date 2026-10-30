@@ -76,8 +76,8 @@ def test_confirm_notice_by_index_result():
 
 
 def test_case_summary_shows_case_fields():
-    text = resolution.case_summary_markdown(_detail())
-    for expected in ("SC-1", "조치 중", "SRM", "S115", "리프트 엔코더 편차", "소음"):
+    text = resolution.case_summary_html(_detail())
+    for expected in ("접수내역", "SC-1", "조치 중", "SRM", "S115", "리프트 엔코더 편차", "소음"):
         assert expected in text
 
 
