@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import gradio as gr
 import pytest
 
 from mpilot.models import (
@@ -174,13 +175,115 @@ def test_page_label_is_one_based():
 # `gr.HTML`에 넣는 박스는 입력을 이스케이프한다 ------------------------------------------
 
 
-def test_info_box_html_escapes_label_value_and_title():
+def test_info_table_html_escapes_label_value_and_title():
     payload = "<img src=x onerror=alert(1)>"
-    box = common.info_box_html([(payload, payload)], title=payload)
-    assert "<img" not in box
-    assert box.count("&lt;img src=x onerror=alert(1)&gt;") == 3
+    table = common.info_table_html([(payload, payload)], title=payload)
+    assert "<img" not in table
+    assert table.count("&lt;img src=x onerror=alert(1)&gt;") == 3
 
 
-def test_info_box_html_keeps_plain_text_and_ampersand():
-    box = common.info_box_html([("증상 메모", "전압 < 20V & 정지")])
-    assert "전압 &lt; 20V &amp; 정지" in box
+def test_info_table_html_keeps_plain_text_and_ampersand():
+    table = common.info_table_html([("증상 메모", "전압 < 20V & 정지")])
+    assert "전압 &lt; 20V &amp; 정지" in table
+
+
+def test_info_table_html_horizontal_puts_labels_in_header_row():
+    table = common.info_table_html([("접수번호", "SC-1"), ("설비", "AGV")])
+    assert table.index("접수번호") < table.index("SC-1")  # 라벨 행이 값 행보다 먼저 나온다
+    assert table.count("<tr") == 2  # 라벨 한 줄 + 값 한 줄
+
+
+def test_info_table_html_columns_per_row_wraps_into_multiple_label_value_pairs():
+    fields = [("접수번호", "SC-1"), ("상태", "접수"), ("설비", "AGV"), ("심각도", "상")]
+    table = common.info_table_html(fields, columns_per_row=2)
+    assert table.count("<tr") == 4  # (라벨+값) 줄 쌍이 2묶음
+    # 첫 묶음(접수번호·상태 라벨, SC-1·접수 값)이 두 번째 묶음보다 먼저 나온다
+    assert table.index("상태") < table.index("설비") < table.index("심각도")
+    assert table.index("접수") < table.index("AGV")
+
+
+def test_info_table_html_no_tr_lets_hidden_gradio_default_border_through():
+    # Gradio 기본 테마가 tr에 테두리를 깔아 둬서, tr 자체도 지워야 검게 비쳐 보이지 않는다.
+    table = common.info_table_html([("접수번호", "SC-1")])
+    assert '<tr style="border:none !important">' in table
+
+
+def test_info_table_html_note_moves_long_field_below_as_full_width_row():
+    table = common.info_table_html(
+        [("접수번호", "SC-1"), ("설비", "AGV")], note=("증상 메모", "아주 긴 증상 메모 내용")
+    )
+    assert table.index("SC-1") < table.index("증상 메모") < table.index("아주 긴 증상 메모 내용")
+    assert 'colspan="2"' in table
+
+
+def test_info_table_html_min_width_applies_to_container():
+    table = common.info_table_html([("접수번호", "SC-1")], min_width="800px")
+    assert "min-width:800px;" in table
+
+
+def test_info_table_html_max_width_applies_to_container():
+    table = common.info_table_html([("접수번호", "SC-1")], max_width="800px")
+    assert "max-width:800px;" in table
+
+
+def test_info_table_html_defaults_to_left_aligned():
+    table = common.info_table_html([("접수번호", "SC-1")])
+    assert 'margin:0">' in table
+
+
+def test_info_table_html_center_floats_in_middle_of_column():
+    table = common.info_table_html([("접수번호", "SC-1")], center=True)
+    assert 'margin:0 auto">' in table
+
+
+def test_info_table_html_cell_padding_overrides_gradio_default():
+    # Gradio 기본 th·td padding이 `!important`라서, 우리 padding도 `!important`가 아니면 밀린다.
+    table = common.info_table_html([("접수번호", "SC-1")])
+    assert "padding:6px 12px !important" in table
+
+
+def test_info_table_html_has_no_border_radius():
+    table = common.info_table_html([("접수번호", "SC-1")])
+    assert "border-radius" not in table
+
+
+def test_info_table_html_table_itself_has_no_margin_or_padding():
+    # Gradio 기본 테마가 table 자체에 마진·패딩을 깔아 둬서, 회색 테두리 위쪽에 빈 여백이 남는다.
+    for table in (
+        common.info_table_html([("접수번호", "SC-1")]),
+        common.info_table_html([("원인", "엔코더 편차")], vertical=True),
+    ):
+        assert "<table style=\"border-collapse:collapse;width:100%;border:none !important;" \
+            "margin:0 !important;padding:0 !important;border-spacing:0 !important\">" in table
+
+
+def test_info_table_html_vertical_pairs_label_and_value_per_row():
+    table = common.info_table_html([("원인", "엔코더 편차"), ("결과", "정상 동작")], vertical=True)
+    assert "<thead>" not in table
+    assert table.index("원인") < table.index("엔코더 편차") < table.index("결과") < table.index("정상 동작")
+    assert table.count("border-bottom") == 2  # 마지막 줄 제외 모든 줄에 한 번씩(th·td)
+
+
+def test_info_table_html_vertical_matches_horizontal_colors():
+    # 접수내역(가로형)과 조치 결과(세로형)가 같은 디자인으로 보이도록 라벨(연회색)·값(흰색) 배경이 같다.
+    table = common.info_table_html([("원인", "엔코더 편차")], vertical=True)
+    assert "background:#f4f4f5 !important" in table  # 라벨 칸
+    assert "background:#ffffff !important" in table  # 값 칸
+
+
+def test_info_table_html_vertical_label_column_width_is_fixed():
+    table = common.info_table_html([("원인", "엔코더 편차")], vertical=True)
+    assert "max-width:100px !important" in table
+    assert "width:100px !important" in table
+
+
+# 내비바 ------------------------------------------------------------------------------
+
+
+def test_navbar_logo_click_goes_to_home_screen():
+    with gr.Blocks() as demo:
+        screen = gr.State("eng_chat")
+        common.build_navbar("M-Pilot 엔지니어", [("대시보드", "eng_list")], screen, "eng_list")
+    # 로고 버튼은 인자 없이 home_screen을 그대로 돌려준다. 메뉴 버튼은 target을 기본값으로 받는다.
+    zero_arg_fns = [f.fn for f in demo.fns.values() if f.fn.__code__.co_argcount == 0]
+    assert any(fn() == "eng_list" for fn in zero_arg_fns)
