@@ -184,3 +184,9 @@ def test_source_pick_shows_original(screen):
     assert isinstance(box, gr.Column) and box.visible and text == f"원문:{MANUAL.ref_id}"
     box, text = screen["handlers"]["on_source_pick"](None, [MANUAL])
     assert not box.visible and text == ""
+
+
+def test_source_close_hides_modal_and_clears_pick(screen):
+    # 고른 출처를 비워야 같은 출처를 다시 골라도 change가 발생해 모달이 열린다.
+    box, pick, text = screen["handlers"]["on_source_close"]()
+    assert isinstance(box, gr.Column) and not box.visible and pick is None and text == ""

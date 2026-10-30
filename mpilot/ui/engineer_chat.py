@@ -223,11 +223,15 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
             return gr.Column(visible=False), ""
         return gr.Column(visible=True), text
 
+    def on_source_close():
+        # 모달을 닫으면서 고른 출처도 비운다. 그래야 같은 출처를 다시 골라도 change가 발생해 모달이 열린다.
+        return gr.Column(visible=False), None, ""
+
     screen.change(on_screen_change, inputs=[screen, case_id], outputs=[column, *refresh_outputs, screen])
     send_btn.click(lambda: gr.Button(interactive=False), outputs=send_btn).then(
         on_send, inputs=[case_id, question], outputs=question,
     ).then(on_after_send, inputs=case_id, outputs=refresh_outputs)
     source_pick.change(on_source_pick, inputs=[source_pick, citations], outputs=[source_box, source_text])
-    source_close_btn.click(lambda: gr.Column(visible=False), outputs=source_box)
+    source_close_btn.click(on_source_close, outputs=[source_box, source_pick, source_text])
     back_btn.click(lambda: common.SCREEN_ENGINEER_LIST, outputs=screen)
     resolve_btn.click(lambda: common.SCREEN_ENGINEER_RESOLVE, outputs=screen)
