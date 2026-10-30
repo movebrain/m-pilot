@@ -245,3 +245,29 @@ def test_equipment가_None이면_필터_없이_4종_전체에서_찾는다(insta
     assert hist.calls == [{"query": NAME, "k": 5, "filter": None}]
     assert {h.equipment for h in manual_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}
     assert {h.equipment for h in history_hits} == {Equipment.MINI_LOADER, Equipment.SRM, Equipment.RTV}
+
+
+def code_chunk(chunk_no: int, code: str | None) -> Document:
+    doc = manual_body(Equipment.SRM, chunk_no)
+    if code:
+        doc.metadata["code"] = code
+    return doc
+
+
+def test_code를_주면_다른_코드의_문서를_빼고_k건만_남긴다(install_store):
+    other, same, common = code_chunk(1, "S-999"), code_chunk(2, "S-104"), code_chunk(3, None)
+    other_row, same_row = error_row(Equipment.SRM, "S-999"), error_row(Equipment.SRM, "S-104")
+    same_late = code_chunk(4, "S-104")
+    docs = [other, same, other, common, other_row, same_row, same_late]
+    store = FakeStore([(doc, i / 10) for i, doc in enumerate(docs)])
+    install_store(manual=store)
+
+    hits = retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3, code="S-104")
+
+    assert [h.ref_id for h in hits] == [same.id, common.id, same_row.id]
+    assert store.calls[0]["k"] == 3 * retriever.MANUAL_FETCH_FACTOR
+
+
+def test_code로_거르고_모자라면_있는_만큼만_돌려준다(install_store):
+    install_store(manual=FakeStore([(code_chunk(1, "S-999"), 0.1)]))
+    assert retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3, code="S-104") == []

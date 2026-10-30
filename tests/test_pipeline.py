@@ -66,6 +66,7 @@ def fakes(monkeypatch):
         generate_error=None,  # 생성 장애로 던질 예외
         generated=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
         searches=[],  # 검색 호출 기록
+        search_codes=[],  # 검색 호출마다 넘긴 code
         manual_hits=None,  # 값이 있으면 매뉴얼 검색이 이것을 돌려준다(설비 필터가 있든 없든)
         hits_seen=[],  # 생성 호출마다 넘긴 근거
         generate_calls=0,
@@ -79,7 +80,8 @@ def fakes(monkeypatch):
         guidance_calls=0,
     )
 
-    def search(kind, equipment, query, k):
+    def search(kind, equipment, query, k, code=None):
+        fake.search_codes.append(code)
         if kind is CitationKind.HISTORY:
             fake.searches.append(("history", equipment, query, k))
             return ["history-hit"]
@@ -153,7 +155,7 @@ def test_다른_설비나_컨베이어를_말해도_신고_설비로_검색한�
         (kind, equipment.value, query, k)
         for kind, equipment, query, k in fakes.searches
     ] == [
-        ("manual", "AGV", expected_query, 3 * pipeline.MANUAL_FETCH_FACTOR),
+        ("manual", "AGV", expected_query, 3),
         ("history", "AGV", expected_query, 3),
     ]
 
@@ -175,35 +177,15 @@ def test_신고_설비로_검색하고_설정한_건수를_넘긴다(fakes):
         (kind, equipment.value, query, k)
         for kind, equipment, query, k in fakes.searches
     ] == [
-        ("manual", "SRM", expected_query, 4 * pipeline.MANUAL_FETCH_FACTOR),
+        ("manual", "SRM", expected_query, 4),
         ("history", "SRM", expected_query, 2),
     ]
 
 
-def test_다른_코드의_매뉴얼_청크는_빼고_설정한_건수만_남긴다(fakes):
-    other = chunk_hit("manual:srm:5:1", "S-999")
-    same = chunk_hit("manual:srm:6:1", "S-104")
-    common = chunk_hit("manual:srm:7:1")  # 코드가 없는 공통 절은 남긴다
-    other_row = chunk_hit("error:SRM:S-999", "S-999")  # 다른 코드의 코드 표 행도 거른다
-    same_row = chunk_hit("error:SRM:S-104", "S-104")  # 신고 코드의 표 행은 남긴다
-    same_late = chunk_hit("manual:srm:8:1", "S-104")
-    fakes.manual_hits = [other, same, other, common, other_row, same_row, same_late]
-    ask("위치가 어긋나요")  # manual_k는 3
-    assert fakes.hits_seen == [[same, common, same_row, "history-hit"]]
-
-
-def test_거르고_남은_근거가_모자라도_있는_만큼만_넘긴다(fakes):
-    fakes.manual_hits = [chunk_hit("manual:srm:5:1", "S-999")]
-    ask("위치가 어긋나요")
-    assert fakes.hits_seen == [["history-hit"]]
-
-
-def test_폴백_검색은_코드로_거르지_않는다(fakes):
-    other = chunk_hit("manual:agv:5:1", "A-999")
-    fakes.manual_hits = [other]
-    fakes.generated_seq = [HOLD, ANSWERED]  # 1차는 거른 뒤 모델이 보류해 폴백한다
+def test_1차_매뉴얼_검색만_신고_코드로_거르고_폴백은_거르지_않는다(fakes):
+    fakes.generated_seq = [HOLD, ANSWERED]
     ask(QUESTION, equipment="AGV")
-    assert fakes.hits_seen == [["history-hit"], [other, "history-hit"]]
+    assert fakes.search_codes == ["S-104", None, None, None]  # 1차 manual·history, 폴백 manual·history
 
 
 def test_모델이_답하면_생성한_답변을_돌려준다(fakes):
@@ -258,7 +240,7 @@ def test_모델이_보류하면_필터_없이_질문_원문으로_다시_찾는�
     ask(QUESTION, equipment="AGV")
     first_query = f"S-104 주행 위치 편차 {QUESTION}"  # 1차는 신고 코드·이름을 붙이고, 폴백은 원문만 쓴다
     assert fakes.searches == [
-        ("manual", "AGV", first_query, 3 * pipeline.MANUAL_FETCH_FACTOR), ("history", "AGV", first_query, 3),
+        ("manual", "AGV", first_query, 3), ("history", "AGV", first_query, 3),
         ("manual", None, QUESTION, 3), ("history", None, QUESTION, 3),
     ]
 
@@ -294,20 +276,17 @@ def test_신고_코드의_매뉴얼만_검색하고_폴백과_이력은_쓰지_�
     assert [
         (kind, equipment.value, query, k)
         for kind, equipment, query, k in fakes.searches
-    ] == [("manual", "AGV", "S-104 주행 위치 편차", 3 * pipeline.MANUAL_FETCH_FACTOR)]
+    ] == [("manual", "AGV", "S-104 주행 위치 편차", 3)]
 
 
 def test_검색_건수는_설정값을_쓴다(fakes):
     ask_customer(settings=SearchSettings(manual_k=2, history_k=9))
-    assert fakes.searches[0][3] == 2 * pipeline.MANUAL_FETCH_FACTOR
+    assert fakes.searches[0][3] == 2
 
 
-def test_다른_코드의_매뉴얼_청크는_안내_근거에서_뺀다(fakes):
-    own = chunk_hit("manual:srm:9:1", code="S-104")
-    other = chunk_hit("manual:srm:9:2", code="S-105")
-    fakes.manual_hits = [other, own]
+def test_안내_검색은_신고_코드로_거른다(fakes):
     ask_customer()
-    assert fakes.guidance_hits_seen == [[own]]
+    assert fakes.search_codes == ["S-104"]
 
 
 def test_검색_결과가_없으면_보류하고_다시_찾지_않으며_생성은_부르지_않는다(fakes):
@@ -367,3 +346,29 @@ def test_보류_답변은_조치_단계가_없다():
     assert answer.steps == []
     assert answer.notice == "근거가 부족합니다."
     assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
+
+# --- 검색 공개 함수: 운영과 같은 검색 호출 -----------------------------
+def test_고객_검색_함수는_안내와_같은_검색_호출을_한다(fakes):
+    settings = SearchSettings(manual_k=2, history_k=9)
+    ask_customer("AGV", settings)
+    run_calls = (list(fakes.searches), list(fakes.search_codes))
+    fakes.searches.clear()
+    fakes.search_codes.clear()
+
+    hits = pipeline.search_customer_evidence(make_context("AGV"), settings)
+
+    assert (fakes.searches, fakes.search_codes) == run_calls
+    assert fakes.guidance_hits_seen == [hits]
+
+
+def test_엔지니어_검색_함수는_1차_답변과_같은_검색_호출을_한다(fakes):
+    settings = SearchSettings(manual_k=4, history_k=2)
+    ask("위치가 어긋나요", settings, equipment="AGV")
+    run_calls = (list(fakes.searches), list(fakes.search_codes))
+    fakes.searches.clear()
+    fakes.search_codes.clear()
+
+    hits = pipeline.search_engineer_evidence(make_context("AGV"), "위치가 어긋나요", settings)
+
+    assert (fakes.searches, fakes.search_codes) == run_calls
+    assert fakes.hits_seen == [hits]

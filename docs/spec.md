@@ -190,13 +190,15 @@
 
 | 모듈      | 함수 시그니처                                                                                           | 책임                                      | 예외                             |
 | --------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------- |
-| retriever | `search(kind: CitationKind, equipment: Equipment \| None, query: str, k: int) -> list[SearchHit]` | 설비 필터로 `manual` 또는 `history` 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용) | ValidationError, DependencyError |
+| retriever | `search(kind: CitationKind, equipment: Equipment \| None, query: str, k: int, code: str \| None = None) -> list[SearchHit]` | 설비 필터로 `manual` 또는 `history` 근거를 검색한다(`None`이면 필터 없이 4종 전체, 폴백 전용). `code`를 주면 다른 코드의 문서를 빼고 최대 k건을 돌려준다 | ValidationError, DependencyError |
 | generator | `set_chat_model(chat_model: BaseChatModel) -> None`                                                     | 답변 생성에 쓸 모델을 설정한다            | —                                |
 | generator | `generate_customer_guidance(context: CaseContext, hits: list[SearchHit]) -> Answer`                     | 고객 안내 답변을 생성한다                 | DependencyError                  |
 | generator | `generate_engineer_answer(context: CaseContext, hits: list[SearchHit], request: ChatRequest, cross_equipment: bool = False) -> Answer` | 엔지니어 대화 답변을 생성한다(`cross_equipment`는 다른 설비 근거가 섞인 폴백일 때 `True`) | DependencyError                  |
 | generator | `passes_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 고객 안내·엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
 | pipeline  | `run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Answer`                       | 고객 안내 처리 흐름을 실행한다            | ValidationError, DependencyError |
 | pipeline  | `run_engineer_answer(context: CaseContext, request: ChatRequest, settings: SearchSettings) -> Answer`   | 엔지니어 답변 처리 흐름을 실행한다        | ValidationError, DependencyError |
+| pipeline  | `search_customer_evidence(context: CaseContext, settings: SearchSettings) -> list[SearchHit]`           | 고객 안내의 근거 검색만 실행한다(`run_customer_guidance`가 쓴다). 평가가 생성 없이 같은 검색을 잰다 | ValidationError, DependencyError |
+| pipeline  | `search_engineer_evidence(context: CaseContext, question: str, settings: SearchSettings) -> list[SearchHit]` | 엔지니어 1차 근거 검색만 실행한다(`run_engineer_answer`가 쓴다). `question`은 공백을 지운 질문. 폴백은 `retriever.search`를 질문 원문·`equipment=None`으로 부른다 | ValidationError, DependencyError |
 | evaluate  | `run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]`                                 | 평가 문항을 실행하고 결과를 기록한다      | ValidationError, DependencyError |
 
 #### 2.3.3 UI·총괄 파트
@@ -348,7 +350,7 @@ rag/retriever ──→ db/vectordb, models
 db/rdb ──→ db/schemas, models
 config, db/parser, db/schemas, db/vectordb, rag/generator ──→ models
 scripts ──→ config, db/parser, db/rdb, models
-scripts/evaluate ──→ app(initialize로 색인·모델 준비), rag/pipeline, rag/generator(채팅 모델을 temperature=0으로 교체)
+scripts/evaluate ──→ app(initialize로 색인·모델 준비), rag/pipeline, rag/generator(채팅 모델을 temperature=0으로 교체), rag/retriever(검색 지표의 폴백 검색)
 ```
 
 ### 2.6 RAG 규칙

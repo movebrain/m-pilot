@@ -40,9 +40,6 @@ from mpilot.models import (
 from mpilot.rag import generator, retriever
 
 MAX_QUESTION_LEN = 2000  # 질문 최대 길이: 공백 제거 후 1~2,000자
-# 신고 코드의 매뉴얼 검색은 `manual_k`건보다 이 배수만큼 가져와 다른 코드의 청크를 거른 뒤 `manual_k`건을 남긴다.
-# 에러코드 절마다 구성이 비슷해 상위에 다른 코드의 청크가 많이 섞이기 때문이다.
-MANUAL_FETCH_FACTOR = 5
 CROSS_EQUIPMENT_NOTICE = (
     "신고한 설비의 자료만으로는 근거가 부족해 다른 설비의 매뉴얼·이력을 포함해 답했습니다. "
     "설비가 다르므로 출처의 설비를 확인한 뒤 적용하세요."
@@ -131,8 +128,7 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
     error_code = context.error_code
-    query = f"{error_code.code} {error_code.name}"
-    hits = _search_manual_for_code(error_code.equipment, query, settings.manual_k, error_code.code)
+    hits = search_customer_evidence(context, settings)
     if not hits:  # 근거가 하나도 없으면 모델을 부르지 않는다
         return _make_hold_answer("매뉴얼에서 고객이 직접 조치할 수 있는 근거를 찾지 못해 엔지니어가 접수합니다.")
 
@@ -141,28 +137,49 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
     return answer
 
 
-def _search_manual_for_code(equipment: Equipment, query: str, k: int, code: str) -> list[SearchHit]:
-    """신고 코드의 매뉴얼 근거를 찾는다. 다른 에러코드 절의 청크는 뺀다.
+def search_customer_evidence(context: CaseContext, settings: SearchSettings) -> list[SearchHit]:
+    """고객 안내의 근거 검색. `run_customer_guidance`가 쓰며, 평가가 생성 없이 같은 검색을 재도록 공개한다.
 
-    에러코드 절마다 구성(원인 후보 표, 안전 확보 절차 등)이 비슷해서, 같은 질문에 다른 코드의 청크가 상위에
-    섞여 나온다. 그래서 `k`건보다 넉넉히 가져와 다른 코드의 문서(`SearchHit.code`가 신고 코드와 다른 매뉴얼 청크와
-    코드 표 행)를 걸러 내고 앞에서 `k`건을 남긴다. 코드가 없는 청크(공통 절)는 그대로 둔다.
+    신고 코드의 `manual`을 신고 설비 필터로 `<코드> <이름>` 질의로 찾고 다른 코드의 문서를 뺀다.
 
     Args:
-        equipment: 검색 대상 설비.
-        query: 검색 질의 문장.
-        k: 돌려줄 상위 건수(`SearchSettings.manual_k`).
-        code: 신고한 에러코드.
+        context: 신고 맥락. 신고한 에러코드의 설비·코드·이름을 쓴다.
+        settings: 검색 설정. `manual_k`만 쓴다.
 
     Returns:
-        list[SearchHit]: 가까운 순으로 최대 `k`건. 걸러내고 남은 것이 `k`건보다 적으면 그만큼만 돌려준다.
+        list[SearchHit]: 가까운 순으로 최대 `manual_k`건. 없으면 빈 목록이다.
 
     Raises:
-        ValidationError: 질의가 비었거나 `k`가 1보다 작을 때(`retriever.search`가 낸다).
-        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때(`retriever.search`가 낸다).
+        ValidationError: `manual_k`가 1보다 작을 때(`retriever.search`가 낸다).
+        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    hits = retriever.search(CitationKind.MANUAL, equipment, query, k * MANUAL_FETCH_FACTOR)
-    return [hit for hit in hits if hit.code in (None, code)][:k]
+    error_code = context.error_code
+    query = f"{error_code.code} {error_code.name}"
+    return retriever.search(CitationKind.MANUAL, error_code.equipment, query, settings.manual_k, error_code.code)
+
+
+def search_engineer_evidence(context: CaseContext, question: str, settings: SearchSettings) -> list[SearchHit]:
+    """엔지니어 답변의 1차 근거 검색. `run_engineer_answer`가 쓰며, 평가가 생성 없이 같은 검색을 재도록 공개한다.
+
+    `<코드> <이름> <질문>` 질의로 신고 설비의 `manual`(다른 코드 문서 제외)과 `history`를 찾는다. 폴백은 질문
+    원문으로 `retriever.search`를 `equipment=None`으로 부른다.
+
+    Args:
+        context: 신고 맥락. 신고한 에러코드로 대상 설비와 코드를 고정한다.
+        question: 앞뒤 공백을 지운 엔지니어 질문(호출자가 정리한다).
+        settings: 검색 설정. `manual_k`, `history_k`.
+
+    Returns:
+        list[SearchHit]: `manual` 근거(최대 `manual_k`건) 다음에 `history` 근거(최대 `history_k`건).
+
+    Raises:
+        ValidationError: `manual_k`·`history_k`가 1보다 작을 때(`retriever.search`가 낸다).
+        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
+    """
+    error_code = context.error_code
+    query = f"{error_code.code} {error_code.name} {question}"
+    manual_hits = retriever.search(CitationKind.MANUAL, error_code.equipment, query, settings.manual_k, error_code.code)
+    return manual_hits + retriever.search(CitationKind.HISTORY, error_code.equipment, query, settings.history_k)
 
 
 def run_engineer_answer(
@@ -171,7 +188,7 @@ def run_engineer_answer(
     """엔지니어 답변 처리 흐름을 실행한다.
 
     매뉴얼·이력 검색(신고 설비 필터) → 생성 → 검증 순으로 진행한다. 매뉴얼은 신고 코드와 다른
-    에러코드 절의 청크를 빼고 남긴다(`_search_manual_for_code`). 모델이 `answered`가 아니면
+    에러코드 절의 청크를 빼고 남긴다(`retriever.search`의 `code`). 모델이 `answered`가 아니면
     설비 필터 없이 질문 원문으로 한 번 더 찾아 다시 생성하고(폴백), 그래도 `answered`가 아니면 그 보류를 돌려준다.
     `answered`이면 인용을 검증하고, 아니면 보류 모양(`steps=[]`, `notice` 있음)을 확인한다.
     폴백 근거로 답한 `answered`는 인용의 설비가 신고 설비와 달라도 통과시키고 `notice`에 다른 설비 자료를
@@ -192,13 +209,8 @@ def run_engineer_answer(
     """
     question = _validate_engineer_input(request, settings)
 
-    error_code = context.error_code
-    equipment = error_code.equipment
-    search_query = f"{error_code.code} {error_code.name} {question}"
-
-    manual_hits = _search_manual_for_code(equipment, search_query, settings.manual_k, error_code.code)
-    history_hits = retriever.search(CitationKind.HISTORY, equipment, search_query, settings.history_k)
-    answer = _generate_engineer_answer(context, manual_hits + history_hits, request, cross_equipment=False)
+    hits = search_engineer_evidence(context, question, settings)
+    answer = _generate_engineer_answer(context, hits, request, cross_equipment=False)
     if answer.verdict == Verdict.ANSWERED:
         return answer
 
