@@ -97,7 +97,8 @@ def db(rdb_db):
     - SC-RECV: 접수(received)
     - SC-PROG: 조치 중(in_progress)
     - SC-DONE: 현장 조치 완료(completed, support)
-    - SC-SELF: 셀프 가이드 완료(completed, self_guide)
+    - SC-SELF: 셀프 가이드 해결완료(completed, self_guide)
+    - SC-WAIT: 고객 확인 전 셀프 가이드(in_progress, self_guide)
     """
     with _common._engine.begin() as conn:
         add_error_code(conn)
@@ -105,6 +106,7 @@ def db(rdb_db):
         add_case(conn, "SC-PROG", status="in_progress")
         add_case(conn, "SC-DONE", status="completed")
         add_case(conn, "SC-SELF", status="completed", route="self_guide")
+        add_case(conn, "SC-WAIT", status="in_progress", route="self_guide")
     return rdb_db
 
 
@@ -227,9 +229,9 @@ def test_case_id_with_other_letter_case_is_not_found(db):
         db.save_chat_turn("sc-recv", "질문", ANSWERED)
 
 
-@pytest.mark.parametrize("case_id", ["SC-DONE", "SC-SELF"])
-def test_completed_or_self_guide_case_rejects_question(db, case_id):
-    with pytest.raises(InvalidStateError, match="이미 완료"):
+@pytest.mark.parametrize("case_id", ["SC-DONE", "SC-SELF", "SC-WAIT"])
+def test_completed_or_pending_self_guide_case_rejects_question(db, case_id):
+    with pytest.raises(InvalidStateError):
         db.save_chat_turn(case_id, "질문", ANSWERED)
     assert count_rows(db, chat_turns) == 0
 
@@ -274,9 +276,9 @@ def test_resolution_unknown_case_is_not_found(db):
         db.save_confirmed_resolution("SC-없음", RECORD)
 
 
-@pytest.mark.parametrize("case_id", ["SC-DONE", "SC-SELF"])
-def test_resolution_on_completed_or_self_guide_case_is_rejected(db, case_id):
-    with pytest.raises(InvalidStateError, match="이미 완료"):
+@pytest.mark.parametrize("case_id", ["SC-DONE", "SC-SELF", "SC-WAIT"])
+def test_resolution_on_completed_or_pending_self_guide_case_is_rejected(db, case_id):
+    with pytest.raises(InvalidStateError):
         db.save_confirmed_resolution(case_id, RECORD)
     assert count_rows(db, resolutions) == 0
 

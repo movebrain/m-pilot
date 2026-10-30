@@ -156,8 +156,9 @@ def test_timeout_is_not_saved(backend):
 @pytest.mark.parametrize("detail", [
     _detail(status=CaseStatus.COMPLETED),
     _detail(status=CaseStatus.COMPLETED, route=Route.SELF_GUIDE),
+    _detail(status=CaseStatus.IN_PROGRESS, route=Route.SELF_GUIDE),  # 고객이 기술지원접수로 이관하기 전
 ])
-def test_completed_case_skips_pipeline(backend, detail):
+def test_closed_case_skips_pipeline(backend, detail):
     backend["detail"] = detail
     with pytest.raises(InvalidStateError):
         service.send_chat_question("SC-1", "질문")

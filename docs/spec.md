@@ -71,9 +71,9 @@
 | 대분류 | 소분류            | 이벤트                                                                                                                                                                                      |
 | ------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | UI     | 고객 신고 목록    | 고객이 자신이 접수한 신고를 최신순·상태별로 보고, 신고를 누르면 상세로, ‘신고하기’를 누르면 작성 화면으로 이동한다.                                                                         |
-| UI     | 고객 신고 상세    | 고객이 신고를 열면 진행 상태를 보고, 셀프 가이드 건은 단계별 안내와 출처를, 엔지니어 처리 건은 완료 뒤 조치 결과를 본다(내부 분석은 보이지 않는다).                                         |
+| UI     | 고객 신고 상세    | 고객이 신고를 열면 진행 상태를 보고, 셀프 가이드 건은 단계별 안내와 출처를 본 뒤 [해결완료](조치 완료)이나 [기술지원접수](조치 중 유지, 엔지니어 이관)를 누르고, 엔지니어 처리 건은 완료 뒤 조치 결과를 본다(내부 분석은 보이지 않는다).                                         |
 | UI     | 고객 신고 작성    | 고객이 설비·에러코드를 고르고 제출하면 접수번호가 발급되고, 심각도가 높거나 고객이 조치할 수 없는 고장은 엔지니어에게 접수되며 나머지는 셀프 가이드를 받는다(만들 수 없으면 엔지니어 접수). |
-| UI     | 엔지니어 대시보드 | 엔지니어가 기존 서비스 이력과 신규 신고를 상태별로 보고, 기술지원 건을 누르면 대화창으로 이동한다(셀프 가이드 건은 ‘고객 안내’로만 표시).                                                   |
+| UI     | 엔지니어 대시보드 | 엔지니어가 기존 서비스 이력과 신규 신고를 상태별로 보고, 건을 누르면 대화창으로 이동한다(완료 건과 고객 확인 전 셀프 가이드 건은 읽기 전용, 이관된 건은 질문 가능).                                                   |
 | UI     | 장애 분석 대화    | 엔지니어가 신고 건에서 질문하면 출처가 붙은 답을 받고 첫 질문에 ‘조치 중’이 되며, 근거 부족·대상 아님·AI 오류 때는 안내만 본다.                                                             |
 | UI     | 이력 저장         | 엔지니어가 원인·실제 조치·결과를 입력해 완료하면 신고가 ‘조치 완료’가 되어 다음 질문의 근거가 되고, 이미 완료된 건은 ‘이미 완료’로 안내된다.                                                |
 | UI     | 앱 공통 (APP)     | 고객 앱(7860)·엔지니어 앱(7861)을 시작하면 검색 자료 준비가 끝난 뒤 역할의 첫 화면(고객 신고 목록·엔지니어 대시보드)이 열리고, 모든 화면에 ‘모든 데이터는 가상’이 보이며 오류는 고정 문구로만 안내된다.                                                       |
@@ -169,8 +169,10 @@
 | rdb      | `load_seed_history_from_csv(path: Path) -> int`                                                          | 시드 이력 CSV를 검증해 적재하고 적재 건수를 반환한다           | ValidationError, DependencyError                                   |
 | rdb      | `fetch_cases(status: CaseStatus \| None = None, source: Source \| None = None) -> list[CaseDetail]`      | 신고 목록을 최신순으로 조회한다                                | ValidationError, DependencyError                                   |
 | rdb      | `fetch_case_detail(case_id: str) -> CaseDetail`                                                          | 신고 상세를 조회한다                                           | NotFoundError, DependencyError                                     |
-| rdb      | `save_self_guide_case(case_id: str, data: CaseInput, guidance_answer: Answer) -> CaseDetail`             | 셀프 가이드 건을 완료 상태로 저장한다                          | ValidationError, DependencyError                                   |
+| rdb      | `save_self_guide_case(case_id: str, data: CaseInput, guidance_answer: Answer) -> CaseDetail`             | 셀프 가이드 건을 조치 중 상태로 저장한다                       | ValidationError, DependencyError                                   |
 | rdb      | `save_support_case(case_id: str, data: CaseInput, guide_failure: GuideFailure \| None) -> CaseDetail`    | 엔지니어 처리 건을 접수 상태로 저장한다                        | ValidationError, DependencyError                                   |
+| rdb      | `resolve_self_guide_case(case_id: str) -> CaseDetail`                                                    | 고객이 해결완료를 확인한 셀프 가이드 건을 조치 완료로 바꾼다      | NotFoundError, InvalidStateError, DependencyError                  |
+| rdb      | `escalate_self_guide_case(case_id: str) -> CaseDetail`                                                   | 고객이 기술지원접수를 누른 셀프 가이드 건을 엔지니어 처리 건(`route=support`)으로 이관하고 조치 중을 유지한다 | NotFoundError, InvalidStateError, DependencyError |
 | rdb      | `fetch_chat_turns(case_id: str) -> list[ChatTurn]`                                                       | 신고의 대화 이력을 조회한다                                    | DependencyError                                                    |
 | rdb      | `save_chat_turn(case_id: str, question: str, answer: Answer) -> ChatTurn`                                | 질문·답변을 저장하고 첫 질문이면 조치 중으로 바꾼다            | ValidationError, NotFoundError, InvalidStateError, DependencyError |
 | rdb      | `save_confirmed_resolution(case_id: str, record: Resolution) -> CaseDetail`                              | 조치 결과를 저장하고 조치 완료로 확정한다                      | ValidationError, NotFoundError, InvalidStateError, DependencyError |
@@ -213,6 +215,8 @@
 | service                   | `set_config(config: AppConfig) -> None`                                                            | 앱 설정을 보관한다                                                               | —                                                                  |
 | service                   | `list_customer_cases(status: CaseStatus \| None = None) -> list[CustomerCaseResult]`               | 고객 본인의 신고를 공개 필드로 조회한다                                          | ValidationError, DependencyError                                   |
 | service                   | `get_customer_case(case_id: str) -> CustomerCaseResult`                                            | 고객 공개 신고 상세를 조회한다                                                   | NotFoundError, DependencyError                                     |
+| service                   | `resolve_self_guide(case_id: str) -> None`                                                         | 고객이 셀프 가이드로 해결됐다고 확인한 건을 조치 완료로 바꾼다                   | NotFoundError, InvalidStateError, DependencyError                  |
+| service                   | `request_support(case_id: str) -> None`                                                            | 고객이 해결되지 않았다고 한 셀프 가이드 건을 엔지니어 처리 건으로 이관한다(조치 중 유지) | NotFoundError, InvalidStateError, DependencyError |
 | service                   | `list_error_codes(equipment: Equipment) -> list[ErrorCode]`                                        | 설비별 에러코드 선택지를 조회한다                                                | ValidationError, DependencyError                                   |
 | service                   | `submit_case(data: CaseInput) -> str`                                                              | 신고를 접수하고 처리 경로를 확정한 뒤 접수번호를 반환한다                        | ValidationError, DependencyError                                   |
 | service                   | `list_engineer_cases(status: CaseStatus \| None = None) -> list[CaseDetail]`                       | 엔지니어용 전체 신고 목록을 조회한다                                             | ValidationError, DependencyError                                   |
@@ -230,7 +234,7 @@
 | ----------------- | --------------------------------------------------------------------------------- |
 | 고객 신고 목록    | `list_customer_cases`                                                             |
 | 고객 신고 작성    | `list_error_codes`, `submit_case`                                                 |
-| 고객 신고 상세    | `get_customer_case`                                                               |
+| 고객 신고 상세    | `get_customer_case`, `resolve_self_guide`, `request_support`                      |
 | 엔지니어 대시보드 | `list_engineer_cases`                                                             |
 | 장애 분석 대화    | `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` |
 | 이력 저장         | `get_engineer_case`, `confirm_resolution`                                         |
@@ -271,7 +275,7 @@ stateDiagram-v2
 | ------ | --------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------- |
 | config | `load_config(env_path: Path \| None = None) -> AppConfig` | .env·환경 변수를 로드해 설정을 검증한다                                  | ValidationError, DependencyError |
 | models | `is_self_guide_candidate(error_code: ErrorCode) -> bool`  | 심각도·조치 구분만으로 셀프 가이드 후보 여부를 판정한다(§2.10 경로 결정) | —                                |
-| models | `raise_if_case_completed(case: ServiceCase) -> None`      | 완료된 건의 질문 저장을 차단한다(§2.10 상태 전이)                        | InvalidStateError                |
+| models | `raise_if_case_completed(case: ServiceCase) -> None`      | 완료된 건과 이관 전 셀프 가이드 건의 질문 저장을 차단한다(§2.10 상태 전이) | InvalidStateError                |
 
 #### 2.4.2 공통 객체
 
@@ -279,13 +283,13 @@ stateDiagram-v2
 
 | 객체                    | 필드                                                                                                                                                                                                           | 책임                                                         |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `MpilotError` 하위 예외 | `ValidationError`(입력 오류·로그인 실패·미등록 코드), `NotFoundError`(없는 접수번호·코드·원문), `InvalidStateError`(상태 규칙 위반: 이미 완료·셀프 가이드 건), `DependencyError`(DB·모델·검색 장애, 시간 초과) | 실패 원인(입력·없음·상태·의존)을 구분해 화면에 전달한다.     |
+| `MpilotError` 하위 예외 | `ValidationError`(입력 오류·로그인 실패·미등록 코드), `NotFoundError`(없는 접수번호·코드·원문), `InvalidStateError`(상태 규칙 위반: 이미 완료·이관 전 셀프 가이드 건·이미 해결 여부를 답한 셀프 가이드 건), `DependencyError`(DB·모델·검색 장애, 시간 초과) | 실패 원인(입력·없음·상태·의존)을 구분해 화면에 전달한다.     |
 | `Equipment`             | 값: `Mini Loader`, `SRM`, `AGV`, `RTV`                                                                                                                                                                         | 신고 대상 설비 4종을 정한다.                                 |
 | `Severity`              | 값: `상`, `중`, `하`                                                                                                                                                                                           | 에러코드 표의 심각도를 나타낸다.                             |
 | `ActionOwner`           | 값: `고객사 조치`, `엔지니어 필요`                                                                                                                                                                             | 에러코드 표의 조치 구분을 나타낸다.                          |
 | `CaseStatus`            | 값: `received`, `in_progress`, `completed`                                                                                                                                                                     | 신고의 진행 단계를 나타낸다.                                 |
 | `Route`                 | 값: `self_guide`, `support`                                                                                                                                                                                    | 신고가 셀프 가이드인지 엔지니어 처리인지 나타낸다.           |
-| `GuideFailure`          | 값: `held`, `generation_failed`                                                                                                                                                                                | 셀프 가이드 후보가 엔지니어 접수된 사유를 나타낸다.          |
+| `GuideFailure`          | 값: `held`, `generation_failed`, `unresolved`                                                                                                                                                                  | 셀프 가이드 후보가 엔지니어 접수된 사유를 나타낸다. `unresolved`는 안내를 받은 고객이 기술지원접수를 눌러 이관한 경우다. |
 | `Source`                | 값: `seed`, `reported`                                                                                                                                                                                         | 신고가 시드 이력인지 앱에서 접수한 건인지 나타낸다.          |
 | `Verdict`               | 값: `answered`, `insufficient_evidence`                                                                                                                                                      | 답변이 답변됨·근거 부족 중 무엇인지 나타낸다. |
 | `CitationKind`          | 값: `manual`, `history`                                                                                                                                                                                        | 인용 종류(매뉴얼·이력)를 나타낸다.                           |
@@ -300,7 +304,7 @@ stateDiagram-v2
 | `ServiceCase`        | `case_id`, `equipment`, `code`, `memo: str \| None`, `source: Source`, `status`, `route`, `guide_failure: GuideFailure \| None`, `guidance_answer: Answer \| None`, `created_at: datetime`, `completed_at: datetime \| None` | 신고 건 하나의 현재 상태를 담는다.                                                                                |
 | `Resolution`         | `cause`, `action`, `result`                                                                                                                                                                                                  | 엔지니어가 작성한 원인·조치·결과이며 입력과 확정 기록이 같은 구조다(셀프 가이드는 `ServiceCase.guidance_answer`). |
 | `CaseDetail`         | `service_case: ServiceCase`, `error_code: ErrorCode`, `resolution: Resolution \| None`                                                                                                                                       | 신고·에러코드·조치 기록을 묶는다. 목록과 상세에서 함께 쓴다.                                                      |
-| `CustomerCaseResult` | `case_id`, `equipment`, `code`, `error_name`, `memo: str \| None`, `status`, `created_at`, `guidance_answer: Answer \| None`, `action: str \| None`, `result: str \| None`                                                   | 고객 목록·상세의 공개 필드만 담는다. 내부 원인·guide_failure 제외.                                                |
+| `CustomerCaseResult` | `case_id`, `equipment`, `code`, `error_name`, `memo: str \| None`, `status`, `route`, `created_at`, `guidance_answer: Answer \| None`, `action: str \| None`, `result: str \| None`                                                   | 고객 목록·상세의 공개 필드만 담는다. 내부 원인·guide_failure 제외.                                                |
 
 **대화·답변**
 
@@ -404,26 +408,29 @@ scripts/evaluate ──→ app(initialize로 색인·모델 준비), db/rdb, db/
 | 이벤트(함수)                                | 현재 상태                         | 조건              | 다음 상태                | 조건을 못 지키면                 |
 | ------------------------------------------- | --------------------------------- | ----------------- | ------------------------ | -------------------------------- |
 | 신고 접수(`save_support_case`)              | (없음)                            | 경로 `support`    | `received`               | —                                |
-| 신고 접수(`save_self_guide_case`)           | (없음)                            | 경로 `self_guide` | `completed`              | —                                |
+| 신고 접수(`save_self_guide_case`)           | (없음)                            | 경로 `self_guide` | `in_progress`            | —                                |
+| [해결완료](`resolve_self_guide_case`)         | `in_progress`                     | `self_guide`      | `completed`              | `InvalidStateError`              |
+| [기술지원접수](`escalate_self_guide_case`)      | `in_progress`                     | `self_guide`      | `in_progress`(경로가 `support`로, `guide_failure=unresolved`) | `InvalidStateError` |
 | 첫 질문 저장(`save_chat_turn`)              | `received`                        | `support`         | `in_progress`            | —                                |
 | 질문 저장                                   | `in_progress`                     | `support`         | `in_progress`(전이 없음) | —                                |
 | 조치 결과 등록(`save_confirmed_resolution`) | `received`, `in_progress`         | `support`         | `completed`              | —                                |
-| 질문 저장, 조치 결과 등록                   | `completed`(`self_guide` 건 포함) | —                 | —                        | `InvalidStateError`(‘이미 완료’) |
+| 질문 저장, 조치 결과 등록                   | `completed`, 또는 경로 `self_guide`(이관 전) | —     | —                        | `InvalidStateError`(‘이미 완료’·‘셀프 가이드 건’) |
 
 #### 허용 조합
 
 | 구분                          | `route`      | `guide_failure`            | 접수 직후 상태 | `guidance_answer` | `resolutions` 행      |
 | ----------------------------- | ------------ | -------------------------- | -------------- | ----------------- | --------------------- |
-| 신고, 셀프 가이드             | `self_guide` | NULL                       | `completed`    | 있음              | 없음                  |
+| 신고, 셀프 가이드             | `self_guide` | NULL                       | `in_progress`(해결완료를 누르면 `completed`) | 있음 | 없음 |
 | 신고, 엔지니어 처리(상·그 밖) | `support`    | NULL                       | `received`     | NULL              | 없음. 등록하면 생긴다 |
 | 신고, 가이드 실패             | `support`    | `held`·`generation_failed` | `received`     | NULL              | 없음. 등록하면 생긴다 |
+| 신고, 셀프 가이드 기술지원접수(이관) | `support` | `unresolved`               | `in_progress`  | 있음(고객이 받은 안내) | 없음. 등록하면 생긴다 |
 | 시드                          | `support`    | NULL                       | `completed`    | NULL              | 있음                  |
 
 #### 이력 취급
 
 | 구분                           | 보존                                                                                     | 검색 근거(`history` 인덱스)                          | 뜻                                           |
 | ------------------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------- |
-| 셀프 가이드(`guidance_answer`) | 내용·단계·출처를 `service_cases.self_guide_answer`에 저장한다. 조회 이력으로만 보여 준다 | 쓰지 않는다.                                         | 안내 제공의 종료이지 실제 해결 확인이 아니다 |
+| 셀프 가이드(`guidance_answer`) | 내용·단계·출처를 `service_cases.self_guide_answer`에 저장한다. 조회 이력으로만 보여 준다 | 쓰지 않는다.                                         | 고객이 [해결완료]를 눌러야 완료다. [기술지원접수]면 조치 중으로 엔지니어에게 이관한다 |
 | 현장 조치(`resolutions`)       | 원인·조치·결과를 저장한다. 이후 수정하지 않는다                                          | 확정 직후 반영하고 이후 같은 증상의 검색 근거가 된다 | 엔지니어가 확정한 현장 조치                  |
 
 ---
@@ -505,8 +512,8 @@ erDiagram
 | `source`            | VARCHAR(16) | NOT NULL | [앱] `Source`                  | 시드 / 신고                                                                            |
 | `status`            | VARCHAR(16) | NOT NULL | [앱] `CaseStatus`              | 처리 상태                                                                              |
 | `route`             | VARCHAR(16) | NOT NULL | [앱] `Route`                   | 처리 경로                                                                              |
-| `guide_failure`     | VARCHAR(32) | NULL     | [앱] `GuideFailure`            | 셀프 가이드 후보였으나 엔지니어 접수된 사유. 그 밖에는 NULL                            |
-| `self_guide_answer` | TEXT        | NULL     | [앱] `Answer`, 판정 `answered` | 셀프 가이드 내용·단계·출처(JSON 문자열). `route='self_guide'`에서만 값이 있다          |
+| `guide_failure`     | VARCHAR(32) | NULL     | [앱] `GuideFailure`            | 셀프 가이드 후보였으나 엔지니어 접수된 사유(`held`·`generation_failed`, 기술지원접수 이관은 `unresolved`). 그 밖에는 NULL |
+| `self_guide_answer` | TEXT        | NULL     | [앱] `Answer`, 판정 `answered` | 셀프 가이드 내용·단계·출처(JSON 문자열). `route='self_guide'`이거나 `guide_failure='unresolved'`일 때만 값이 있다 |
 | `created_at`        | DATETIME    | NOT NULL |                                | 신고 시각(UTC)                                                                         |
 | `completed_at`      | DATETIME    | NULL     | [앱] ≥ `created_at`            | 완료 시각(UTC)                                                                         |
 
@@ -616,6 +623,6 @@ erDiagram
 
 - **포함**: 앱 시작마다 Chroma 색인 새로 생성, 역할별 앱(고객·엔지니어) 분리, 고객 신고 이력·작성·상세, RAG 셀프 가이드, 엔지니어 전체 이력·RAG 채팅, 현장 조치 결과 저장과 검색 반영, 앱 실행·시연·자동 테스트(로컬 Docker·CI)의 MySQL 지원.
 - **자료**: 가상 매뉴얼 4종(Mini Loader·SRM·AGV·RTV), 설비별 완료 이력 50건(총 200건). 화면에 “모든 데이터는 가상”을 표시한다.
-- **범위 밖**: 실제 인증·권한, 다중 고객사(회사명·회사 단위 접근 권한 포함), 복합 신고, 미해결·다회 조치, 완료 후 채팅·수정·재개, 임시 저장, 고객 확인 단계, 새 답변·새 신고 표시(N/NEW), 반복 에러 강조, LLM 위험도 분류, 사진 AI 판독, 로그 첨부, 실시간 푸시, 독립 자유 질문 화면, 가이드 생성 중 중단 복구, 건별 검색 반영 상태 추적, 중복 제출·동시 수정 방지(멱등 키·낙관적 잠금. 제출 중 버튼 비활성화만 둔다), 사진 첨부·열람(후속 개선 참고), 목록 페이지 이동, 긴급 강조, ‘대응 시작’ 버튼, 목록의 기간·원본 필터와 상태별 건수, 시연 중 DB 재초기화 시 이력 보존.
+- **범위 밖**: 실제 인증·권한, 다중 고객사(회사명·회사 단위 접근 권한 포함), 복합 신고, 미해결·다회 조치, 완료 후 채팅·수정·재개, 임시 저장, 고객 확인 단계(셀프 가이드의 해결완료·기술지원접수 버튼만 둔다), 새 답변·새 신고 표시(N/NEW), 반복 에러 강조, LLM 위험도 분류, 사진 AI 판독, 로그 첨부, 실시간 푸시, 독립 자유 질문 화면, 가이드 생성 중 중단 복구, 건별 검색 반영 상태 추적, 중복 제출·동시 수정 방지(멱등 키·낙관적 잠금. 제출 중 버튼 비활성화만 둔다), 사진 첨부·열람(후속 개선 참고), 목록 페이지 이동, 긴급 강조, ‘대응 시작’ 버튼, 목록의 기간·원본 필터와 상태별 건수, 시연 중 DB 재초기화 시 이력 보존.
 - **후속 개선**: 상세 진입 시 AI 요약, 조치 결과 AI 초안, 작성 글의 이력 형식 구조화, 사진 첨부·열람(고객 신고·엔지니어 대화창).
-- **제약**: 데모 계정 2개는 `.env`에서 읽는다. 역할 분리는 데모용이며 인증·권한 보안이 아니고 고객은 항상 같은 데모 고객이다. 자동 안내 완료는 안내 제공의 종료이며 실제 해결 확인이 아니다(완료 후 추가 지원은 새 신고). 자동 브리핑·고객 안내 작성·AI 초안·임시 저장은 없다. 시연용 MySQL의 호스팅 방식은 팀이 정하며 앱은 `.env`의 `db_url`(비밀번호 포함)만 읽는다.
+- **제약**: 데모 계정 2개는 `.env`에서 읽는다. 역할 분리는 데모용이며 인증·권한 보안이 아니고 고객은 항상 같은 데모 고객이다. 셀프 가이드 건은 고객이 [해결완료]를 눌러야 완료되고 [기술지원접수]면 조치 중으로 엔지니어에게 이관한다. 완료 뒤 추가 지원은 새 신고다. 자동 브리핑·고객 안내 작성·AI 초안·임시 저장은 없다. 시연용 MySQL의 호스팅 방식은 팀이 정하며 앱은 `.env`의 `db_url`(비밀번호 포함)만 읽는다.
