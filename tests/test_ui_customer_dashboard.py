@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import gradio as gr
 
-from mpilot.models import CaseStatus, CustomerCaseResult, Equipment, Role, ValidationError
+from mpilot.models import CaseStatus, CustomerCaseResult, Equipment, Role, Route, ValidationError
 from mpilot.ui import customer_dashboard as dashboard
 
 
 def _result(case_id: str, status: CaseStatus) -> CustomerCaseResult:
     return CustomerCaseResult(
         case_id=case_id, equipment=Equipment.MINI_LOADER, code="E-101", error_name="포크 위치 센서 오감지",
-        memo=None, status=status, created_at=datetime(2026, 10, 25, 1, 0, tzinfo=timezone.utc),
+        memo=None, status=status, route=Route.SUPPORT, created_at=datetime(2026, 10, 25, 1, 0, tzinfo=timezone.utc),
         guidance_answer=None, action=None, result=None,
     )
 

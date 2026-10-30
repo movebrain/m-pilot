@@ -28,7 +28,9 @@
 from mpilot.db.rdb.cases import (
     MEMO_MAX_CHARS,
     fetch_case_detail,
+    escalate_self_guide_case,
     fetch_cases,
+    resolve_self_guide_case,
     save_self_guide_case,
     save_support_case,
 )
@@ -53,6 +55,7 @@ __all__ = [
     "QUESTION_MAX_CHARS",
     "RESOLUTION_MAX_CHARS",
     "connect",
+    "escalate_self_guide_case",
     "fetch_case_detail",
     "fetch_cases",
     "fetch_chat_turns",
@@ -61,6 +64,7 @@ __all__ = [
     "load_error_codes_from_csv",
     "load_seed_history_from_csv",
     "reset_schema",
+    "resolve_self_guide_case",
     "save_chat_turn",
     "save_confirmed_resolution",
     "save_self_guide_case",

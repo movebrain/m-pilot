@@ -9,17 +9,19 @@
       후보를 가린 뒤 후보이면 `pipeline.run_customer_guidance`를 제한 시간(`llm_timeout_seconds`) 안에 호출한다.
       결과에 따라 `answered`면 `save_self_guide_case`, 보류면 `save_support_case(..., held)`,
       장애·검증 실패면 `save_support_case(..., generation_failed)`로 저장한다(spec §2.10 경로 결정).
-    - 엔지니어 질문: 완료 건을 막고(`models.raise_if_case_completed`) 대화 이력과 함께
+    - 엔지니어 질문: 완료 건과 이관 전 셀프 가이드 건을 막고(`models.raise_if_case_completed`) 대화 이력과 함께
       `pipeline.run_engineer_answer`를 호출한 뒤 `rdb.save_chat_turn`으로 저장한다. 저장은 이 모듈의 일이다.
     - 조치 확정: `rdb.save_confirmed_resolution` 뒤 `vectordb.index_history`로 검색 근거에 반영한다.
       반영이 실패해도 저장은 유지하고 실패 여부만 `bool`로 알린다(앱 재시작의 전체 재생성으로 복구).
+    - 셀프 가이드 건은 `in_progress`로 접수되고, 고객이 `resolve_self_guide`로 해결완료를 확인하면 `completed`가 된다.
+      `request_support`로 기술지원접수를 누르면 `in_progress`를 유지한 채 엔지니어 처리 건(`route=support`)으로 이관한다.
     - 고객 화면에는 공개 필드(`CustomerCaseResult`)만 돌려준다. 내부 원인·`guide_failure`·내부 분석은 내보내지 않는다.
     - 시작할 때 검색 색인을 원자료로 새로 만든다(`prepare_search_index`).
     - 화면에 보여 줄 오류 문구는 정하지 않는다. 예외 종류만 구분해 던지고 문구는 `ui/common`이 맡는다.
 
 화면–서비스 연결(spec §2.3.3):
     고객 신고 목록 → `list_customer_cases` / 고객 신고 작성 → `list_error_codes`, `submit_case` /
-    고객 신고 상세 → `get_customer_case` / 엔지니어 대시보드 → `list_engineer_cases` /
+    고객 신고 상세 → `get_customer_case`, `resolve_self_guide`, `request_support` / 엔지니어 대시보드 → `list_engineer_cases` /
     장애 분석 대화 → `get_engineer_case`, `list_chat_turns`, `send_chat_question`, `get_citation_text` /
     이력 저장 → `get_engineer_case`, `confirm_resolution`
 
@@ -72,7 +74,7 @@ def _to_customer_result(detail: CaseDetail) -> CustomerCaseResult:
     return CustomerCaseResult(
         case_id=case.case_id, equipment=case.equipment, code=case.code,
         error_name=detail.error_code.name, memo=case.memo, status=case.status,
-        created_at=case.created_at, guidance_answer=case.guidance_answer,
+        route=case.route, created_at=case.created_at, guidance_answer=case.guidance_answer,
         action=resolution.action if resolution else None,
         result=resolution.result if resolution else None,
     )
@@ -151,6 +153,44 @@ def get_customer_case(case_id: str) -> CustomerCaseResult:
     if detail.service_case.source != Source.REPORTED:
         raise NotFoundError(case_id)  # 고객은 시드 이력을 볼 수 없다
     return _to_customer_result(detail)
+
+
+def resolve_self_guide(case_id: str) -> None:
+    """고객이 셀프 가이드로 해결됐다고 확인한 건을 조치 완료로 바꾼다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        None: 신고가 `completed`가 된다. 화면은 `get_customer_case`로 다시 읽는다.
+
+    Raises:
+        NotFoundError: 접수번호가 없거나 고객이 접근할 수 없는 건(시드 이력)일 때.
+        InvalidStateError: 확인을 기다리는 셀프 가이드 건이 아닐 때(이미 해결완료·이관된 건·엔지니어 처리 건).
+        DependencyError: DB 저장에 실패했을 때.
+    """
+    get_customer_case(case_id)  # 시드 이력은 고객에게 없는 건이므로 NotFoundError
+    rdb.resolve_self_guide_case(case_id)
+
+
+def request_support(case_id: str) -> None:
+    """고객이 셀프 가이드로 해결되지 않았다고 한 건을 엔지니어 처리 건으로 이관한다.
+
+    경로가 `support`로 바뀌고 상태는 `in_progress`를 유지하며, 엔지니어가 대시보드에서 열어 질문할 수 있다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        None: 신고가 엔지니어 처리 건이 된다. 화면은 `get_customer_case`로 다시 읽는다.
+
+    Raises:
+        NotFoundError: 접수번호가 없거나 고객이 접근할 수 없는 건(시드 이력)일 때.
+        InvalidStateError: 확인을 기다리는 셀프 가이드 건이 아닐 때(이미 해결완료·이관된 건·엔지니어 처리 건).
+        DependencyError: DB 저장에 실패했을 때.
+    """
+    get_customer_case(case_id)
+    rdb.escalate_self_guide_case(case_id)
 
 
 def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -321,11 +361,11 @@ def send_chat_question(case_id: str, question: str) -> None:
     Raises:
         ValidationError: 질문이 비었거나 길이 범위를 벗어났을 때.
         NotFoundError: 접수번호가 없을 때.
-        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        InvalidStateError: 이미 완료된 건이거나 이관 전 셀프 가이드 건일 때.
         DependencyError: 모델·검색·DB 장애나 제한 시간 초과일 때.
     """
     detail = rdb.fetch_case_detail(case_id)
-    raise_if_case_completed(detail.service_case)  # 완료 건·셀프 가이드 건은 모델을 부르기 전에 막는다
+    raise_if_case_completed(detail.service_case)  # 완료 건·이관 전 셀프 가이드 건은 모델을 부르기 전에 막는다
     question = question.strip()
     if not 1 <= len(question) <= MAX_QUESTION_LENGTH:
         raise ValidationError("질문 길이")
@@ -381,7 +421,7 @@ def confirm_resolution(case_id: str, record: Resolution) -> tuple[CaseDetail, bo
     Raises:
         ValidationError: 필드가 비었거나 길이 범위를 벗어났을 때.
         NotFoundError: 접수번호가 없을 때.
-        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        InvalidStateError: 이미 완료된 건이거나 이관 전 셀프 가이드 건일 때.
         DependencyError: 조치 결과 저장(DB)에 실패했을 때.
     """
     detail = rdb.save_confirmed_resolution(case_id, record)  # 완료·셀프 가이드 건은 rdb가 InvalidStateError

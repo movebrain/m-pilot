@@ -4,8 +4,10 @@
     고객이 제출한 신고를 처리 경로에 맞는 상태로 저장하고, 고객·엔지니어 화면이 볼 신고를 읽어 준다.
 
 책임:
-    - 신고를 상태 전이 규칙(spec §2.10)에 맞춰 저장한다. 셀프 가이드 건은 곧바로 `completed`,
+    - 신고를 상태 전이 규칙(spec §2.10)에 맞춰 저장한다. 셀프 가이드 건은 `in_progress`,
       엔지니어 처리 건은 `received`로 저장한다. 접수번호(PK)가 충돌하면 재시도 없이 오류로 알린다.
+    - 고객이 셀프 가이드 건에서 [해결완료]를 누르면 `completed`로, [기술지원접수]를 누르면 `in_progress`를 유지한 채
+      `route=support`(`guide_failure=unresolved`)로 바꾼다. 둘 다 아직 `self_guide`·`in_progress`인 건만 바꾼다.
     - 목록은 최신순으로 돌려준다. 고객에게 어떤 필드를 보일지는 `service`가 정한다.
     - 모델 필드 `memo`·`guidance_answer`를 DB 컬럼 `customer_memo`·`self_guide_answer`로 바꿔 저장한다(spec §3.3).
 
@@ -16,7 +18,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from mpilot.db.rdb._common import (
@@ -35,6 +37,8 @@ from mpilot.models import (
     CaseStatus,
     DependencyError,
     GuideFailure,
+    InvalidStateError,
+    NotFoundError,
     Route,
     Source,
     ValidationError,
@@ -122,11 +126,11 @@ def fetch_case_detail(case_id: str) -> CaseDetail:
 def save_self_guide_case(
     case_id: str, data: CaseInput, guidance_answer: Answer
 ) -> CaseDetail:
-    """셀프 가이드 건을 완료 상태로 저장한다.
+    """셀프 가이드 건을 조치 중 상태로 저장한다.
 
-    `source=reported`, `route=self_guide`, `status=completed`, `guide_failure=NULL`로 저장하고
+    `source=reported`, `route=self_guide`, `status=in_progress`, `guide_failure=NULL`로 저장하고
     가이드의 내용·단계·출처를 `service_cases.self_guide_answer`에 JSON으로 남긴다.
-    `resolutions` 행은 만들지 않는다.
+    `resolutions` 행은 만들지 않는다. 완료는 고객이 해결완료를 확인할 때(`resolve_self_guide_case`)다.
 
     Args:
         case_id: 새 접수번호(`SC-<UUID 앞 8자리>`). PK가 충돌하면 재시도 없이 오류로 알린다.
@@ -134,7 +138,7 @@ def save_self_guide_case(
         guidance_answer: 생성·검증을 통과한 고객 안내. `verdict`는 `answered`여야 한다.
 
     Returns:
-        CaseDetail: 저장된 신고 건(상태 `completed`)과 신고한 에러코드 행.
+        CaseDetail: 저장된 신고 건(상태 `in_progress`)과 신고한 에러코드 행.
 
     Raises:
         ValidationError: 미등록 코드, 메모 길이 초과, `answered`가 아닌 안내일 때.
@@ -147,7 +151,7 @@ def save_self_guide_case(
         case_id,
         data,
         route=Route.SELF_GUIDE,
-        status=CaseStatus.COMPLETED,
+        status=CaseStatus.IN_PROGRESS,
         guide_failure=None,
         guidance_answer=guidance_answer,
     )
@@ -198,13 +202,13 @@ def _insert_reported_case(
 ) -> CaseDetail:
     """앱에서 접수한 신고 한 건을 저장하고 다시 읽어 돌려준다(두 저장 함수의 공통 부분).
 
-    `source`는 `reported`로 고정한다. 완료 상태로 저장하면 `completed_at`을 신고 시각과 같게 둔다.
+    `source`는 `reported`로 고정한다. 접수 직후 상태는 완료가 아니므로 `completed_at`은 비워 둔다.
 
     Args:
         case_id: 새 접수번호.
         data: 고객이 제출한 설비·에러코드·증상 메모.
         route: 처리 경로.
-        status: 접수 직후 상태(`self_guide`면 `completed`, `support`면 `received`).
+        status: 접수 직후 상태(`self_guide`면 `in_progress`, `support`면 `received`).
         guide_failure: 가이드 실패 사유. 해당이 없으면 `None`.
         guidance_answer: 셀프 가이드 안내. `support`면 `None`.
 
@@ -248,7 +252,7 @@ def _insert_reported_case(
                         guidance_answer.model_dump_json() if guidance_answer is not None else None
                     ),
                     created_at=now,
-                    completed_at=now if status == CaseStatus.COMPLETED else None,
+                    completed_at=None,
                 )
             )
 
@@ -260,3 +264,90 @@ def _insert_reported_case(
     except SQLAlchemyError as e:
         raise DependencyError(f"신고를 저장하지 못했습니다({type(e).__name__}).") from None
     return detail
+
+
+def resolve_self_guide_case(case_id: str) -> CaseDetail:
+    """고객이 셀프 가이드로 해결됐다고 확인한 건을 조치 완료로 바꾼다.
+
+    `completed_at`을 지금으로 기록한다(신고 시각보다 빠르지 않게 맞춘다). 경로는 `self_guide`로 둔다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        CaseDetail: 완료된 신고 건과 신고한 에러코드 행.
+
+    Raises:
+        NotFoundError: 그 접수번호의 신고가 없을 때.
+        InvalidStateError: 아직 `self_guide`·`in_progress`가 아닐 때(이미 해결완료·이관된 건·엔지니어 처리 건).
+        DependencyError: DB 저장에 실패했을 때.
+    """
+    try:
+        with _get_engine().begin() as conn:
+            case = _lock_pending_self_guide(conn, case_id)
+            completed_at = max(_now_for_db(), case.created_at.replace(tzinfo=None))
+            conn.execute(
+                update(service_cases)
+                .where(service_cases.c.case_id == case_id)
+                .values(status=CaseStatus.COMPLETED.value, completed_at=completed_at)
+            )
+            return _load_case_detail(conn, case_id)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"해결 확인을 저장하지 못했습니다({type(e).__name__}).") from None
+
+
+def escalate_self_guide_case(case_id: str) -> CaseDetail:
+    """고객이 셀프 가이드로 해결되지 않았다고 한 건을 엔지니어 처리 건으로 이관한다.
+
+    `route=support`, `guide_failure=unresolved`로 바꾸고 `status`는 `in_progress`를 유지한다.
+    고객에게 이미 보여 준 안내(`guidance_answer`)는 지우지 않는다.
+
+    Args:
+        case_id: 접수번호.
+
+    Returns:
+        CaseDetail: 이관된 신고 건과 신고한 에러코드 행.
+
+    Raises:
+        NotFoundError: 그 접수번호의 신고가 없을 때.
+        InvalidStateError: 아직 `self_guide`·`in_progress`가 아닐 때(이미 해결완료·이관된 건·엔지니어 처리 건).
+        DependencyError: DB 저장에 실패했을 때.
+    """
+    try:
+        with _get_engine().begin() as conn:
+            _lock_pending_self_guide(conn, case_id)
+            conn.execute(
+                update(service_cases)
+                .where(service_cases.c.case_id == case_id)
+                .values(route=Route.SUPPORT.value, guide_failure=GuideFailure.UNRESOLVED.value)
+            )
+            return _load_case_detail(conn, case_id)
+    except SQLAlchemyError as e:
+        raise DependencyError(f"기술지원 요청을 저장하지 못했습니다({type(e).__name__}).") from None
+
+
+def _lock_pending_self_guide(conn, case_id: str):
+    """고객 확인을 기다리는 셀프 가이드 건(`self_guide`·`in_progress`)을 잠그고 읽는다.
+
+    `SELECT ... FOR UPDATE`라서 같은 건에 [해결완료]와 [기술지원접수]가 동시에 와도 하나만 통과한다.
+
+    Args:
+        conn: `engine.begin()`으로 연 트랜잭션 연결.
+        case_id: 접수번호.
+
+    Returns:
+        ServiceCase: 잠근 신고 건.
+
+    Raises:
+        NotFoundError: 그 접수번호의 신고가 없을 때.
+        InvalidStateError: 확인을 기다리는 셀프 가이드 건이 아닐 때.
+    """
+    row = conn.execute(
+        select(service_cases).where(service_cases.c.case_id == case_id).with_for_update()
+    ).first()
+    if row is None:
+        raise NotFoundError(f"접수번호 {case_id}의 신고가 없습니다.")
+    case = _row_to_service_case(row)
+    if case.route != Route.SELF_GUIDE or case.status != CaseStatus.IN_PROGRESS:
+        raise InvalidStateError("이미 처리된 셀프 가이드 건")
+    return case

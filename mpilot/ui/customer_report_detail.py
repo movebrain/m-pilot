@@ -11,12 +11,12 @@
     - 출처 원문은 고객에게 펼쳐 보이지 않는다. 출처는 단계 아래 표기(매뉴얼 쪽·절)로만 보인다.
     - 내부 원인·`guide_failure`·엔지니어 내부 분석은 보이지 않는다(`CustomerCaseResult`에 없다).
     - 접근할 수 없는 신고(`NotFoundError`)는 고객 신고 목록으로 돌려보낸다.
-    - 셀프 가이드 완료는 안내 제공의 종료이지 실제 해결 확인이 아니다. 추가 지원은 새 신고로 안내한다.
-    - 셀프 가이드 건은 하단 버튼이 [기술지원접수]·[해결완료] 두 개다. 둘 중 하나를 누르면 그 자리가
-      다른 상태와 같은 [확인] 버튼으로 바뀐다. 실제 접수 전환·완료 처리는 범위 밖이며 화면 표시만 한다.
+    - 셀프 가이드 건은 안내를 받고 해결 여부를 알릴 때까지 '조치 중'이다. 하단 버튼은 [기술지원접수]·[해결완료] 두 개다. 누르면 각각
+      `service.request_support`(조치 중 유지, 엔지니어 이관)·`service.resolve_self_guide`(조치 완료)를 부른 뒤
+      신고를 다시 읽어 [확인] 버튼 하나로 바꾼다. 이미 해결완료했거나 이관된 건에는 두 버튼이 보이지 않는다.
 
 화면 전환: 상세 → 목록(확인·접근 불가).
-사용 서비스: `get_customer_case`.
+사용 서비스: `get_customer_case`, `resolve_self_guide`, `request_support`.
 소유: UI·총괄 파트
 """
 
@@ -27,7 +27,7 @@ from html import escape
 import gradio as gr
 
 from mpilot import service
-from mpilot.models import Answer, CustomerCaseResult, NotFoundError
+from mpilot.models import Answer, CaseStatus, CustomerCaseResult, NotFoundError, Route
 from mpilot.ui import common
 
 SCREEN = common.SCREEN_CUSTOMER_DETAIL
@@ -45,10 +45,10 @@ CONFIRM_LABEL = "확인"
 """일반 건(접수·조치 중·엔지니어 조치 완료)의 하단 버튼 문구."""
 
 SUPPORT_REQUEST_LABEL = "기술지원접수"
-"""셀프 가이드 건에서 안내로 해결되지 않을 때 누르는 버튼 문구. 엔지니어 접수로 전환한다(백엔드는 범위 밖)."""
+"""셀프 가이드 건에서 안내로 해결되지 않을 때 누르는 버튼 문구. 조치 중을 유지한 채 엔지니어에게 이관한다."""
 
 RESOLVED_LABEL = "해결완료"
-"""셀프 가이드 건에서 안내로 해결됐을 때 누르는 버튼 문구. 조치 완료로 전환한다(백엔드는 범위 밖)."""
+"""셀프 가이드 건에서 안내로 해결됐을 때 누르는 버튼 문구. 조치 완료로 전환한다."""
 
 
 def status_header_html(case: CustomerCaseResult) -> str:
@@ -58,10 +58,14 @@ def status_header_html(case: CustomerCaseResult) -> str:
         case: 고객 공개 신고 상세.
 
     Returns:
-        str: 상태(셀프 가이드 제공·조치 완료·접수 대기)에 따라 문구가 달라지는 HTML.
+        str: 상태(셀프 가이드 제공·해결완료·기술지원 요청·조치 완료·접수 대기)에 따라 문구가 달라지는 HTML.
     """
-    if case.guidance_answer is not None:
-        icon, headline, subtitle = "✅", "셀프 가이드 안내가 제공되었습니다", "아래 안내에 따라 조치해 주세요."
+    if case.route == Route.SELF_GUIDE and case.status == CaseStatus.COMPLETED:
+        icon, headline, subtitle = "✅", "셀프 가이드로 해결되었습니다", "아래 안내는 그대로 다시 볼 수 있습니다."
+    elif case.route == Route.SELF_GUIDE:
+        icon, headline, subtitle = "✅", "셀프 가이드 안내가 제공되었습니다", "아래 안내에 따라 조치한 뒤 해결 여부를 알려 주세요."
+    elif case.guidance_answer is not None and case.action is None:
+        icon, headline, subtitle = "🕒", "기술지원팀에 요청되었습니다", WAITING_NOTICE
     elif case.action is not None:
         icon, headline, subtitle = "✅", "조치가 완료되었습니다", "아래에서 조치 결과를 확인할 수 있습니다."
     else:
@@ -142,10 +146,10 @@ def result_markdown(case: CustomerCaseResult) -> str:
         case: 고객 공개 신고 상세.
 
     Returns:
-        str: 완료된 엔지니어 처리 건은 조치·결과. 완료 전이거나 셀프 가이드 건은 빈 문자열
-            (기다림 문구는 맨 위 헤드라인 부제로 이미 보이므로 중복해 보이지 않는다).
+        str: 완료된 엔지니어 처리 건(셀프 가이드에서 이관된 건 포함)은 조치·결과. 완료 전이거나 셀프 가이드로
+            끝난 건은 빈 문자열(기다림 문구는 맨 위 헤드라인 부제로 이미 보이므로 중복해 보이지 않는다).
     """
-    if case.guidance_answer is not None or case.action is None:
+    if case.action is None:
         return ""
     return f"**조치 내용** {case.action}\n\n**결과** {case.result or '-'}"
 
@@ -177,6 +181,18 @@ def build_customer_report_detail_screen(role: gr.State, case_id: gr.State, scree
             resolve_btn = gr.Button(RESOLVED_LABEL, variant="primary", scale=0, min_width=140, visible=False)
 
     action_buttons = [confirm_btn, support_btn, resolve_btn]
+    case_outputs = [header, info, guide_box, guide, result_box, body, *action_buttons]
+
+    def view_of(case: CustomerCaseResult) -> tuple:
+        # 해결 여부를 기다리는 셀프 가이드 건(self_guide·조치 중)만 [확인] 대신 두 버튼을 보인다.
+        waiting = case.route == Route.SELF_GUIDE and case.status == CaseStatus.IN_PROGRESS
+        result_text = result_markdown(case)
+        return (
+            status_header_html(case), info_html(case),
+            gr.Column(visible=case.guidance_answer is not None), guide_html(case),
+            gr.Column(visible=bool(result_text)), result_text,
+            gr.Button(visible=not waiting), gr.Button(visible=waiting), gr.Button(visible=waiting),
+        )
 
     def on_screen_change(current: str, selected: str | None):
         # 이 화면에 들어올 때마다 고른 신고를 다시 읽는다.
@@ -193,25 +209,26 @@ def build_customer_report_detail_screen(role: gr.State, case_id: gr.State, scree
                 gr.Column(visible=True), "", "", gr.Column(visible=False), "", gr.Column(visible=False), "",
                 gr.Button(visible=True), gr.Button(visible=False), gr.Button(visible=False), gr.skip(),
             )
-        guide_text = guide_html(case)
-        is_self_guide = bool(guide_text)
-        result_text = result_markdown(case)
-        # 셀프 가이드 건은 [확인] 대신 [기술지원접수]·[해결완료] 두 버튼을 보인다.
-        return (
-            gr.Column(visible=True), status_header_html(case), info_html(case),
-            gr.Column(visible=is_self_guide), guide_text, gr.Column(visible=bool(result_text)), result_text,
-            gr.Button(visible=not is_self_guide), gr.Button(visible=is_self_guide), gr.Button(visible=is_self_guide),
-            gr.skip(),
-        )
+        return (gr.Column(visible=True),) + view_of(case) + (gr.skip(),)
 
-    def on_action_taken():
-        # 기술지원접수·해결완료를 누르면 그 자리가 다른 상태와 같은 [확인] 버튼으로 바뀐다.
-        return gr.Button(visible=True), gr.Button(visible=False), gr.Button(visible=False)
+    def on_answer(action_name: str):
+        # 버튼을 누르면 서비스를 부르고 신고를 다시 읽는다. 실패해도 다시 읽어 실제 상태를 보인다.
+        # fake가 service 함수를 바꿔 끼워도 따라가도록 누를 때 이름으로 찾는다.
+        def handler(selected: str | None):
+            try:
+                getattr(service, action_name)(selected or "")
+            except Exception as e:
+                gr.Warning(common.error_message(e))
+            try:
+                return view_of(service.get_customer_case(selected or ""))
+            except Exception as e:
+                gr.Warning(common.error_message(e))
+                return (gr.skip(),) * len(case_outputs)
 
-    screen.change(
-        on_screen_change, inputs=[screen, case_id],
-        outputs=[column, header, info, guide_box, guide, result_box, body, *action_buttons, screen],
-    )
+        handler.__name__ = f"on_{action_name}"
+        return handler
+
+    screen.change(on_screen_change, inputs=[screen, case_id], outputs=[column, *case_outputs, screen])
     confirm_btn.click(lambda: common.SCREEN_CUSTOMER_LIST, outputs=screen)
-    support_btn.click(on_action_taken, outputs=action_buttons)
-    resolve_btn.click(on_action_taken, outputs=action_buttons)
+    support_btn.click(on_answer("request_support"), inputs=case_id, outputs=case_outputs)
+    resolve_btn.click(on_answer("resolve_self_guide"), inputs=case_id, outputs=case_outputs)

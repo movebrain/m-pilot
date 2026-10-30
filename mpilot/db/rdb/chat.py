@@ -5,7 +5,7 @@
     검색 색인 `history`를 새로 만들 때 쓸 확정 이력을 읽어 준다.
 
 책임:
-    - 완료된 건(셀프 가이드 건 포함)에는 질문·조치 결과를 더 저장하지 않는다. 신고를 `SELECT ... FOR UPDATE`로
+    - 완료된 건과 아직 이관되지 않은 셀프 가이드 건에는 질문·조치 결과를 저장하지 않는다. 신고를 `SELECT ... FOR UPDATE`로
       잠근 뒤 확인하고, 완료 처리는 조건부 UPDATE로 보호한다(중복 제출·동시 수정 방지는 이것뿐이다).
     - 첫 질문이면 `received` → `in_progress`로 바꾼다. `completed_at`은 `created_at`보다 빠를 수 없다.
     - Chroma 검색 색인은 다루지 않는다. 색인 반영은 `service`가 `vectordb`를 불러 한다.
@@ -75,7 +75,7 @@ def _row_to_chat_turn(row) -> ChatTurn:
 
 
 def _lock_open_case(conn, case_id: str) -> ServiceCase:
-    """신고 한 건을 잠그고 읽은 뒤, 아직 완료되지 않았는지 확인한다.
+    """신고 한 건을 잠그고 읽은 뒤, 아직 완료되지 않은 엔지니어 처리 건인지 확인한다.
 
     `SELECT ... FOR UPDATE`로 읽으므로, 같은 건에 대한 다른 저장·완료 처리는 이 트랜잭션이
     끝날 때까지 기다린다. 그래서 "확인한 뒤 저장하기 전에 다른 사람이 완료하는" 일이 생기지 않는다.
@@ -89,7 +89,7 @@ def _lock_open_case(conn, case_id: str) -> ServiceCase:
 
     Raises:
         NotFoundError: 그 접수번호의 신고가 없을 때.
-        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        InvalidStateError: 이미 완료된 건이거나 이관 전 셀프 가이드 건일 때.
     """
     row = conn.execute(
         select(service_cases).where(service_cases.c.case_id == case_id).with_for_update()
@@ -97,7 +97,7 @@ def _lock_open_case(conn, case_id: str) -> ServiceCase:
     if row is None:
         raise NotFoundError(f"접수번호 {case_id}의 신고가 없습니다.")
     case = _row_to_service_case(row)
-    # 셀프 가이드 건은 접수 때 곧바로 completed라서 같은 규칙으로 막힌다.
+    # 완료 건과 이관 전 셀프 가이드 건(route=self_guide)은 같은 규칙으로 막힌다.
     raise_if_case_completed(case)
     return case
 
@@ -148,7 +148,7 @@ def save_chat_turn(case_id: str, question: str, answer: Answer) -> ChatTurn:
     Raises:
         ValidationError: 질문이 비었거나 길이 범위를 벗어났을 때.
         NotFoundError: 그 접수번호의 신고가 없을 때.
-        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        InvalidStateError: 이미 완료된 건이거나 이관 전 셀프 가이드 건일 때.
         DependencyError: DB 저장에 실패했을 때.
     """
     # 1) 질문 길이를 확인한다. 앞뒤 공백은 지우고 저장한다.
@@ -211,7 +211,7 @@ def save_confirmed_resolution(case_id: str, record: Resolution) -> CaseDetail:
     Raises:
         ValidationError: 필드가 비었거나 길이 범위를 벗어났을 때.
         NotFoundError: 그 접수번호의 신고가 없을 때.
-        InvalidStateError: 이미 완료된 건이거나 셀프 가이드 건일 때('이미 완료').
+        InvalidStateError: 이미 완료된 건이거나 이관 전 셀프 가이드 건일 때.
         DependencyError: DB 저장에 실패했을 때.
     """
     # 1) 세 필드의 길이를 확인한다. Resolution을 만들 때 이미 검사하지만 저장 직전에 한 번 더 본다.

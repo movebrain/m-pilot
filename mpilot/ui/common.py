@@ -1060,7 +1060,7 @@ def info_table_html(
 ERROR_MESSAGES: dict[type[Exception], str] = {
     ValidationError: "입력값을 확인해 주세요.",
     NotFoundError: "요청한 신고나 자료를 찾을 수 없습니다.",
-    InvalidStateError: "이미 완료된 건이라 더 저장할 수 없습니다.",
+    InvalidStateError: "이미 처리된 건이라 더 저장할 수 없습니다.",
     DependencyError: "일시적인 문제로 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
 }
 

@@ -18,6 +18,7 @@ from mpilot.models import (
     Equipment,
     ErrorCode,
     GuideFailure,
+    InvalidStateError,
     NotFoundError,
     Resolution,
     Route,
@@ -105,3 +106,38 @@ def test_get_citation_text_propagates_errors(monkeypatch, error):
     monkeypatch.setattr(service.vectordb, "get_document", fail)
     with pytest.raises(type(error)):
         service.get_citation_text(Citation(kind=CitationKind.MANUAL, ref_id="manual:x:1:1", locator="p.1"))
+
+
+@pytest.mark.parametrize(("name", "rdb_name"), [
+    ("resolve_self_guide", "resolve_self_guide_case"),
+    ("request_support", "escalate_self_guide_case"),
+])
+def test_self_guide_answers_delegate_to_rdb(monkeypatch, name, rdb_name):
+    calls = []
+    monkeypatch.setattr(service.rdb, "fetch_case_detail", lambda case_id: _detail(status=CaseStatus.IN_PROGRESS))
+    monkeypatch.setattr(service.rdb, rdb_name, lambda case_id: calls.append(case_id))
+
+    assert getattr(service, name)("SC-1") is None
+    assert calls == ["SC-1"]
+
+
+@pytest.mark.parametrize(("name", "rdb_name"), [
+    ("resolve_self_guide", "resolve_self_guide_case"),
+    ("request_support", "escalate_self_guide_case"),
+])
+def test_self_guide_answers_reject_seed_history_and_propagate_state_errors(monkeypatch, name, rdb_name):
+    calls = []
+
+    def already_handled(case_id):
+        calls.append(case_id)
+        raise InvalidStateError("이미 처리된 셀프 가이드 건")
+
+    monkeypatch.setattr(service.rdb, rdb_name, already_handled)
+    monkeypatch.setattr(service.rdb, "fetch_case_detail", lambda case_id: _detail(source=Source.SEED))
+    with pytest.raises(NotFoundError):
+        getattr(service, name)("SEED-1")
+    assert calls == []  # 시드 이력은 고객에게 없는 건이라 DB를 바꾸지 않는다
+
+    monkeypatch.setattr(service.rdb, "fetch_case_detail", lambda case_id: _detail(status=CaseStatus.IN_PROGRESS))
+    with pytest.raises(InvalidStateError):
+        getattr(service, name)("SC-1")
