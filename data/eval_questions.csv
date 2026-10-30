@@ -1,29 +1,101 @@
-purpose,equipment,code,question,expected,note
-customer_guidance,Mini Loader,M404,,answered,Mini Loader 매뉴얼 13.4절(PDF p.38~39) 3항 고객사 조치 절차에 레일 육안 확인·정비 모드·LOTO 후 청소 단계가 있음.
-customer_guidance,Mini Loader,M420,,answered,Mini Loader 매뉴얼 13.20절(PDF p.61~62) 3항 고객사 조치 절차에 셀 내 용기 정렬·재출고 지령 단계가 있음.
-customer_guidance,Mini Loader,M431,,answered,Mini Loader 매뉴얼 13.31절(PDF p.77) 3항 고객사 조치 절차에 네트워크·WCS 상태 확인 단계가 있음.
-customer_guidance,SRM,S127,,answered,SRM 매뉴얼 13.27절(PDF p.78) 3항 고객사 조치 절차에 라벨·리더 창 확인과 수동 입력/재투입 단계가 있음.
-customer_guidance,SRM,S109,,answered,"SRM 매뉴얼 13.9절(PDF p.52) 3항 고객사 조치: 리셋 없이 대기, WCS·네트워크 담당 확인 요청 등 절차가 있음."
-customer_guidance,SRM,S134,,answered,SRM 매뉴얼 13.34절(PDF p.88) 3항 고객사 조치 절차에 스테이션 화물 재정렬 단계가 있음.
-customer_guidance,AGV,A364,,answered,AGV 매뉴얼 13.64절(PDF p.141) 3항 고객사 조치 절차에 스캐너 창 청소와 청소 주기 조정 단계가 있음.
-customer_guidance,AGV,A341,,answered,AGV 매뉴얼 13.41절(PDF p.108) 3항 고객사 조치 절차에 자동 충전 진입 확인과 관제 우선순위 조정이 있음.
-customer_guidance,AGV,A318,,answered,AGV 매뉴얼 13.18절(PDF p.74) 3항 고객사 조치 절차에 VCS 맵 버전 비교·재배포·작업 재지시가 있음.
-customer_guidance,RTV,R258,,answered,RTV 매뉴얼 13.58절(PDF p.124~125) 3항 고객사 조치 절차에 로그 백업 후 삭제 단계가 있음.
-customer_guidance,RTV,R222,,answered,RTV 매뉴얼 13.22절(PDF p.72) 3항 고객사 조치 절차에 화물 적재 상태 확인과 반입 거부 처리 단계가 있음.
-customer_guidance,RTV,R237,,answered,RTV 매뉴얼 13.37절(PDF p.94) 3항 고객사 조치 절차에 렌즈 청소·광축 확인 단계가 있음.
-engineer_chat,Mini Loader,M420,M420이 같은 호기에서 하루에 몇 번씩 뜨는데 용기나 셀 쪽은 다 멀쩡했어요. 그럼 뭘 의심해야 하나요?,answered,Mini Loader 13.20절 엔지니어 조치(핑거 동작 시간 0.5초 초과 시 교체)와 이력 MLD-H-0023(핑거 액추에이터 교체)에 근거가 있음.
-engineer_chat,Mini Loader,M427,휠 교체하고 기동했더니 위치 이중화가 안 맞는다고 바로 서는데 제가 뭘 빠뜨린 걸까요?,answered,Mini Loader 13.27절 원인(휠 직경 설정값과 실측 불일치)과 이력 MLD-H-0028(휠 직경 미입력)에 근거가 있음.
-engineer_chat,Mini Loader,M408,"고객사 쪽 일반 지게차가 유압 실린더 오일이 새면서 포크가 안 올라간다는데, 어디부터 점검하라고 안내하죠?",insufficient_evidence,일반 지게차 유압 계통은 4개 설비 매뉴얼·이력 어디에도 없음(AGV 포크형 리프트 에러는 유압 설명이 아님).
-engineer_chat,SRM,S136,RTV가 스테이션에서 멈춰 있으면 SRM 쪽에서는 어떻게 되나요? 전에 비슷한 경우 어떻게 풀었는지도 알고 싶어요.,answered,RTV를 언급하지만 SRM 13.36절(타 장비 구역 점유)과 이력 SRM-H-0005(RTV R214 정지 중 재배정)로 SRM 자료에 근거가 있음.
-engineer_chat,SRM,S117,"다른 얘긴데, 싱크로형 RTV는 이재하다가 두 대가 같이 서버리던데 보통 뭐가 원인이에요?",answered,"SRM 자료엔 없고 RTV 13.5절 R205(슬레이브 추종 오차, OBC 버전·동기 속도)와 이력 RTV-H-0044에 있음. 타 설비 재검색 후 고지하고 답하는 설계라 answered."
-engineer_chat,SRM,S111,SRM-SP-101 주행 휠 유닛 교체해야 하는데 단가랑 납기 좀 알 수 있을까요?,insufficient_evidence,SRM 자료에 예비품 번호는 있으나 단가·납기·견적 정보는 어떤 설비 자료에도 없음.
-engineer_chat,AGV,A385,"Mini Loader 쪽 입출고 컨베이어가 꽉 차서 AGV가 포트에서 안 움직이는데, 예전엔 어떻게 처리했어요?",answered,Mini Loader·컨베이어를 언급하지만 AGV 13.85절(상대 설비 미준비)과 이력 AGV-H-0046(Mini Loader 컨베이어 만재)에 근거가 있음.
-engineer_chat,AGV,A310,"서열 스탠드를 새 위치로 옮겼더니 AGV가 위치를 못 잡고 서는데, 맵 때문일까요?",answered,AGV 13.10절 원인(레이아웃 변경으로 맵 불일치)과 이력 AGV-H-0028(스탠드 이동 후 맵 미갱신)에 근거가 있음.
-engineer_chat,AGV,A383,현장 와이파이 AP 모델명이랑 관리자 접속 비밀번호 좀 알려주세요.,insufficient_evidence,AP 위치·음영 대응은 있으나 AP 모델명·접속 계정 정보는 어떤 설비 자료에도 없음.
-engineer_chat,RTV,R214,"스테이션에 반입할 때 R214로 자꾸 서요. 화물은 멀쩡한데, 반복되면 어디를 봐야 하나요?",answered,"RTV 13.14절 원인 후보(센서 오염·정지 위치 편차 등)와 이력 RTV-H-0004~0008(반복 후 센서 브래킷 풀림, 0008)에 근거가 있음."
-engineer_chat,RTV,R201,"배터리를 교환한 직후에 주행이 막히는 에러가 있다던데, 훅 체결 쪽을 확인하는 게 맞나요?",answered,RTV 자료엔 없고 AGV 13.52절 A352(교환 후 훅 미체결)와 이력 AGV-H-0033·0036에 있음. 타 설비 재검색 후 고지하고 답하는 설계라 answered.
-engineer_chat,RTV,R201,이번 달 야간 근무 수당은 어디서 신청해요?,insufficient_evidence,근무·수당 등 인사 문의로 설비 자료에 전혀 없는 오프토픽 문항.
-customer_guidance,Mini Loader,M413,,insufficient_evidence,"엔지니어 필요 코드(중). Mini Loader 13.13절(PDF p.52)은 고객사 절차가 ""위 절차 전체가 연락 절차다""이고 복구는 4항 엔지니어 조치(LOTO 후 반사판 청소, 벨트 장력 Hz 측정·조정, 수동 티칭)뿐임."
-customer_guidance,SRM,S141,,insufficient_evidence,"엔지니어 필요 코드(하). SRM 13.41절(PDF p.99)은 ""운영자는 집전자·레일에 접근하거나 청소하지 않는다""이고 복구는 4항 엔지니어 조치(LOTO·무전압 확인, 카본 브러시 8 mm 이하 교체, 접촉압 측정)뿐임."
-customer_guidance,AGV,A314,,insufficient_evidence,"엔지니어 필요 코드(중). AGV 13.14절(PDF p.68)은 ""고객사는 복구를 시도하지 않는다""이고 복구는 4항 엔지니어 조치(LOTO, 브래킷 6 N·m 체결, 교정 지그로 스캐너 간 교정)뿐임."
-customer_guidance,RTV,R245,,insufficient_evidence,"엔지니어 필요 코드(하). RTV 13.45절(PDF p.106~107)은 고객사가 기록·MCCB OFF 보류·연락만 하고 복구는 4항 엔지니어 조치(파라미터 백업, LOTO 후 RT-BAT-36 교체)뿐임."
+purpose,equipment,code,question,expected,state,gold_ref_ids
+engineer_chat,AGV,A341,AGV가 충전하러 가야 하는데 충전 스테이션이 전부 사용 중이라 계속 대기해요. 관제 쪽에서 뭘 조정하면 되죠?,answered,own_code,"[""manual:HMX-AGV-TSM-001:108:1"", ""error:AGV:A341""]"
+engineer_chat,AGV,A310,"서열 스탠드를 새 위치로 옮겼더니 AGV가 위치를 못 잡고 서는데, 맵 때문일까요?",answered,own_code,"[""manual:HMX-AGV-TSM-001:62:3"", ""manual:HMX-AGV-TSM-001:62:2"", ""error:AGV:A310""]"
+engineer_chat,Mini Loader,M404,"M404가 특정 구간에서만 계속 뜨는데, 엔지니어 입장에서 휠이랑 파라미터 쪽은 뭘 확인해야 하나요?",answered,own_code,"[""manual:HMX-MLD-TSM-001:38:4"", ""manual:HMX-MLD-TSM-001:38:5"", ""manual:HMX-MLD-TSM-001:39:1"", ""error:Mini Loader:M404""]"
+engineer_chat,Mini Loader,M431,M431로 서서 대기 중인데 WCS도 스위치도 이상 없어 보여요. 우리 쪽 GCP에서는 뭘 더 확인할 수 있나요?,answered,own_code,"[""manual:HMX-MLD-TSM-001:77:4"", ""manual:HMX-MLD-TSM-001:77:5""]"
+engineer_chat,RTV,R237,광통신기 렌즈도 닦고 가리는 물건도 치웠는데 수신 신호 세기가 계속 낮아요. 엔지니어는 그다음에 뭘 해야 하나요?,answered,own_code,"[""manual:HMX-RTV-TSM-001:94:4"", ""manual:HMX-RTV-TSM-001:94:5"", ""error:RTV:R237""]"
+engineer_chat,RTV,R222,화물 높이는 규격 안인데도 R222로 반입이 계속 거부돼요. 엔지니어는 뭘 봐야 하나요?,answered,own_code,"[""manual:HMX-RTV-TSM-001:72:1"", ""manual:HMX-RTV-TSM-001:71:5"", ""error:RTV:R222""]"
+engineer_chat,SRM,S127,여러 화물에서 계속 LU-ID를 못 읽는데 라벨이랑 리더 창은 깨끗해요. 엔지니어가 리더 쪽에서 뭘 점검해야 하죠?,answered,own_code,"[""manual:HMX-SRM-TSM-001:78:3""]"
+engineer_chat,SRM,S134,S134가 반복되는데 화물은 정위치 같아요. 인계하는 RTV나 AGV 정지 오차가 어느 정도면 그쪽 문제로 보나요? 센서는 어떻게 확인하죠?,answered,own_code,"[""manual:HMX-SRM-TSM-001:88:3"", ""manual:HMX-SRM-TSM-001:88:4"", ""error:SRM:S134""]"
+engineer_chat,AGV,A346,"셀 전압 불균형이 뜬 차량인데, 충전 중에 셀 온도가 급하게 오르면서 전압이 같이 뚝 떨어지는 게 보이면 현장에서 어떻게 대응하라고 해야 하나요?",answered,own_common,"[""manual:HMX-AGV-TSM-001:22:7""]"
+engineer_chat,AGV,A347,"충전 단자 접촉이 불량한 차량인데, 접점에 그리스를 좀 발라 줘도 되나요? 그리고 단자는 충전 몇 회쯤에서 교체하나요?",answered,own_common,"[""manual:HMX-AGV-TSM-001:41:2"", ""manual:HMX-AGV-TSM-001:41:4""]"
+engineer_chat,Mini Loader,M411,"승강 벨트 상부 풀리를 확인하려고 마스트 위로 올라가야 하는데, 작업 안전 수칙이 어떻게 되나요?",answered,own_common,"[""manual:HMX-MLD-TSM-001:18:6""]"
+engineer_chat,Mini Loader,M409,승강 서보 부하가 높게 나오는데 타이밍 벨트가 뻑뻑해 보여서 윤활유를 뿌려 줄까 해요. 해도 되나요?,answered,own_common,"[""manual:HMX-MLD-TSM-001:25:3""]"
+engineer_chat,RTV,R234,"R234가 자주 나는 대차 한 대를 루프에서 빼서 정비하려는데, 그동안 나머지 대차는 어떻게 돌고 다시 넣을 때는 뭘 확인해야 하나요?",answered,own_common,"[""manual:HMX-RTV-TSM-001:22:2""]"
+engineer_chat,RTV,R207,R207 휠 슬립이 나서 휠 베어링에 그리스를 더 넣어 볼까 하는데 괜찮을까요? 주기랑 양 기준도 알려주세요.,answered,own_common,"[""manual:HMX-RTV-TSM-001:28:2"", ""manual:HMX-RTV-TSM-001:28:3""]"
+engineer_chat,SRM,S116,S116이 자주 뜨는 호기 주행 휠 답면을 재 봤더니 Φ500 휠이 Φ493이에요. 아직 써도 되는 건가요?,answered,own_common,"[""manual:HMX-SRM-TSM-001:29:5""]"
+engineer_chat,Mini Loader,M420,M420이 같은 호기에서 하루에 몇 번씩 뜨는데 용기나 셀 쪽은 다 멀쩡했어요. 그럼 뭘 의심해야 하나요?,answered,own_history,"[""history:MLD-H-0023"", ""manual:HMX-MLD-TSM-001:61:2"", ""error:Mini Loader:M420""]"
+engineer_chat,Mini Loader,M427,휠 교체하고 기동했더니 위치 이중화가 안 맞는다고 바로 서는데 제가 뭘 빠뜨린 걸까요?,answered,own_history,"[""history:MLD-H-0028"", ""manual:HMX-MLD-TSM-001:71:5""]"
+engineer_chat,SRM,S136,RTV가 스테이션에서 멈춰 있으면 SRM 쪽에서는 어떻게 되나요? 전에 비슷한 경우 어떻게 풀었는지도 알고 싶어요.,answered,own_history,"[""history:SRM-H-0005"", ""manual:HMX-SRM-TSM-001:91:1"", ""manual:HMX-SRM-TSM-001:91:3"", ""error:SRM:S136""]"
+engineer_chat,AGV,A385,"Mini Loader 쪽 입출고 컨베이어가 꽉 차서 AGV가 포트에서 안 움직이는데, 예전엔 어떻게 처리했어요?",answered,own_history,"[""history:AGV-H-0046"", ""manual:HMX-AGV-TSM-001:171:6"", ""error:AGV:A385""]"
+engineer_chat,RTV,R214,"스테이션에 반입할 때 R214로 자꾸 서요. 화물은 멀쩡한데, 반복되면 어디를 봐야 하나요?",answered,own_history,"[""history:RTV-H-0008"", ""manual:HMX-RTV-TSM-001:60:1"", ""error:RTV:R214""]"
+engineer_chat,SRM,S117,"다른 얘긴데, 싱크로형 RTV는 이재하다가 두 대가 같이 서버리던데(R205라고 뜬다던데) 보통 뭐가 원인이에요?",answered,other_code,"[""manual:HMX-RTV-TSM-001:45:2"", ""manual:HMX-RTV-TSM-001:45:5"", ""error:RTV:R205""]"
+engineer_chat,RTV,R201,"AGV에서 A352가 배터리 교환 직후에 주행을 막는다던데, 훅 체결 쪽을 확인하는 게 맞나요?",answered,other_code,"[""manual:HMX-AGV-TSM-001:122:4"", ""manual:HMX-AGV-TSM-001:123:2"", ""manual:HMX-AGV-TSM-001:123:3"", ""error:AGV:A352""]"
+engineer_chat,AGV,A333,"SRM 입고 스테이션에서 AGV가 화물을 내려놨는데 SRM이 S135를 띄우면서 안 집어 가던데, 엔지니어는 어디를 확인하나요?",answered,other_code,"[""manual:HMX-SRM-TSM-001:90:1"", ""manual:HMX-SRM-TSM-001:89:5"", ""error:SRM:S135""]"
+engineer_chat,Mini Loader,M441,"RTV에서 R219가 뜨면서 스테이션 Ready를 못 받는다는데, 스테이션은 자동 운전 상태인데도 반복되면 엔지니어는 신호가 어디서 끊기는지 어떻게 확인하나요?",answered,other_code,"[""manual:HMX-RTV-TSM-001:67:3"", ""error:RTV:R219""]"
+engineer_chat,RTV,R216,"미니로더 트윈 포크가 서로 어긋나서 M418이 뜬다는데, 엔지니어는 어디를 점검하나요? 용기 무게 차이도 영향이 있나요?",answered,other_code,"[""manual:HMX-MLD-TSM-001:58:2"", ""manual:HMX-MLD-TSM-001:58:4"", ""error:Mini Loader:M418""]"
+engineer_chat,AGV,A381,"RTV 라인 쪽 급전 케이블 근처에서 일해야 하는 사람이 있는데, 접근 거리 제한이나 의료기기 착용자 주의 같은 게 있나요?",answered,other_common,"[""manual:HMX-RTV-TSM-001:18:1""]"
+engineer_chat,Mini Loader,M405,"SRM은 정지한 뒤에 마스트 끝이 흔들리는 걸 몇 mm까지 허용하고, 정지 안정화는 몇 초 안에 끝나야 하나요?",answered,other_common,"[""manual:HMX-SRM-TSM-001:14:2""]"
+engineer_chat,SRM,S101,미니로더를 한 랙면에 두 대 돌리는 현장에서는 인접 호기가 몇 m 안으로 들어오면 감속하고 몇 m에서 서나요? 감속 속도는 얼마인가요?,answered,other_common,"[""manual:HMX-MLD-TSM-001:14:3""]"
+engineer_chat,RTV,R232,AGV는 관제와 어떤 규격의 메시지로 통신하나요? 지연이 몇 초부터 문제가 되고 끊김은 몇 초부터인가요?,answered,other_common,"[""manual:HMX-AGV-TSM-001:18:6"", ""manual:HMX-AGV-TSM-001:19:1""]"
+engineer_chat,Mini Loader,M433,"RTV 대차들 OBC 소프트웨어 버전이 v3.0이랑 v3.2로 섞여 있는데, 그대로 같이 운전해도 되나요?",answered,other_common,"[""manual:HMX-RTV-TSM-001:36:3""]"
+engineer_chat,SRM,S111,SRM-SP-101 주행 휠 유닛 교체해야 하는데 단가랑 납기 좀 알 수 있을까요?,insufficient_evidence,none_code,[]
+engineer_chat,AGV,A383,현장 와이파이 AP 모델명이랑 관리자 접속 비밀번호 좀 알려주세요.,insufficient_evidence,none_code,[]
+engineer_chat,AGV,A389,"A389가 떠서 점검 잡았는데, 같이 찍힌 A395는 무슨 에러인가요? 에러표에서 못 찾겠어요.",insufficient_evidence,none_code,[]
+engineer_chat,RTV,R258,R258이랑 같이 R270도 뜨던데 이건 어떤 에러예요?,insufficient_evidence,none_code,[]
+engineer_chat,Mini Loader,M449,파라미터 체크섬 에러 나는 호기에서 M452도 같이 보이던데 이건 무슨 코드죠?,insufficient_evidence,none_code,[]
+engineer_chat,Mini Loader,M448,"M448 워치독이 떠서 PLC를 들여다보려는데, PLC 제조사랑 기종이랑 래더 프로그램은 어디서 열어볼 수 있나요?",insufficient_evidence,none_code,[]
+engineer_chat,SRM,S147,"S147 때문에 PLC 펌웨어를 최신으로 올려 보려는데, 펌웨어 파일은 어디서 받나요?",insufficient_evidence,none_code,[]
+engineer_chat,AGV,A380,"A380 메모리 부족이 계속 나서 차량 컨트롤러 산업용 PC를 초기화하려는데, BIOS 설정값이랑 OS 복구 이미지는 어디서 받아요?",insufficient_evidence,none_code,[]
+engineer_chat,RTV,R204,"R204로 주행 모터가 과열돼서 아예 교체하려는데, 모터 제조사랑 형번이 어떻게 되나요?",insufficient_evidence,none_code,[]
+engineer_chat,RTV,R246,"R246 집전자 마모 경보가 떴는데, 교체용 카본 브러시 제조사랑 재질 등급이 어떻게 되나요?",insufficient_evidence,none_code,[]
+engineer_chat,Mini Loader,M408,"고객사 쪽 일반 지게차가 유압 실린더 오일이 새면서 포크가 안 올라간다는데, 어디부터 점검하라고 안내하죠?",insufficient_evidence,none_common,[]
+engineer_chat,RTV,R201,이번 달 야간 근무 수당은 어디서 신청해요?,insufficient_evidence,none_common,[]
+engineer_chat,AGV,A375,팔레타이저 그리퍼 흡착 패드는 보통 몇 개월마다 교체하나요?,insufficient_evidence,none_common,[]
+engineer_chat,SRM,S109,사무실 프린터가 네트워크에서 안 잡히는데 IP를 어떻게 설정해야 하나요?,insufficient_evidence,none_common,[]
+engineer_chat,RTV,R240,공장 옥상 태양광 인버터가 에러를 내는데 에러코드 표는 어디서 확인해요?,insufficient_evidence,none_common,[]
+engineer_chat,AGV,A390,신입 오퍼레이터 안전교육 이수 확인서 양식은 어디서 받을 수 있죠?,insufficient_evidence,none_common,[]
+engineer_chat,RTV,R250,구역 스프링클러 헤드 점검 주기랑 소방 점검표 양식 좀 알려 주세요.,insufficient_evidence,none_common,[]
+engineer_chat,SRM,S143,모터를 호이스트로 들어 올릴 때 슬링 각도별 허용 하중은 어떻게 되나요?,insufficient_evidence,none_common,[]
+engineer_chat,SRM,S150,이번 달 출장비 정산 양식은 어디에 올리나요?,insufficient_evidence,none_common,[]
+engineer_chat,Mini Loader,M443,교체하고 나온 불량 서보 드라이브랑 센서는 어떤 절차로 폐기물 신고를 하나요?,insufficient_evidence,none_common,[]
+customer_guidance,Mini Loader,M404,주행 중에 경고가 가끔 떠요,answered,guided,"[""manual:HMX-MLD-TSM-001:38:2"", ""manual:HMX-MLD-TSM-001:38:3"", ""manual:HMX-MLD-TSM-001:38:5"", ""error:Mini Loader:M404""]"
+customer_guidance,Mini Loader,M420,출고할 때 용기를 못 집었다고 떠요,answered,guided,"[""manual:HMX-MLD-TSM-001:61:1"", ""manual:HMX-MLD-TSM-001:61:3"", ""error:Mini Loader:M420""]"
+customer_guidance,Mini Loader,M431,WCS랑 연결이 끊겼다고 나와요,answered,guided,"[""manual:HMX-MLD-TSM-001:77:2"", ""manual:HMX-MLD-TSM-001:77:3"", ""manual:HMX-MLD-TSM-001:77:5"", ""error:Mini Loader:M431""]"
+customer_guidance,Mini Loader,M419,,answered,guided,"[""manual:HMX-MLD-TSM-001:59:3"", ""manual:HMX-MLD-TSM-001:59:5"", ""manual:HMX-MLD-TSM-001:60:1"", ""error:Mini Loader:M419""]"
+customer_guidance,Mini Loader,M423,빈 셀이라고 하는데 실제론 뭐가 있는 것 같아요,answered,guided,"[""manual:HMX-MLD-TSM-001:65:2"", ""manual:HMX-MLD-TSM-001:65:3"", ""manual:HMX-MLD-TSM-001:65:5"", ""error:Mini Loader:M423""]"
+customer_guidance,Mini Loader,M424,,answered,guided,"[""manual:HMX-MLD-TSM-001:66:3"", ""manual:HMX-MLD-TSM-001:66:5"", ""manual:HMX-MLD-TSM-001:67:1"", ""error:Mini Loader:M424""]"
+customer_guidance,SRM,S127,입고 라벨을 못 읽는다고 해요,answered,guided,"[""manual:HMX-SRM-TSM-001:78:2"", ""manual:HMX-SRM-TSM-001:78:4"", ""error:SRM:S127""]"
+customer_guidance,SRM,S109,WCS 통신이 끊겼다고 경고가 떠요,answered,guided,"[""manual:HMX-SRM-TSM-001:51:2"", ""manual:HMX-SRM-TSM-001:51:3"", ""manual:HMX-SRM-TSM-001:51:5"", ""error:SRM:S109""]"
+customer_guidance,SRM,S134,,answered,guided,"[""manual:HMX-SRM-TSM-001:88:1"", ""manual:HMX-SRM-TSM-001:88:2"", ""manual:HMX-SRM-TSM-001:88:4"", ""error:SRM:S134""]"
+customer_guidance,SRM,S108,스테이션에 올라온 화물이 삐져나와 있어요,answered,guided,"[""manual:HMX-SRM-TSM-001:50:1"", ""manual:HMX-SRM-TSM-001:50:3"", ""error:SRM:S108""]"
+customer_guidance,SRM,S113,모터 온도 경고가 계속 보여요,answered,guided,"[""manual:HMX-SRM-TSM-001:57:1"", ""manual:HMX-SRM-TSM-001:57:2"", ""manual:HMX-SRM-TSM-001:57:4"", ""error:SRM:S113""]"
+customer_guidance,SRM,S116,주행하다 바퀴가 헛도는 것 같다는 경고예요,answered,guided,"[""manual:HMX-SRM-TSM-001:61:3"", ""manual:HMX-SRM-TSM-001:61:5"", ""manual:HMX-SRM-TSM-001:62:1"", ""error:SRM:S116""]"
+customer_guidance,SRM,S136,,answered,guided,"[""manual:HMX-SRM-TSM-001:91:1"", ""manual:HMX-SRM-TSM-001:91:3"", ""error:SRM:S136""]"
+customer_guidance,SRM,S150,,answered,guided,"[""manual:HMX-SRM-TSM-001:110:3"", ""manual:HMX-SRM-TSM-001:110:5"", ""manual:HMX-SRM-TSM-001:111:1"", ""error:SRM:S150""]"
+customer_guidance,AGV,A364,스캐너 창이 더럽다는 경고가 나와요,answered,guided,"[""manual:HMX-AGV-TSM-001:140:5"", ""manual:HMX-AGV-TSM-001:141:1"", ""manual:HMX-AGV-TSM-001:141:2"", ""error:AGV:A364""]"
+customer_guidance,AGV,A341,배터리 부족 경고가 떴어요,answered,guided,"[""manual:HMX-AGV-TSM-001:107:5"", ""manual:HMX-AGV-TSM-001:108:1"", ""error:AGV:A341""]"
+customer_guidance,AGV,A318,,answered,guided,"[""manual:HMX-AGV-TSM-001:73:3"", ""manual:HMX-AGV-TSM-001:73:5"", ""manual:HMX-AGV-TSM-001:74:1"", ""error:AGV:A318""]"
+customer_guidance,AGV,A302,모터가 뜨겁다고 나와요,answered,guided,"[""manual:HMX-AGV-TSM-001:50:1"", ""manual:HMX-AGV-TSM-001:50:2"", ""manual:HMX-AGV-TSM-001:50:5"", ""error:AGV:A302""]"
+customer_guidance,AGV,A312,특정 구간에서만 반사판 경고가 떠요,answered,guided,"[""manual:HMX-AGV-TSM-001:64:5"", ""manual:HMX-AGV-TSM-001:65:1"", ""manual:HMX-AGV-TSM-001:65:2"", ""error:AGV:A312""]"
+customer_guidance,AGV,A340,,answered,guided,"[""manual:HMX-AGV-TSM-001:106:1"", ""manual:HMX-AGV-TSM-001:106:4"", ""error:AGV:A340""]"
+customer_guidance,AGV,A362,차량이 통로에서 계속 서 있어요,answered,guided,"[""manual:HMX-AGV-TSM-001:137:3"", ""manual:HMX-AGV-TSM-001:137:5"", ""manual:HMX-AGV-TSM-001:138:1"", ""error:AGV:A362""]"
+customer_guidance,AGV,A387,,answered,guided,"[""manual:HMX-AGV-TSM-001:174:3"", ""manual:HMX-AGV-TSM-001:174:4"", ""manual:HMX-AGV-TSM-001:174:6"", ""error:AGV:A387""]"
+customer_guidance,RTV,R258,대차 메모리 경고가 떠 있어요,answered,guided,"[""manual:HMX-RTV-TSM-001:123:5"", ""manual:HMX-RTV-TSM-001:124:1"", ""error:RTV:R258""]"
+customer_guidance,RTV,R222,화물이 너무 높다고 정지했어요,answered,guided,"[""manual:HMX-RTV-TSM-001:71:2"", ""manual:HMX-RTV-TSM-001:71:3"", ""manual:HMX-RTV-TSM-001:71:5"", ""error:RTV:R222""]"
+customer_guidance,RTV,R237,,answered,guided,"[""manual:HMX-RTV-TSM-001:94:2"", ""manual:HMX-RTV-TSM-001:94:3"", ""manual:HMX-RTV-TSM-001:94:5"", ""error:RTV:R237""]"
+customer_guidance,RTV,R207,,answered,guided,"[""manual:HMX-RTV-TSM-001:48:2"", ""manual:HMX-RTV-TSM-001:48:3"", ""manual:HMX-RTV-TSM-001:48:5"", ""manual:HMX-RTV-TSM-001:49:1"", ""error:RTV:R207""]"
+customer_guidance,RTV,R224,화물이 옆으로 삐져나왔대요,answered,guided,"[""manual:HMX-RTV-TSM-001:74:2"", ""manual:HMX-RTV-TSM-001:74:3"", ""manual:HMX-RTV-TSM-001:74:5"", ""error:RTV:R224""]"
+customer_guidance,RTV,R234,,answered,guided,"[""manual:HMX-RTV-TSM-001:89:5"", ""manual:HMX-RTV-TSM-001:90:1"", ""manual:HMX-RTV-TSM-001:90:2"", ""error:RTV:R234""]"
+customer_guidance,RTV,R253,,answered,guided,"[""manual:HMX-RTV-TSM-001:116:5"", ""manual:HMX-RTV-TSM-001:117:1""]"
+customer_guidance,RTV,R259,시간이 안 맞는다는 경고가 떠요,answered,guided,"[""manual:HMX-RTV-TSM-001:125:2"", ""manual:HMX-RTV-TSM-001:125:4"", ""error:RTV:R259""]"
+customer_guidance,Mini Loader,M413,,insufficient_evidence,not_guided,[]
+customer_guidance,Mini Loader,M405,셀 앞에서 멈췄어요,insufficient_evidence,not_guided,[]
+customer_guidance,Mini Loader,M409,승강할 때 소리가 나요,insufficient_evidence,not_guided,[]
+customer_guidance,Mini Loader,M415,,insufficient_evidence,not_guided,[]
+customer_guidance,Mini Loader,M418,,insufficient_evidence,not_guided,[]
+customer_guidance,SRM,S141,,insufficient_evidence,not_guided,[]
+customer_guidance,SRM,S130,,insufficient_evidence,not_guided,[]
+customer_guidance,SRM,S132,통로 끝에서 멈춰 있어요,insufficient_evidence,not_guided,[]
+customer_guidance,SRM,S129,,insufficient_evidence,not_guided,[]
+customer_guidance,SRM,S140,화면이 꺼졌다 켜졌다 해요,insufficient_evidence,not_guided,[]
+customer_guidance,AGV,A314,,insufficient_evidence,not_guided,[]
+customer_guidance,AGV,A308,출발을 안 해요,insufficient_evidence,not_guided,[]
+customer_guidance,AGV,A326,리프트가 올라간 채로 서 있어요,insufficient_evidence,not_guided,[]
+customer_guidance,AGV,A365,스캐너 고장이라고 뜨네요,insufficient_evidence,not_guided,[]
+customer_guidance,AGV,A368,,insufficient_evidence,not_guided,[]
+customer_guidance,RTV,R245,,insufficient_evidence,not_guided,[]
+customer_guidance,RTV,R233,대차가 통신이 안 된다며 서 있어요,insufficient_evidence,not_guided,[]
+customer_guidance,RTV,R235,,insufficient_evidence,not_guided,[]
+customer_guidance,RTV,R240,전원 문제라고 뜨면서 멈췄어요,insufficient_evidence,not_guided,[]
+customer_guidance,RTV,R241,,insufficient_evidence,not_guided,[]
