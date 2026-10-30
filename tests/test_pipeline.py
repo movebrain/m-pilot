@@ -346,3 +346,29 @@ def test_보류_답변은_조치_단계가_없다():
     assert answer.steps == []
     assert answer.notice == "근거가 부족합니다."
     assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
+
+# --- 검색 공개 함수: 운영과 같은 검색 호출 -----------------------------
+def test_고객_검색_함수는_안내와_같은_검색_호출을_한다(fakes):
+    settings = SearchSettings(manual_k=2, history_k=9)
+    ask_customer("AGV", settings)
+    run_calls = (list(fakes.searches), list(fakes.search_codes))
+    fakes.searches.clear()
+    fakes.search_codes.clear()
+
+    hits = pipeline.search_customer_evidence(make_context("AGV"), settings)
+
+    assert (fakes.searches, fakes.search_codes) == run_calls
+    assert fakes.guidance_hits_seen == [hits]
+
+
+def test_엔지니어_검색_함수는_1차_답변과_같은_검색_호출을_한다(fakes):
+    settings = SearchSettings(manual_k=4, history_k=2)
+    ask("위치가 어긋나요", settings, equipment="AGV")
+    run_calls = (list(fakes.searches), list(fakes.search_codes))
+    fakes.searches.clear()
+    fakes.search_codes.clear()
+
+    hits = pipeline.search_engineer_evidence(make_context("AGV"), "위치가 어긋나요", settings)
+
+    assert (fakes.searches, fakes.search_codes) == run_calls
+    assert fakes.hits_seen == [hits]

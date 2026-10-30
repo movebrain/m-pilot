@@ -32,7 +32,6 @@ from mpilot.models import (
     CitationKind,
     DependencyError,
     Equipment,
-    ErrorCode,
     SearchHit,
     SearchSettings,
     ValidationError,
@@ -129,9 +128,7 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
     error_code = context.error_code
-    hits = retriever.search(
-        CitationKind.MANUAL, error_code.equipment, customer_query(error_code), settings.manual_k, error_code.code
-    )
+    hits = search_customer_evidence(context, settings)
     if not hits:  # 근거가 하나도 없으면 모델을 부르지 않는다
         return _make_hold_answer("매뉴얼에서 고객이 직접 조치할 수 있는 근거를 찾지 못해 엔지니어가 접수합니다.")
 
@@ -140,29 +137,49 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
     return answer
 
 
-def customer_query(error_code: ErrorCode) -> str:
-    """고객 안내의 검색 질의. 평가가 운영과 같은 질의로 검색하도록 공개한다.
+def search_customer_evidence(context: CaseContext, settings: SearchSettings) -> list[SearchHit]:
+    """고객 안내의 근거 검색. `run_customer_guidance`가 쓰며, 평가가 생성 없이 같은 검색을 재도록 공개한다.
+
+    신고 코드의 `manual`을 신고 설비 필터로 `<코드> <이름>` 질의로 찾고 다른 코드의 문서를 뺀다.
 
     Args:
-        error_code: 신고한 에러코드.
+        context: 신고 맥락. 신고한 에러코드의 설비·코드·이름을 쓴다.
+        settings: 검색 설정. `manual_k`만 쓴다.
 
     Returns:
-        str: `<코드> <이름>`.
+        list[SearchHit]: 가까운 순으로 최대 `manual_k`건. 없으면 빈 목록이다.
+
+    Raises:
+        ValidationError: `manual_k`가 1보다 작을 때(`retriever.search`가 낸다).
+        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    return f"{error_code.code} {error_code.name}"
+    error_code = context.error_code
+    query = f"{error_code.code} {error_code.name}"
+    return retriever.search(CitationKind.MANUAL, error_code.equipment, query, settings.manual_k, error_code.code)
 
 
-def engineer_query(error_code: ErrorCode, question: str) -> str:
-    """엔지니어 답변의 1차 검색 질의. 평가가 운영과 같은 질의로 검색하도록 공개한다. 폴백은 질문 원문을 쓴다.
+def search_engineer_evidence(context: CaseContext, question: str, settings: SearchSettings) -> list[SearchHit]:
+    """엔지니어 답변의 1차 근거 검색. `run_engineer_answer`가 쓰며, 평가가 생성 없이 같은 검색을 재도록 공개한다.
+
+    `<코드> <이름> <질문>` 질의로 신고 설비의 `manual`(다른 코드 문서 제외)과 `history`를 찾는다. 폴백은 질문
+    원문으로 `retriever.search`를 `equipment=None`으로 부른다.
 
     Args:
-        error_code: 신고한 에러코드.
-        question: 앞뒤 공백을 지운 엔지니어 질문.
+        context: 신고 맥락. 신고한 에러코드로 대상 설비와 코드를 고정한다.
+        question: 앞뒤 공백을 지운 엔지니어 질문(호출자가 정리한다).
+        settings: 검색 설정. `manual_k`, `history_k`.
 
     Returns:
-        str: `<코드> <이름> <질문>`.
+        list[SearchHit]: `manual` 근거(최대 `manual_k`건) 다음에 `history` 근거(최대 `history_k`건).
+
+    Raises:
+        ValidationError: `manual_k`·`history_k`가 1보다 작을 때(`retriever.search`가 낸다).
+        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
-    return f"{error_code.code} {error_code.name} {question}"
+    error_code = context.error_code
+    query = f"{error_code.code} {error_code.name} {question}"
+    manual_hits = retriever.search(CitationKind.MANUAL, error_code.equipment, query, settings.manual_k, error_code.code)
+    return manual_hits + retriever.search(CitationKind.HISTORY, error_code.equipment, query, settings.history_k)
 
 
 def run_engineer_answer(
@@ -192,13 +209,8 @@ def run_engineer_answer(
     """
     question = _validate_engineer_input(request, settings)
 
-    error_code = context.error_code
-    equipment = error_code.equipment
-    search_query = engineer_query(error_code, question)
-
-    manual_hits = retriever.search(CitationKind.MANUAL, equipment, search_query, settings.manual_k, error_code.code)
-    history_hits = retriever.search(CitationKind.HISTORY, equipment, search_query, settings.history_k)
-    answer = _generate_engineer_answer(context, manual_hits + history_hits, request, cross_equipment=False)
+    hits = search_engineer_evidence(context, question, settings)
+    answer = _generate_engineer_answer(context, hits, request, cross_equipment=False)
     if answer.verdict == Verdict.ANSWERED:
         return answer
 

@@ -197,8 +197,8 @@
 | generator | `passes_check(answer: Answer, hits: list[SearchHit], equipment: Equipment, allow_other_equipment: bool = False) -> bool` | 고객 안내·엔지니어 답변의 인용을 검사한다(`allow_other_equipment`는 폴백 답변에서만 `True`) | —                                |
 | pipeline  | `run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Answer`                       | 고객 안내 처리 흐름을 실행한다            | ValidationError, DependencyError |
 | pipeline  | `run_engineer_answer(context: CaseContext, request: ChatRequest, settings: SearchSettings) -> Answer`   | 엔지니어 답변 처리 흐름을 실행한다        | ValidationError, DependencyError |
-| pipeline  | `customer_query(error_code: ErrorCode) -> str`                                                          | 고객 안내의 검색 질의(`<코드> <이름>`). 평가가 운영과 같은 질의로 검색하는 데 쓴다 | 없음 |
-| pipeline  | `engineer_query(error_code: ErrorCode, question: str) -> str`                                           | 엔지니어 1차 검색 질의(`<코드> <이름> <질문>`). 폴백은 질문 원문이다 | 없음 |
+| pipeline  | `search_customer_evidence(context: CaseContext, settings: SearchSettings) -> list[SearchHit]`           | 고객 안내의 근거 검색만 실행한다(`run_customer_guidance`가 쓴다). 평가가 생성 없이 같은 검색을 잰다 | ValidationError, DependencyError |
+| pipeline  | `search_engineer_evidence(context: CaseContext, question: str, settings: SearchSettings) -> list[SearchHit]` | 엔지니어 1차 근거 검색만 실행한다(`run_engineer_answer`가 쓴다). `question`은 공백을 지운 질문. 폴백은 `retriever.search`를 질문 원문·`equipment=None`으로 부른다 | ValidationError, DependencyError |
 | evaluate  | `run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]`                                 | 평가 문항을 실행하고 결과를 기록한다      | ValidationError, DependencyError |
 
 #### 2.3.3 UI·총괄 파트
