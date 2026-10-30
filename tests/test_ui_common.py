@@ -140,6 +140,37 @@ def test_format_answer_notice_is_hidden_by_default_and_shown_when_asked():
     assert shown.index("> 다른 설비") < shown.index("1. 점검한다.")
 
 
+# 목록 페이지네이션 ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("total", "pages"), [
+    (0, 1), (1, 1), (common.PAGE_SIZE, 1), (common.PAGE_SIZE + 1, 2), (common.PAGE_SIZE * 3, 3),
+])
+def test_page_count(total, pages):
+    assert common.page_count(total) == pages
+
+
+@pytest.mark.parametrize(("page", "total", "clamped"), [
+    (-1, 50, 0), (0, 50, 0), (2, 50, 2), (3, 50, 2), (99, 0, 0),
+])
+def test_clamp_page(page, total, clamped):
+    assert common.clamp_page(page, total) == clamped
+
+
+def test_page_slice_cuts_one_page_and_clamps():
+    rows = list(range(common.PAGE_SIZE + 5))
+    assert common.page_slice(rows, 0) == rows[:common.PAGE_SIZE]
+    assert common.page_slice(rows, 1) == rows[common.PAGE_SIZE:]  # 마지막 페이지는 남은 건만
+    assert common.page_slice(rows, 9) == rows[common.PAGE_SIZE:]  # 범위를 벗어나면 마지막 페이지
+    assert common.page_slice([], 0) == []
+
+
+def test_page_label_is_one_based():
+    assert common.page_label(0, 0) == "1 / 1"
+    assert common.page_label(1, common.PAGE_SIZE * 3) == "2 / 3"
+    assert common.page_label(7, common.PAGE_SIZE * 3) == "3 / 3"
+
+
 # `gr.HTML`에 넣는 박스는 입력을 이스케이프한다 ------------------------------------------
 
 
