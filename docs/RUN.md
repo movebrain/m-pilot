@@ -49,7 +49,6 @@ copy .env.example .env      # macOS·Linux: cp .env.example .env
 | `MYSQL_*` | 기본값(`mpilot`/`mpilot`) 그대로 두면 된다. 직접 설치한 MySQL에 다른 계정을 만들었다면 그 값 |
 | `DEMO_CUSTOMER_ID`·`DEMO_CUSTOMER_PASSWORD` | 고객 앱 로그인 계정(아무 값). 엔지니어 ID와 달라야 한다 |
 | `DEMO_ENGINEER_ID`·`DEMO_ENGINEER_PASSWORD` | 엔지니어 앱 로그인 계정(아무 값) |
-| `EVIDENCE_THRESHOLD` | 예시 값 `0.80` 그대로. 비우면 앱이 시작되지 않는다 |
 
 > `.env`는 커밋하지 않는다. 키를 코드·채팅·PR·스크린샷에 남기지 않는다.
 
@@ -163,7 +162,7 @@ B·C는 접수한 건이 메모리에만 있어서 종료하면 사라진다.
 | 증상 | 대응 |
 | --- | --- |
 | `Could not get FontBBox ...`만 계속 나온다 | 정상이다. PDF 파싱 중이다. 몇 분 기다린다 |
-| `앱을 시작하지 못했습니다. … (ValidationError)` | `.env` 값이 비었거나 형식이 틀렸다. `OPENAI_API_KEY`, `EVIDENCE_THRESHOLD`, `DEMO_*`를 확인한다 |
+| `앱을 시작하지 못했습니다. … (ValidationError)` | `.env` 값이 비었거나 형식이 틀렸다. `OPENAI_API_KEY`, `DEMO_*`를 확인한다 |
 | `앱을 시작하지 못했습니다. … (DependencyError)` | MySQL이 꺼져 있거나 접속 정보가 틀렸다. `init_db`를 안 했거나, OpenAI 키·네트워크 문제일 수도 있다 |
 | `init_db`가 접속 오류로 실패 | MySQL 서비스가 켜져 있는지, `.env`의 `MYSQL_*`와 1-3의 계정이 맞는지 확인한다 |
 | `ModuleNotFoundError: No module named 'mpilot'`(또는 `app`, `fake`) | 저장소 루트에서 실행하지 않았거나 venv가 꺼져 있다 |
