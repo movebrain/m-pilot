@@ -180,6 +180,43 @@ def test_신고_설비로_검색하고_설정한_건수를_넘긴다(fakes):
     ]
 
 
+# --- 검색 함수: run_*이 생성기에 넘기는 근거와 같다 ----------------------------
+def test_엔지니어_검색_함수는_1차_검색에서_생성기에_넘긴_근거와_같다(fakes):
+    fakes.manual_hits = [chunk_hit("manual:srm:6:1", "S-104"), chunk_hit("manual:srm:5:1", "S-999")]
+    settings = SearchSettings(manual_k=3, history_k=3)
+
+    searched = pipeline.search_engineer_evidence(make_context(), "위치가 어긋나요", settings)
+    ask("위치가 어긋나요", settings)
+
+    assert searched == [chunk_hit("manual:srm:6:1", "S-104"), "history-hit"]  # 다른 코드 청크는 빠지고 이력이 뒤에 붙는다
+    assert fakes.hits_seen == [searched]
+
+
+def test_엔지니어_폴백_검색_함수는_폴백에서_생성기에_넘긴_근거와_같고_설비로_거르지_않는다(fakes):
+    other = chunk_hit("manual:agv:5:1", "A-999")
+    fakes.manual_hits = [other]
+    fakes.generated_seq = [HOLD, ANSWERED]
+    settings = SearchSettings(manual_k=3, history_k=3)
+
+    searched = pipeline.search_engineer_fallback_evidence(QUESTION, settings)
+    ask(QUESTION, settings, equipment="AGV")
+
+    assert searched == [other, "history-hit"]  # 코드로 거르지 않는다
+    assert fakes.hits_seen[1] == searched
+    assert [(s[0], s[1]) for s in fakes.searches[-2:]] == [("manual", None), ("history", None)]
+
+
+def test_고객_안내_검색_함수는_생성기에_넘긴_근거와_같다(fakes):
+    fakes.manual_hits = [chunk_hit("manual:srm:6:1", "S-104"), chunk_hit("manual:srm:5:1", "S-999")]
+    settings = SearchSettings(manual_k=3, history_k=3)
+
+    searched = pipeline.search_customer_evidence(make_context(), settings)
+    ask_customer(settings=settings)
+
+    assert searched == [chunk_hit("manual:srm:6:1", "S-104")]
+    assert fakes.guidance_hits_seen == [searched]
+
+
 def test_다른_코드의_매뉴얼_청크는_빼고_설정한_건수만_남긴다(fakes):
     other = chunk_hit("manual:srm:5:1", "S-999")
     same = chunk_hit("manual:srm:6:1", "S-104")
