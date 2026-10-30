@@ -6,7 +6,7 @@
 책임:
     - 신고 정보는 `service.get_engineer_case`, 대화는 `service.list_chat_turns`·`service.send_chat_question`,
       출처 원문은 `service.get_citation_text`만 쓴다.
-    - 답변의 각 단계에 출처를 보여 주고 펼치면 원문을 보여 준다.
+    - 답변의 각 단계에 출처를 보여 주고 고르면 모달 팝업으로 원문을 보여 준다.
     - 근거 부족은 조치 없이 안내만 보여 주고, AI 오류(`DependencyError`)는 고정 문구로 안내한다.
     - 첫 질문에서 신고가 '조치 중'이 되는 것은 서비스가 처리하며 이 화면은 결과만 반영한다.
     - 완료된 건은 읽기 전용이다. 질문 입력·[질문 보내기]·[조치 결과 작성]을 숨기고 대화 기록과 조치 결과만 보인다.
@@ -37,24 +37,36 @@ EMPTY_CHAT_NOTICE = "아직 대화가 없습니다. 첫 질문을 보내면 신�
 COMPLETED_NO_CHAT_NOTICE = "AI 대화 없이 완료된 건입니다."
 """완료된 건에 대화가 없을 때 보이는 문구(시드 이력 포함). 더 질문할 수 없으므로 질문 안내를 하지 않는다."""
 
+NO_RESOLUTION_NOTICE = "아직 조치 이력이 없습니다."
+"""확정된 조치가 없을 때 접수 정보 아래에 보이는 문구."""
 
-def case_summary_markdown(detail: CaseDetail) -> str:
-    """신고 정보를 화면용 Markdown으로 만든다.
+RESOLUTION_BOX_COLOR = "#e0f2fe"
+"""조치 결과 박스 배경색(연한 하늘색). 접수 정보 박스(회색)와 구분한다."""
+
+
+def case_summary_html(detail: CaseDetail) -> str:
+    """신고 정보를 옅은 회색 박스 안에 `라벨 : 값` 줄로 세로 나열한 HTML로 만든다.
+
+    고객 신고 상세의 접수 정보 박스(`customer_report_detail.info_html`)와 같은 모양이다
+    (`common.info_box_html`).
 
     Args:
         detail: `service.get_engineer_case`가 돌려준 신고 상세.
 
     Returns:
-        str: 접수번호·설비·코드·에러명·심각도·상태·접수 시각·증상 메모를 담은 Markdown.
+        str: 접수번호·상태·설비·심각도·접수 시각·에러코드·증상 메모를 한 줄씩 담은 HTML.
     """
     case = detail.service_case
-    return "\n\n".join([
-        f"**접수번호** {case.case_id}",
-        f"**설비** {case.equipment} · **코드** {case.code} · **에러명** {detail.error_code.name}"
-        f" · **심각도** {detail.error_code.severity}",
-        f"**상태** {common.status_label(case.status)} · **접수 시각** {common.format_datetime(case.created_at)}",
-        f"**증상 메모** {case.memo or '-'}",
-    ])
+    fields = [
+        ("접수번호", case.case_id),
+        ("상태", common.status_label(case.status)),
+        ("설비", str(case.equipment)),
+        ("심각도", str(detail.error_code.severity)),
+        ("접수 시각", common.format_datetime(case.created_at)),
+        ("에러코드", f"{case.code} · {detail.error_code.name}"),
+        ("증상 메모", case.memo or "-"),
+    ]
+    return common.info_box_html(fields)
 
 
 def chat_markdown(turns: list[ChatTurn], completed: bool = False) -> str:
@@ -77,19 +89,21 @@ def chat_markdown(turns: list[ChatTurn], completed: bool = False) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
-def resolution_markdown(detail: CaseDetail) -> str:
-    """확정된 조치 결과를 화면용 Markdown으로 만든다. 엔지니어 화면이라 원인도 보인다.
+def resolution_html(detail: CaseDetail) -> str:
+    """확정된 조치 결과를 연한 하늘색 박스 안에 왼쪽 정렬로 담은 HTML로 만든다. 엔지니어 화면이라 원인도 보인다.
 
     Args:
         detail: 신고 상세.
 
     Returns:
-        str: 원인·조치 내용·결과를 담은 Markdown. 조치 결과가 없으면 빈 문자열.
+        str: 원인·조치 내용·결과를 담은 왼쪽 정렬 박스 HTML. 조치 결과가 없으면 `NO_RESOLUTION_NOTICE`만
+            담은 왼쪽 정렬 텍스트.
     """
     record = detail.resolution
     if record is None:
-        return ""
-    return f"### 조치 결과\n\n**원인** {record.cause}\n\n**조치 내용** {record.action}\n\n**결과** {record.result}"
+        return f'<div style="text-align:left">{NO_RESOLUTION_NOTICE}</div>'
+    fields = [("원인", record.cause), ("조치 내용", record.action), ("결과", record.result)]
+    return common.info_box_html(fields, color=RESOLUTION_BOX_COLOR, align="left", title="조치 결과")
 
 
 def citations_of(turns: list[ChatTurn]) -> list[Citation]:
@@ -134,18 +148,22 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
     """
     citations = gr.State([])  # 지금 보이는 대화의 출처 목록
     with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
-        gr.Markdown("## 장애 분석 대화")
-        summary = gr.Markdown()
-        chat = gr.Markdown()
-        resolution = gr.Markdown()  # 완료된 건의 조치 결과
-        source_pick = gr.Dropdown(choices=[], value=None, label="출처를 고르면 원문을 봅니다", visible=False)
-        with gr.Accordion("출처 원문", open=True, visible=False) as source_box:
-            source_text = gr.Textbox(show_label=False, lines=6, interactive=False)
-        question = gr.Textbox(label="질문", lines=3, max_length=QUESTION_MAX_LENGTH)
-        send_btn = gr.Button("질문 보내기", variant="primary")
-        with gr.Row():
-            back_btn = gr.Button("뒤로")
-            resolve_btn = gr.Button("조치 결과 작성")
+        with common.back_button_row("## 장애 분석 대화") as back_btn:
+            resolve_btn = gr.Button("조치 결과 작성", scale=0, min_width=140)
+        with gr.Row(equal_height=False, elem_classes=[common.WIDE_GAP_ROW_CLASS]):
+            with gr.Column(scale=4):  # 왼쪽: 신고 정보 + 조치 결과(확정 전엔 안내 문구)
+                summary = gr.HTML()
+                resolution = gr.HTML()
+            with gr.Column(scale=6):  # 오른쪽: 대화
+                chat = gr.Markdown()
+                source_pick = gr.Dropdown(choices=[], value=None, label="출처를 고르면 원문을 봅니다", visible=False)
+                question = gr.Textbox(label="질문", lines=3, max_length=QUESTION_MAX_LENGTH)
+                send_btn = gr.Button("질문 보내기", variant="primary")
+        with gr.Column(visible=False, elem_classes=[common.MODAL_OVERLAY_CLASS]) as source_box:
+            with gr.Column(elem_classes=[common.MODAL_CARD_CLASS]):
+                gr.Markdown("### 출처 원문")
+                source_text = gr.Textbox(show_label=False, lines=10, interactive=False)
+                source_close_btn = gr.Button("닫기")
 
     def load_case(selected: str | None):
         # 신고와 대화를 다시 읽어 화면 값을 만든다. 출력 순서는 refresh_outputs와 같다.
@@ -156,8 +174,8 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
         open_ = can_ask(detail)
         # 완료된 건은 읽기 전용: 질문 입력과 두 버튼을 숨긴다. send_btn은 잠금 해제 때문에 맨 끝에 둔다.
         return (
-            case_summary_markdown(detail), chat_markdown(turns, completed=not open_), resolution_markdown(detail),
-            gr.Dropdown(choices=choices, value=None, visible=bool(found)), gr.Accordion(visible=False), found,
+            case_summary_html(detail), chat_markdown(turns, completed=not open_), resolution_html(detail),
+            gr.Dropdown(choices=choices, value=None, visible=bool(found)), gr.Column(visible=False), found,
             gr.Textbox(visible=open_, interactive=open_), gr.Button(visible=open_),
             gr.Button(visible=open_, interactive=open_),
         )
@@ -195,20 +213,21 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
             return (gr.skip(),) * (len(refresh_outputs) - 1) + (gr.Button(interactive=True),)
 
     def on_source_pick(index: str | None, found: list[Citation]):
-        # 출처를 고르면 그 원문을 펼친다.
+        # 출처를 고르면 모달로 그 원문을 보여 준다.
         if index is None or index == "":
-            return gr.Accordion(visible=False), ""
+            return gr.Column(visible=False), ""
         try:
             text = service.get_citation_text(found[int(index)])
         except Exception as e:
             gr.Warning(common.error_message(e))
-            return gr.Accordion(visible=False), ""
-        return gr.Accordion(visible=True), text
+            return gr.Column(visible=False), ""
+        return gr.Column(visible=True), text
 
     screen.change(on_screen_change, inputs=[screen, case_id], outputs=[column, *refresh_outputs, screen])
     send_btn.click(lambda: gr.Button(interactive=False), outputs=send_btn).then(
         on_send, inputs=[case_id, question], outputs=question,
     ).then(on_after_send, inputs=case_id, outputs=refresh_outputs)
     source_pick.change(on_source_pick, inputs=[source_pick, citations], outputs=[source_box, source_text])
+    source_close_btn.click(lambda: gr.Column(visible=False), outputs=source_box)
     back_btn.click(lambda: common.SCREEN_ENGINEER_LIST, outputs=screen)
     resolve_btn.click(lambda: common.SCREEN_ENGINEER_RESOLVE, outputs=screen)

@@ -101,13 +101,18 @@ def build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: 
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
     with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
-        gr.Markdown("## 조치 이력 저장")
-        summary = gr.Markdown()
-        cause = gr.Textbox(label="실제 원인 (고객에게 공개되지 않습니다)", lines=3, max_length=FIELD_MAX_LENGTH)
-        action = gr.Textbox(label="실제 조치", lines=3, max_length=FIELD_MAX_LENGTH)
-        result = gr.Textbox(label="조치 결과", lines=3, max_length=FIELD_MAX_LENGTH)
+        with common.back_button_row("## 조치 이력 저장") as back_btn:
+            pass
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):  # 왼쪽: 신고 정보
+                gr.Markdown("### 신고 정보")
+                summary = gr.Markdown()
+            with gr.Column(scale=1):  # 오른쪽: 조치 결과 입력
+                gr.Markdown("### 조치 결과")
+                cause = gr.Textbox(label="실제 원인 (고객에게 공개되지 않습니다)", lines=3, max_length=FIELD_MAX_LENGTH)
+                action = gr.Textbox(label="실제 조치", lines=3, max_length=FIELD_MAX_LENGTH)
+                result = gr.Textbox(label="조치 결과", lines=3, max_length=FIELD_MAX_LENGTH)
         confirm_btn = gr.Button("조치 완료로 확정", variant="primary")
-        back_btn = gr.Button("뒤로")
 
     inputs = [cause, action, result]
 

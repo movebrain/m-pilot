@@ -39,27 +39,35 @@ GUIDE = Answer(verdict="answered", steps=[
 ], notice=None)
 
 
-def test_summary_shows_basic_fields():
-    text = detail.summary_markdown(_case(memo="충전 안 됨"))
+def test_info_html_shows_basic_fields():
+    text = detail.info_html(_case(memo="충전 안 됨"))
     for part in ["SC-1", "AGV", "A120", "배터리 저전압", "접수", "2026-10-27 10:00", "충전 안 됨"]:
         assert part in text
 
 
-def test_self_guide_box_shows_steps_citations_and_notice():
+def test_self_guide_box_shows_steps_and_citations():
     case = _case(status=CaseStatus.COMPLETED, guidance_answer=GUIDE)
-    text = detail.guide_markdown(case)
+    text = detail.guide_html(case)
     assert "충전 스테이션으로 복귀시킨다." in text
     assert "p.8 · 2.4 배터리" in text  # 출처는 표기로만 보인다
-    assert detail.SELF_GUIDE_NOTICE in text
+    assert "STEP 01" in text and "STEP 02" in text
     assert detail.result_markdown(case) == ""  # 안내는 박스에만 보인다
 
 
+def test_guide_steps_html_numbers_each_step():
+    html = detail.guide_steps_html(GUIDE)
+    assert html.count("STEP") == 2
+    assert "충전 중에는 이동하지 않는다." in html
+
+
 def test_engineer_case_has_no_guide_box():
-    assert detail.guide_markdown(_case()) == ""
+    assert detail.guide_html(_case()) == ""
 
 
-def test_engineer_case_before_completion_shows_waiting():
-    assert detail.result_markdown(_case()) == detail.WAITING_NOTICE
+def test_engineer_case_before_completion_shows_nothing_in_body():
+    # 기다림 문구는 맨 위 헤드라인 부제로 보이므로 본문엔 중복해 넣지 않는다.
+    assert detail.result_markdown(_case()) == ""
+    assert detail.WAITING_NOTICE in detail.status_header_html(_case())
 
 
 def test_engineer_case_after_completion_shows_action_and_result():
@@ -79,18 +87,27 @@ def _build(monkeypatch, case: CustomerCaseResult):
 
 
 def test_screen_has_no_source_viewer(monkeypatch):
+    # 출처를 고르는 Dropdown·원문을 펼치는 Accordion이 없다.
     demo, _ = _build(monkeypatch, _case())
     kinds = {type(b).__name__ for b in demo.blocks.values()}
-    assert not kinds & {"Dropdown", "Accordion", "Textbox"}  # 원문 보기 컴포넌트가 없다
+    assert not kinds & {"Dropdown", "Accordion"}
 
 
 def test_self_guide_case_opens_box(monkeypatch):
     _, on_screen_change = _build(monkeypatch, _case(guidance_answer=GUIDE))
-    _, _, box, guide, body, _ = on_screen_change(detail.SCREEN, "SC-1")
+    result = on_screen_change(detail.SCREEN, "SC-1")
+    box, guide, body = result[3], result[4], result[5]
     assert box.visible and "충전 스테이션으로 복귀시킨다." in guide and body == ""
 
 
 def test_engineer_case_hides_box(monkeypatch):
     _, on_screen_change = _build(monkeypatch, _case())
-    _, _, box, guide, body, _ = on_screen_change(detail.SCREEN, "SC-1")
-    assert not box.visible and guide == "" and body == detail.WAITING_NOTICE
+    result = on_screen_change(detail.SCREEN, "SC-1")
+    box, guide, body = result[3], result[4], result[5]
+    assert not box.visible and guide == "" and body == ""
+
+
+def test_status_header_reflects_case_state():
+    assert "접수" in detail.status_header_html(_case())
+    assert "셀프 가이드" in detail.status_header_html(_case(guidance_answer=GUIDE))
+    assert "완료" in detail.status_header_html(_case(status=CaseStatus.COMPLETED, action="휠 교체", result="정상 주행"))

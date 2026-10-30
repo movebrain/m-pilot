@@ -146,8 +146,9 @@ def test_select_empty_row_stays(monkeypatch):
 def test_screen_change_reloads_only_when_visible(monkeypatch):
     _, handlers, calls = _build(monkeypatch)
 
-    column, rows = handlers["on_screen_change"](dashboard.SCREEN, "completed")
-    assert column.visible and rows[0][0] == "SC-1" and calls == [CaseStatus.COMPLETED]
+    column, rows, label, page = handlers["on_screen_change"](dashboard.SCREEN, "completed")
+    assert column.visible and rows[0][0] == "SC-1" and page == 0 and calls == [CaseStatus.COMPLETED]
+    assert label == "1 / 1"
 
-    column, rows = handlers["on_screen_change"](dashboard.common.SCREEN_ENGINEER_CHAT, "")
+    column, rows, label, page = handlers["on_screen_change"](dashboard.common.SCREEN_ENGINEER_CHAT, "")
     assert not column.visible and rows == gr.skip() and calls == [CaseStatus.COMPLETED]

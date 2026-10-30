@@ -32,7 +32,7 @@ def test_fake_mode_skips_initialize(monkeypatch):
     called = []
 
     class FakeDemo:
-        def launch(self, server_port):
+        def launch(self, server_port, css=None):
             called.append(("launch", server_port))
 
     monkeypatch.setattr(app, "initialize", lambda: called.append("initialize"))

@@ -68,7 +68,7 @@ def _turn(no: int, *citations: Citation) -> ChatTurn:
 
 
 def test_case_summary_shows_case_fields():
-    text = chat.case_summary_markdown(_detail())
+    text = chat.case_summary_html(_detail())
     for expected in ("SC-1", "SRM", "S115", "리프트 엔코더 편차", "상", "조치 중", "2026-10-28 10:00"):
         assert expected in text
 
@@ -81,11 +81,11 @@ def test_chat_markdown_empty_and_order():
     assert "근거가 부족합니다." in text  # 근거 부족은 안내만 보인다
 
 
-def test_resolution_markdown_only_for_completed():
-    text = chat.resolution_markdown(_detail(CaseStatus.COMPLETED))
+def test_resolution_html_only_for_completed():
+    text = chat.resolution_html(_detail(CaseStatus.COMPLETED))
     for expected in ("엔코더 케이블 접촉 불량", "커넥터 재체결", "정상 동작 확인"):
         assert expected in text
-    assert chat.resolution_markdown(_detail()) == ""
+    assert chat.NO_RESOLUTION_NOTICE in chat.resolution_html(_detail())
 
 
 def test_citations_are_unique_in_order():
@@ -132,7 +132,7 @@ def test_enter_loads_case_and_chat(screen):
     column, summary, text, record, pick, box, found, question, resolve, send, next_screen = (
         screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
     )
-    assert column.visible and "SC-1" in summary and "질문1" in text and record == ""
+    assert column.visible and "SC-1" in summary and "질문1" in text and chat.NO_RESOLUTION_NOTICE in record
     assert pick.visible and found == [MANUAL]
     assert question.visible and question.interactive and resolve.visible and send.visible and send.interactive
     assert next_screen == gr.skip()
@@ -181,6 +181,6 @@ def test_after_send_reloads_and_unlocks(screen):
 
 def test_source_pick_shows_original(screen):
     box, text = screen["handlers"]["on_source_pick"]("0", [MANUAL])
-    assert box.visible and text == f"원문:{MANUAL.ref_id}"
+    assert isinstance(box, gr.Column) and box.visible and text == f"원문:{MANUAL.ref_id}"
     box, text = screen["handlers"]["on_source_pick"](None, [MANUAL])
     assert not box.visible and text == ""
