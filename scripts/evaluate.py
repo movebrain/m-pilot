@@ -11,6 +11,10 @@
       접수하므로, 고객에게 엔지니어 조치를 안내하지 않는 안전 장치를 시험한다).
     - 문항은 답변 가능(`expected=answered`, 정답 근거 `gold_ref_ids`가 있다)과 답변 불가
       (`expected=insufficient_evidence`, `gold_ref_ids=[]`)로 나뉜다.
+    - `state`가 문항의 성격을 더 나누며 `expected`를 정한다. 엔지니어 대화는 `own_code`·`own_common`·`own_history`
+      (신고 설비 자료), `other_code`·`other_common`(다른 설비 자료, 폴백 안내가 붙어야 한다), `none_code`·
+      `none_common`(4종 어디에도 근거 없음)이고 고객 안내는 `guided`·`not_guided`다. 결과 `summary`의 `by_state`에
+      상태별 결과 분류와 폴백 안내 기대에서 어긋난 건수를 센다(합격 조건이 아니다).
     - 지표와 합격선: 환각(답변 불가 문항 중 `answered`) 1건 이하, 엉뚱한 출처(답변 가능 문항 중 `answered`인데
       인용이 정답 근거 기준에 못 미침) 1건 이하, 정답 적중(답변 가능 문항 중 `answered`이고 인용이 정답 근거
       기준을 만족) 21건 이상. 과잉 보류(답변 가능 문항 중 보류)는 합격선이 없다. 정답 적중 21건은 초기 목표이며
@@ -39,6 +43,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,7 +72,22 @@ CUSTOMER = "customer_guidance"
 _PURPOSES = (ENGINEER, CUSTOMER)
 _LABELS = {ENGINEER: "엔지니어 대화", CUSTOMER: "고객 안내"}
 
-_COLUMNS = ["purpose", "equipment", "code", "question", "expected", "gold_ref_ids"]
+_COLUMNS = ["purpose", "equipment", "code", "question", "expected", "state", "gold_ref_ids"]
+
+# 문항 상태 → 기대 판정(spec §2.7). 엔지니어 대화는 자료 범위(own 신고 설비·other 다른 설비·none 4종 어디에도 없음)
+# × 질문 성격(code 에러코드 절·common 코드 없는 공통 본문·history 과거 이력), 고객 안내는 안내 가능 여부다.
+_STATES = {
+    ENGINEER: {
+        "own_code": Verdict.ANSWERED,
+        "own_common": Verdict.ANSWERED,
+        "own_history": Verdict.ANSWERED,
+        "other_code": Verdict.ANSWERED,
+        "other_common": Verdict.ANSWERED,
+        "none_code": Verdict.INSUFFICIENT_EVIDENCE,
+        "none_common": Verdict.INSUFFICIENT_EVIDENCE,
+    },
+    CUSTOMER: {"guided": Verdict.ANSWERED, "not_guided": Verdict.INSUFFICIENT_EVIDENCE},
+}
 
 MIN_ANSWERABLE = 30  # 답변 가능 문항 최소 수
 MIN_UNANSWERABLE = 20  # 답변 불가 문항 최소 수
@@ -95,7 +115,15 @@ class _Question:
     code: str
     question: str
     expected: Verdict
+    state: str
     gold_ref_ids: tuple[str, ...]
+
+
+def _expects_fallback(state: str) -> bool | None:
+    """상태가 기대하는 폴백 안내 여부. 다른 설비 자료로 답해야 하면 `True`, 신고 설비 자료로 답해야 하면 `False`, 답을 기대하지 않거나 폴백과 무관하면 `None`."""
+    if state.startswith("other_"):
+        return True
+    return False if state.startswith("own_") else None
 
 
 def _parse_gold(no: int, text: str) -> tuple[str, ...]:
@@ -160,6 +188,13 @@ def _read_questions(path: Path) -> list[_Question]:
             raise ValidationError(
                 f"{no}번째 행: expected는 answered 또는 insufficient_evidence여야 합니다: {values['expected']}"
             ) from None
+        state = values["state"]
+        if state not in _STATES[purpose]:
+            raise ValidationError(f"{no}번째 행: {purpose}의 state는 {', '.join(_STATES[purpose])} 중 하나여야 합니다: {state}")
+        if _STATES[purpose][state] != expected:
+            raise ValidationError(
+                f"{no}번째 행: state {state}의 expected는 {_STATES[purpose][state].value}여야 합니다: {expected.value}"
+            )
         gold = _parse_gold(no, values["gold_ref_ids"])
         if expected == Verdict.ANSWERED and not gold:
             raise ValidationError(f"{no}번째 행: 답변 가능(answered) 문항은 gold_ref_ids가 비어 있으면 안 됩니다.")
@@ -174,7 +209,7 @@ def _read_questions(path: Path) -> list[_Question]:
         if key in seen:
             raise ValidationError(f"{no}번째 행: 같은 목적·설비·코드·질문이 이미 있습니다.")
         seen.add(key)
-        questions.append(_Question(no, purpose, equipment, values["code"], values["question"], expected, gold))
+        questions.append(_Question(no, purpose, equipment, values["code"], values["question"], expected, state, gold))
     return questions
 
 
@@ -226,15 +261,36 @@ def _classify(question: _Question, answer: Answer | None) -> str:
     return "hit" if cited & gold else "wrong_source"
 
 
-def _summarize(questions: list[_Question], outcomes: list[str]) -> dict[str, object]:
+def _by_state(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
+    """상태별 문항 수와 결과 분류 건수. 합격 조건에는 쓰이지 않는다.
+
+    `fallback_mismatch`는 답한 문항 중 폴백 안내가 상태의 기대(`other_*` 있음, `own_*` 없음)와 어긋난 건수이며,
+    폴백과 무관한 상태는 `None`이다.
+    """
+    summary: dict[str, object] = {}
+    for state in (s for purpose in _PURPOSES for s in _STATES[purpose]):
+        picked = [(o, f) for q, o, f in zip(questions, outcomes, fallbacks) if q.state == state]
+        if not picked:
+            continue
+        expected = _expects_fallback(state)
+        summary[state] = {
+            "questions": len(picked),
+            "outcomes": dict(Counter(o for o, _ in picked)),
+            "fallback_mismatch": None if expected is None else sum(f is not None and f != expected for _, f in picked),
+        }
+    return summary
+
+
+def _summarize(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
     """문항별 결과 분류로 건수·합격선·합격 여부를 계산한다.
 
     Args:
         questions: 문항 목록.
         outcomes: `questions`와 같은 순서의 결과 분류.
+        fallbacks: `questions`와 같은 순서의 폴백 안내 여부(답하지 않았으면 `None`).
 
     Returns:
-        dict[str, object]: 건수, 지표별 `count`·`total`·합격선, `complete`, `passed`.
+        dict[str, object]: 건수, 지표별 `count`·`total`·합격선, `by_state`, `complete`, `passed`.
             `complete`가 거짓이면 `passed`는 `None`이다.
     """
     answerable = [o for q, o in zip(questions, outcomes) if q.expected == Verdict.ANSWERED]
@@ -255,16 +311,18 @@ def _summarize(questions: list[_Question], outcomes: list[str]) -> dict[str, obj
             "answerable": answerable.count("generation_failed"),
             "unanswerable": unanswerable.count("generation_failed"),
         },
+        "by_state": _by_state(questions, outcomes, fallbacks),
         "passed": passed if complete else None,
     }
 
 
-def _summarize_all(questions: list[_Question], outcomes: list[str]) -> dict[str, object]:
+def _summarize_all(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
     """목적별 요약과 전체 완료·합격 여부를 만든다.
 
     Args:
         questions: 문항 목록.
         outcomes: `questions`와 같은 순서의 결과 분류.
+        fallbacks: `questions`와 같은 순서의 폴백 안내 여부.
 
     Returns:
         dict[str, object]: 목적 이름(`engineer_chat`·`customer_guidance`)마다 `_summarize` 결과, 그리고 전체
@@ -272,8 +330,8 @@ def _summarize_all(questions: list[_Question], outcomes: list[str]) -> dict[str,
     """
     by_purpose = {}
     for purpose in _PURPOSES:
-        picked = [(q, o) for q, o in zip(questions, outcomes) if q.purpose == purpose]
-        by_purpose[purpose] = _summarize([q for q, _ in picked], [o for _, o in picked])
+        picked = [(q, o, f) for q, o, f in zip(questions, outcomes, fallbacks) if q.purpose == purpose]
+        by_purpose[purpose] = _summarize([q for q, _, _ in picked], [o for _, o, _ in picked], [f for _, _, f in picked])
     complete = all(s["complete"] for s in by_purpose.values())
     passed = all(s["passed"] for s in by_purpose.values())
     return {**by_purpose, "complete": complete, "passed": passed if complete else None}
@@ -316,6 +374,7 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
 
     results: list[dict[str, object]] = []
     outcomes: list[str] = []
+    fallbacks: list[bool | None] = []
     for question, context in zip(questions, contexts):
         answer: Answer | None = None
         error: str | None = None
@@ -330,6 +389,11 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
             error = str(e)
         outcome = _classify(question, answer)
         outcomes.append(outcome)
+        # 다른 설비 자료로 답했다는 고정 안내가 붙었는지(폴백). 답하지 않았으면 판단하지 않는다.
+        fallback_used = (
+            answer.notice == pipeline.CROSS_EQUIPMENT_NOTICE if answer and answer.verdict == Verdict.ANSWERED else None
+        )
+        fallbacks.append(fallback_used)
         results.append(
             {
                 "row": question.no,
@@ -338,8 +402,10 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
                 "code": question.code,
                 "question": question.question,
                 "expected": question.expected.value,
+                "state": question.state,
                 "gold_ref_ids": list(question.gold_ref_ids),
                 "verdict": answer.verdict.value if answer else None,
+                "fallback_used": fallback_used,
                 "cited_ref_ids": sorted(_cited_ref_ids(answer)) if answer else [],
                 "outcome": outcome,
                 "error": error,
@@ -357,7 +423,7 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
         },
         "settings": config.search.model_dump(),
         "results": results,
-        "summary": _summarize_all(questions, outcomes),
+        "summary": _summarize_all(questions, outcomes, fallbacks),
         "caveats": _CAVEATS,
     }
     try:
@@ -381,7 +447,7 @@ def _format_purpose(label: str, summary: dict[str, object]) -> list[str]:
             f"평가 미완료(답변 가능 {counts['answerable']}/{MIN_ANSWERABLE}, "
             f"답변 불가 {counts['unanswerable']}/{MIN_UNANSWERABLE})"
         )
-    return [
+    lines = [
         f"[{label}] {verdict}",
         f"  환각 {hallucination['count']}/{hallucination['total']}건 (한도 {hallucination['limit']})",
         f"  엉뚱한 출처 {wrong_source['count']}/{wrong_source['total']}건 (한도 {wrong_source['limit']})",
@@ -389,6 +455,11 @@ def _format_purpose(label: str, summary: dict[str, object]) -> list[str]:
         f"  과잉 보류 {over_hold['count']}/{over_hold['total']}건",
         f"  생성 실패 답변 가능 {failed['answerable']}건, 답변 불가 {failed['unanswerable']}건",
     ]
+    for state, s in summary["by_state"].items():
+        outcomes = ", ".join(f"{name} {n}" for name, n in s["outcomes"].items())
+        mismatch = "" if s["fallback_mismatch"] is None else f" (폴백 기대와 어긋남 {s['fallback_mismatch']}건)"
+        lines.append(f"  - {state} {s['questions']}건: {outcomes}{mismatch}")
+    return lines
 
 
 def _format_summary(summary: dict[str, object]) -> str:

@@ -50,9 +50,19 @@ def held() -> Answer:
     return Answer(verdict=Verdict.INSUFFICIENT_EVIDENCE, steps=[], notice="근거가 부족합니다.")
 
 
-def write_csv(path, rows, header=None):
-    """rows: (설비, 코드, 질문, expected, gold 목록[, 목적]) 튜플의 목록. 목적을 생략하면 엔지니어 대화다.
+# 시험이 state를 따로 주지 않을 때 쓰는 기본 상태(목적, expected → state)
+DEFAULT_STATE = {
+    (ENG, "answered"): "own_code",
+    (ENG, "insufficient_evidence"): "none_code",
+    (CUS, "answered"): "guided",
+    (CUS, "insufficient_evidence"): "not_guided",
+}
 
+
+def write_csv(path, rows, header=None):
+    """rows: (설비, 코드, 질문, expected, gold 목록[, 목적[, state]]) 튜플의 목록. 목적을 생략하면 엔지니어 대화다.
+
+    state를 생략하면 목적과 expected에 맞는 기본 상태(`DEFAULT_STATE`)를 쓴다.
     고객 안내 행의 질문 자리는 신고 증상 메모다.
     """
     with path.open("w", encoding="utf-8", newline="") as f:
@@ -60,8 +70,18 @@ def write_csv(path, rows, header=None):
         writer.writerow(header or evaluate._COLUMNS)
         for equipment, code, question, expected, gold, *rest in rows:
             purpose = rest[0] if rest else ENG
+            # purpose·expected가 틀린 행도 그 값의 오류가 먼저 나도록 state는 채워 둔다.
+            state = rest[1] if len(rest) > 1 else DEFAULT_STATE.get((purpose, expected), "own_code")
             writer.writerow(
-                [purpose, equipment, code, question, expected, gold if isinstance(gold, str) else json.dumps(gold)]
+                [
+                    purpose,
+                    equipment,
+                    code,
+                    question,
+                    expected,
+                    state,
+                    gold if isinstance(gold, str) else json.dumps(gold),
+                ]
             )
     return path
 
@@ -267,6 +287,52 @@ def test_고객_안내_문항의_질문은_증상_메모로_넘기고_비우면_
     assert memos == ["모터에서 소리가 난다", None]
 
 
+# --- 문항 상태(state) ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "row, message",
+    [
+        (("SRM", CODE, "q", "answered", [GOLD], ENG, "guided"), "engineer_chat의 state는"),  # 고객 안내 상태
+        (("SRM", CODE, "q", "answered", [GOLD], CUS, "own_code"), "customer_guidance의 state는"),  # 엔지니어 상태
+        (("SRM", CODE, "q", "answered", [GOLD], ENG, ""), "빈 값"),
+        (("SRM", CODE, "q", "answered", [GOLD], ENG, "none_code"), "expected는 insufficient_evidence"),
+        (("SRM", CODE, "q", "insufficient_evidence", [], ENG, "other_code"), "expected는 answered"),
+        (("SRM", CODE, "m", "answered", [GOLD], CUS, "not_guided"), "expected는 insufficient_evidence"),
+    ],
+)
+def test_state가_목적에_없거나_expected와_맞지_않으면_ValidationError(tmp_path, row, message):
+    with pytest.raises(ValidationError, match=f"1번째 행.*{message}"):
+        run(tmp_path, [row])
+
+
+def test_상태별로_결과_분류를_세고_폴백_안내가_기대와_어긋난_건수를_센다(tmp_path, behavior):
+    fallback = answered(GOLD).model_copy(update={"notice": evaluate.pipeline.CROSS_EQUIPMENT_NOTICE})
+    rows = [
+        ("SRM", CODE, "신고 설비로 답함", "answered", [GOLD], ENG, "own_code"),
+        ("SRM", CODE, "불필요한 폴백", "answered", [GOLD], ENG, "own_common"),
+        ("SRM", CODE, "폴백으로 답함", "answered", [GOLD], ENG, "other_code"),
+        ("SRM", CODE, "폴백 안내 없음", "answered", [GOLD], ENG, "other_common"),
+        ("SRM", CODE, "근거 없음", "insufficient_evidence", [], ENG, "none_common"),
+    ]
+    behavior.update(
+        {"신고 설비로 답함": answered(GOLD), "불필요한 폴백": fallback, "폴백으로 답함": fallback,
+         "폴백 안내 없음": answered(GOLD), "근거 없음": held()}
+    )
+
+    result = run(tmp_path, rows)
+
+    by_state = result["summary"][ENG]["by_state"]
+    assert list(by_state) == ["own_code", "own_common", "other_code", "other_common", "none_common"]
+    assert by_state["own_code"] == {"questions": 1, "outcomes": {"hit": 1}, "fallback_mismatch": 0}
+    assert by_state["own_common"]["fallback_mismatch"] == 1  # 신고 설비 자료로 답해야 하는데 폴백을 썼다
+    assert by_state["other_code"]["fallback_mismatch"] == 0
+    assert by_state["other_common"]["fallback_mismatch"] == 1  # 다른 설비 자료로 답했는데 안내가 없다
+    assert by_state["none_common"] == {"questions": 1, "outcomes": {"correct_hold": 1}, "fallback_mismatch": None}
+    assert [r["fallback_used"] for r in result["results"]] == [False, True, True, False, None]
+    assert [r["state"] for r in result["results"]][:2] == ["own_code", "own_common"]
+
+
 def test_답변_불가_고객_안내_문항은_후보가_아닌_코드도_된다(tmp_path, behavior, traits):
     traits["severity"] = "상"  # 엔지니어 필요 코드를 고객 안내 흐름에 직접 넣어 안전 장치를 시험한다
     behavior["메모"] = held()
@@ -462,7 +528,7 @@ def test_문항이_없으면_거부한다(tmp_path):
 def test_열_개수가_다른_행은_거부한다(tmp_path):
     path = tmp_path / "q.csv"
     path.write_text(
-        "purpose,equipment,code,question,expected,gold_ref_ids\nengineer_chat,SRM,S-104,q,answered\n",
+        "purpose,equipment,code,question,expected,state,gold_ref_ids\nengineer_chat,SRM,S-104,q,answered,own_code\n",
         encoding="utf-8",
     )
     with pytest.raises(ValidationError, match="1번째 행.*열 개수"):
