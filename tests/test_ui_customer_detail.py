@@ -50,14 +50,13 @@ def test_self_guide_box_shows_steps_and_citations():
     text = detail.guide_html(case)
     assert "충전 스테이션으로 복귀시킨다." in text
     assert "p.8 · 2.4 배터리" in text  # 출처는 표기로만 보인다
-    assert "STEP 01" in text and "STEP 02" in text
+    assert "1. 충전 스테이션으로 복귀시킨다." in text and "2. 충전 중에는 이동하지 않는다." in text
     assert detail.result_markdown(case) == ""  # 안내는 박스에만 보인다
 
 
-def test_guide_steps_html_numbers_each_step():
+def test_guide_steps_html_numbers_each_step_in_order():
     html = detail.guide_steps_html(GUIDE)
-    assert html.count("STEP") == 2
-    assert "충전 중에는 이동하지 않는다." in html
+    assert html.index("1. 충전 스테이션으로 복귀시킨다.") < html.index("2. 충전 중에는 이동하지 않는다.")
 
 
 def test_engineer_case_has_no_guide_box():
@@ -83,28 +82,57 @@ def _build(monkeypatch, case: CustomerCaseResult):
             gr.State(Role.CUSTOMER), gr.State("SC-1"), gr.State(common.SCREEN_CUSTOMER_LIST),
         )
     handlers = {f.fn.__name__: f.fn for f in demo.fns.values()}
-    return demo, handlers["on_screen_change"]
+    return demo, handlers["on_screen_change"], handlers["on_action_taken"]
 
 
 def test_screen_has_no_source_viewer(monkeypatch):
     # 출처를 고르는 Dropdown·원문을 펼치는 Accordion이 없다.
-    demo, _ = _build(monkeypatch, _case())
+    demo, _, _ = _build(monkeypatch, _case())
     kinds = {type(b).__name__ for b in demo.blocks.values()}
     assert not kinds & {"Dropdown", "Accordion"}
 
 
 def test_self_guide_case_opens_box(monkeypatch):
-    _, on_screen_change = _build(monkeypatch, _case(guidance_answer=GUIDE))
+    _, on_screen_change, _ = _build(monkeypatch, _case(guidance_answer=GUIDE))
     result = on_screen_change(detail.SCREEN, "SC-1")
-    box, guide, body = result[3], result[4], result[5]
-    assert box.visible and "충전 스테이션으로 복귀시킨다." in guide and body == ""
+    box, guide, result_box, body = result[3], result[4], result[5], result[6]
+    assert box.visible and "충전 스테이션으로 복귀시킨다." in guide and not result_box.visible and body == ""
 
 
 def test_engineer_case_hides_box(monkeypatch):
-    _, on_screen_change = _build(monkeypatch, _case())
+    _, on_screen_change, _ = _build(monkeypatch, _case())
     result = on_screen_change(detail.SCREEN, "SC-1")
-    box, guide, body = result[3], result[4], result[5]
-    assert not box.visible and guide == "" and body == ""
+    box, guide, result_box, body = result[3], result[4], result[5], result[6]
+    assert not box.visible and guide == "" and not result_box.visible and body == ""
+
+
+def test_engineer_case_after_completion_shows_result_box(monkeypatch):
+    _, on_screen_change, _ = _build(monkeypatch, _case(status=CaseStatus.COMPLETED, action="휠 교체", result="정상 주행"))
+    result = on_screen_change(detail.SCREEN, "SC-1")
+    result_box, body = result[5], result[6]
+    assert result_box.visible and "휠 교체" in body
+
+
+def test_self_guide_case_shows_support_and_resolve_buttons(monkeypatch):
+    # 셀프 가이드 건은 [확인] 대신 [기술지원접수]·[해결완료] 두 버튼을 보인다.
+    _, on_screen_change, _ = _build(monkeypatch, _case(guidance_answer=GUIDE))
+    result = on_screen_change(detail.SCREEN, "SC-1")
+    confirm_btn, support_btn, resolve_btn = result[7], result[8], result[9]
+    assert not confirm_btn.visible and support_btn.visible and resolve_btn.visible
+
+
+def test_engineer_case_shows_confirm_button_only(monkeypatch):
+    _, on_screen_change, _ = _build(monkeypatch, _case())
+    result = on_screen_change(detail.SCREEN, "SC-1")
+    confirm_btn, support_btn, resolve_btn = result[7], result[8], result[9]
+    assert confirm_btn.visible and not support_btn.visible and not resolve_btn.visible
+
+
+def test_action_taken_swaps_to_confirm_button(monkeypatch):
+    # [기술지원접수]·[해결완료] 중 아무 쪽을 눌러도 그 자리가 [확인] 버튼으로 바뀐다.
+    _, _, on_action_taken = _build(monkeypatch, _case(guidance_answer=GUIDE))
+    confirm_btn, support_btn, resolve_btn = on_action_taken()
+    assert confirm_btn.visible and not support_btn.visible and not resolve_btn.visible
 
 
 def test_status_header_reflects_case_state():
