@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 import gradio as gr
 
@@ -718,11 +719,12 @@ def info_box_html(
         title: 박스 맨 위에 둘 제목. 없으면 생략한다.
 
     Returns:
-        str: 최대 너비 300px인 박스 HTML.
+        str: 최대 너비 300px인 박스 HTML. `title`·`label`·`value`는 이스케이프되어 들어간다.
     """
-    heading = f'<div style="font-weight:700;margin-bottom:8px">{title}</div>' if title else ""
+    # `gr.HTML`은 내용을 정화하지 않는다. 고객 메모·엔지니어 입력이 들어오므로 값마다 이스케이프한다.
+    heading = f'<div style="font-weight:700;margin-bottom:8px">{escape(title)}</div>' if title else ""
     rows = "".join(
-        f'<div style="margin:3px 0"><span style="color:#71717a">{label}</span> : {value}</div>'
+        f'<div style="margin:3px 0"><span style="color:#71717a">{escape(label)}</span> : {escape(value)}</div>'
         for label, value in fields
     )
     return (

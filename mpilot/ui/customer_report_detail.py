@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 import gradio as gr
 
 from mpilot import service
@@ -100,7 +102,8 @@ def guide_steps_html(answer: Answer) -> str:
     color = common.CUSTOMER_ACCENT
     columns = []
     for no, step in enumerate(answer.steps, start=1):
-        sources = ", ".join(common.citation_label(c) for c in step.citations)
+        # 단계 문구는 LLM이 만든 값이라 `gr.HTML`에 넣기 전에 이스케이프한다.
+        sources = escape(", ".join(common.citation_label(c) for c in step.citations))
         source_html = f'<div style="font-size:11px;opacity:.6;margin-top:4px">{sources}</div>' if sources else ""
         columns.append(
             f'<div style="flex:1 1 0;min-width:120px;max-width:{STEP_COLUMN_WIDTH}px;text-align:center">'
@@ -108,7 +111,7 @@ def guide_steps_html(answer: Answer) -> str:
             f'border:2px solid {color};display:flex;align-items:center;justify-content:center;'
             f'margin:0 auto;font-weight:700;color:{color}">{no}</div>'
             f'<div style="font-size:12px;font-weight:700;color:{color};margin-top:8px">STEP {no:02d}</div>'
-            f'<div style="font-size:14px;margin-top:4px">{step.text}</div>'
+            f'<div style="font-size:14px;margin-top:4px">{escape(step.text)}</div>'
             f"{source_html}</div>"
         )
     arrow = '<div style="flex:0 0 auto;color:#a1a1aa;font-size:20px;padding-top:10px">›</div>'

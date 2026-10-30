@@ -138,3 +138,18 @@ def test_format_answer_notice_is_hidden_by_default_and_shown_when_asked():
     shown = common.format_answer_markdown(answer, show_notice=True)
     assert shown.startswith("> 다른 설비 자료를 포함했습니다.")
     assert shown.index("> 다른 설비") < shown.index("1. 점검한다.")
+
+
+# `gr.HTML`에 넣는 박스는 입력을 이스케이프한다 ------------------------------------------
+
+
+def test_info_box_html_escapes_label_value_and_title():
+    payload = "<img src=x onerror=alert(1)>"
+    box = common.info_box_html([(payload, payload)], title=payload)
+    assert "<img" not in box
+    assert box.count("&lt;img src=x onerror=alert(1)&gt;") == 3
+
+
+def test_info_box_html_keeps_plain_text_and_ampersand():
+    box = common.info_box_html([("증상 메모", "전압 < 20V & 정지")])
+    assert "전압 &lt; 20V &amp; 정지" in box
