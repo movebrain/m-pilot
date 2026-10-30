@@ -189,7 +189,7 @@ def test_엔지니어_문항_하나씩_결과를_분류하고_건수로_센다(t
     assert summary["wrong_source"]["count"] == 1
     assert summary["over_hold"]["count"] == 1
     assert summary["hallucination"] == {"count": 1, "total": 3, "limit": 1}
-    assert summary["generation_failed"] == {"answerable": 1, "unanswerable": 1}
+    assert summary["generation_failed"] == {"answerable": 1, "unanswerable": 1, "limit": 1}
 
 
 def test_생성_실패는_메시지를_남기고_다음_문항을_계속한다(tmp_path, behavior):
@@ -232,7 +232,7 @@ def test_고객_안내_문항은_고객_안내_pipeline으로_실행하고_결�
     behavior.update({
         "일부만인용": answered(GOLD),
         "전부인용": answered(GOLD, GOLD2),
-        "정답과섞임": answered(GOLD, OTHER),  # 정답이 있어도 정답 밖 인용이 섞이면 엉뚱한 출처다
+        "정답과섞임": answered(GOLD, OTHER),
         "엉뚱": answered(OTHER),
         "보류됨": held(),
         "가능실패": DependencyError("모델 장애"),
@@ -244,29 +244,32 @@ def test_고객_안내_문항은_고객_안내_pipeline으로_실행하고_결�
 
     outcomes = {r["question"]: r["outcome"] for r in result["results"]}
     assert outcomes == {
-        "일부만인용": "hit", "전부인용": "hit", "정답과섞임": "wrong_source", "엉뚱": "wrong_source",
+        "일부만인용": "hit", "전부인용": "hit", "정답과섞임": "hit", "엉뚱": "wrong_source",
         "보류됨": "over_hold", "가능실패": "generation_failed", "환각": "hallucination",
         "올바른보류": "correct_hold",
     }
     assert all(r["purpose"] == CUS for r in result["results"])
     summary = result["summary"][CUS]
     assert summary["counts"] == {"answerable": 6, "unanswerable": 2}
-    assert summary["hit"]["count"] == 2 and summary["wrong_source"]["count"] == 2
+    assert summary["hit"]["count"] == 3 and summary["wrong_source"]["count"] == 1
     assert summary["over_hold"]["count"] == 1 and summary["hallucination"]["count"] == 1
-    assert summary["generation_failed"] == {"answerable": 1, "unanswerable": 0}
+    assert summary["generation_failed"] == {"answerable": 1, "unanswerable": 0, "limit": 1}
     assert result["summary"][ENG]["counts"] == {"answerable": 0, "unanswerable": 0}
 
 
-def test_같은_인용이라도_고객_안내만_정답_밖_인용을_엉뚱한_출처로_센다(tmp_path, behavior):
+def test_두_목적_모두_정답이_하나라도_인용되면_적중이고_없으면_엉뚱한_출처다(tmp_path, behavior):
     rows = [
         ("SRM", CODE, "엔지니어", "answered", [GOLD], ENG),
         ("SRM", CODE, "고객", "answered", [GOLD], CUS),
+        ("SRM", CODE, "고객 정답 없음", "answered", [GOLD], CUS),
     ]
-    behavior.update({"엔지니어": answered(GOLD, OTHER), "고객": answered(GOLD, OTHER)})
+    behavior.update(
+        {"엔지니어": answered(GOLD, OTHER), "고객": answered(GOLD, OTHER), "고객 정답 없음": answered(OTHER)}
+    )
 
-    outcomes = {r["purpose"]: r["outcome"] for r in run(tmp_path, rows)["results"]}
+    outcomes = [r["outcome"] for r in run(tmp_path, rows)["results"]]
 
-    assert outcomes == {ENG: "hit", CUS: "wrong_source"}
+    assert outcomes == ["hit", "hit", "wrong_source"]
 
 
 def test_고객_안내_문항의_질문은_증상_메모로_넘기고_비우면_None이다(tmp_path, behavior, monkeypatch):
@@ -388,10 +391,10 @@ def test_환각_한도는_목적마다_1건이다(tmp_path, behavior):
 def test_엉뚱한_출처_한도는_목적마다_1건이다(tmp_path, behavior):
     rows = full_set(behavior)
     behavior["가능0"] = answered(OTHER)
-    behavior["고객가능0"] = answered(GOLD, OTHER)  # 고객 안내는 정답과 섞여도 엉뚱한 출처다
+    behavior["고객가능0"] = answered(OTHER)
     assert run(tmp_path, rows)["summary"]["passed"] is True
 
-    behavior["고객가능1"] = answered(GOLD, OTHER)
+    behavior["고객가능1"] = answered(OTHER)
     summary = run(tmp_path, rows)["summary"]
     assert summary["passed"] is False and summary[CUS]["wrong_source"]["count"] == 2
 
@@ -409,7 +412,7 @@ def test_정답_적중은_목적마다_21건_이상이어야_한다(tmp_path, be
     assert summary["passed"] is False
 
 
-def test_생성_실패는_환각도_적중도_아니다(tmp_path, behavior):
+def test_생성_실패는_환각도_적중도_아니고_목적마다_1건까지_합격이다(tmp_path, behavior):
     rows = full_set(behavior)
     behavior["불가0"] = DependencyError("장애")
     behavior["고객불가0"] = DependencyError("장애")
@@ -419,7 +422,8 @@ def test_생성_실패는_환각도_적중도_아니다(tmp_path, behavior):
     assert summary[ENG]["hallucination"]["count"] == 0 and summary[CUS]["hallucination"]["count"] == 0
     assert summary[ENG]["generation_failed"]["unanswerable"] == 1
     assert summary[CUS]["generation_failed"]["unanswerable"] == 2
-    assert summary["passed"] is True
+    assert summary[ENG]["passed"] is True and summary[CUS]["passed"] is False  # 지어낸 인용도 생성 실패라 한도를 둔다
+    assert summary["passed"] is False
 
 
 def test_문항이_모자라면_합격_여부를_판정하지_않는다(tmp_path, behavior):

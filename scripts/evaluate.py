@@ -19,12 +19,11 @@
       인용이 정답 근거 기준에 못 미침) 1건 이하, 정답 적중(답변 가능 문항 중 `answered`이고 인용이 정답 근거
       기준을 만족) 21건 이상. 과잉 보류(답변 가능 문항 중 보류)는 합격선이 없다. 정답 적중 21건은 초기 목표이며
       실측값이 아니다.
-    - 정답 근거 기준: 엔지니어 대화는 인용에 `gold_ref_ids`가 하나라도 있으면 만족한다. 고객 안내는 고객이
-      수행할 수 있는 절차만 담아야 하므로 인용이 모두 `gold_ref_ids` 안에 있어야 만족한다.
+    - 정답 근거 기준: 두 목적 모두 인용에 `gold_ref_ids`가 하나라도 있으면 만족한다.
     - 목적별로 답변 가능 30개·답변 불가 20개에 못 미치면 합격 여부를 판정하지 않는다(평가 미완료). 전체 합격은
       두 목적이 모두 합격일 때다(두 목적이 같은 `manual_k`를 공유한다).
     - 생성 실패(`DependencyError`)는 별도로 센다. 답변 가능 문항에서는 정답 적중이 아니고, 답변 불가 문항에서는
-      환각이 아니다.
+      환각이 아니다. 지어낸 인용(인용 검증 실패)도 생성 실패라서 목적마다 1건 이하여야 합격이다.
     - 기록 항목: `versions`(모델 이름, 프롬프트·문항 파일 해시), `settings`(검색 설정), `results`(문항별 판정·인용·
       결과 분류), `summary`(건수·합격선·합격 여부), `caveats`(작은 표본 해석 주의).
     - 후보 `manual_k`·`history_k`(`.env`의 `MANUAL_K`·`HISTORY_K`)마다 따로 실행한다. 결과 파일이 설정을 함께 남긴다.
@@ -94,11 +93,11 @@ MIN_UNANSWERABLE = 20  # 답변 불가 문항 최소 수
 MAX_HALLUCINATION = 1  # 환각 허용 건수
 MAX_WRONG_SOURCE = 1  # 엉뚱한 출처 허용 건수
 MIN_HIT = 21  # 정답 적중 최소 건수(답변 가능 30개의 70%, 초기 목표)
+MAX_GENERATION_FAILED = 1  # 생성 실패 허용 건수(지어낸 인용이 여기로 오므로 환각과 같은 한도)
 
 _CAVEATS = [
     "합격선은 이 문항 안의 결정 규칙이며 실제 환각률의 보증이 아니다.",
     "k 선택과 합격 판정에 같은 문항을 쓰므로 수치가 실제보다 낙관적이다.",
-    "고객 안내는 인용이 모두 정답 근거 안에 있어야 적중이고, 엔지니어 대화는 하나라도 있으면 적중이다.",
 ]
 
 
@@ -254,11 +253,7 @@ def _classify(question: _Question, answer: Answer | None) -> str:
         return "hallucination" if answered else "correct_hold"
     if not answered:
         return "over_hold"
-    cited, gold = _cited_ref_ids(answer), set(question.gold_ref_ids)
-    if question.purpose == CUSTOMER:
-        # 고객은 수행할 수 없는 절차를 인용받으면 위험하므로 인용이 모두 정답 근거 안에 있어야 한다.
-        return "hit" if cited and cited <= gold else "wrong_source"
-    return "hit" if cited & gold else "wrong_source"
+    return "hit" if _cited_ref_ids(answer) & set(question.gold_ref_ids) else "wrong_source"
 
 
 def _by_state(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
@@ -298,8 +293,14 @@ def _summarize(questions: list[_Question], outcomes: list[str], fallbacks: list[
     hallucination = unanswerable.count("hallucination")
     wrong_source = answerable.count("wrong_source")
     hit = answerable.count("hit")
+    failed = outcomes.count("generation_failed")
     complete = len(answerable) >= MIN_ANSWERABLE and len(unanswerable) >= MIN_UNANSWERABLE
-    passed = hallucination <= MAX_HALLUCINATION and wrong_source <= MAX_WRONG_SOURCE and hit >= MIN_HIT
+    passed = (
+        hallucination <= MAX_HALLUCINATION
+        and wrong_source <= MAX_WRONG_SOURCE
+        and hit >= MIN_HIT
+        and failed <= MAX_GENERATION_FAILED
+    )
     return {
         "complete": complete,
         "counts": {"answerable": len(answerable), "unanswerable": len(unanswerable)},
@@ -310,6 +311,7 @@ def _summarize(questions: list[_Question], outcomes: list[str], fallbacks: list[
         "generation_failed": {
             "answerable": answerable.count("generation_failed"),
             "unanswerable": unanswerable.count("generation_failed"),
+            "limit": MAX_GENERATION_FAILED,
         },
         "by_state": _by_state(questions, outcomes, fallbacks),
         "passed": passed if complete else None,
@@ -453,7 +455,7 @@ def _format_purpose(label: str, summary: dict[str, object]) -> list[str]:
         f"  엉뚱한 출처 {wrong_source['count']}/{wrong_source['total']}건 (한도 {wrong_source['limit']})",
         f"  정답 적중 {hit['count']}/{hit['total']}건 (최소 {hit['minimum']})",
         f"  과잉 보류 {over_hold['count']}/{over_hold['total']}건",
-        f"  생성 실패 답변 가능 {failed['answerable']}건, 답변 불가 {failed['unanswerable']}건",
+        f"  생성 실패 답변 가능 {failed['answerable']}건, 답변 불가 {failed['unanswerable']}건 (합계 한도 {failed['limit']})",
     ]
     for state, s in summary["by_state"].items():
         outcomes = ", ".join(f"{name} {n}" for name, n in s["outcomes"].items())
