@@ -25,6 +25,20 @@ def test_case_rows_follow_headers_and_labels():
     assert row == ["SC-1a2b3c4d", "Mini Loader", "E-101", "포크 위치 센서 오감지", "조치 중", "2026-10-25 10:00"]
 
 
+def test_row_status_label_marks_self_guide_completion():
+    from mpilot.models import Answer
+
+    guide = Answer(verdict="answered", steps=[], notice=None)
+    self_guided = _result("SC-1", CaseStatus.COMPLETED)
+    self_guided = self_guided.model_copy(update={"guidance_answer": guide})
+    assert dashboard.row_status_label(self_guided) == dashboard.SELF_GUIDE_COMPLETED_LABEL
+
+
+def test_row_status_label_keeps_normal_label_for_engineer_completion():
+    assert dashboard.row_status_label(_result("SC-1", CaseStatus.COMPLETED)) == "조치 완료"
+    assert dashboard.row_status_label(_result("SC-1", CaseStatus.IN_PROGRESS)) == "조치 중"
+
+
 def test_load_rows_passes_filter(monkeypatch):
     seen = []
     monkeypatch.setattr(
