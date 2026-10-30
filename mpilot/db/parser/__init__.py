@@ -12,6 +12,8 @@
     - 구성 요소에 `:`가 들어 있으면 적재 오류로 본다.
     - DB·벡터 저장소에는 접근하지 않는다. 색인 생성은 `vectordb`가 맡는다.
     - 이미지 페이지 OCR(`set_vision_model` 등)은 현재 매뉴얼 4종에 이미지 페이지가 없어 파일 끝에 주석으로 보류해 두었다.
+    - PDF·parser 코드가 그대로면 지난 실행의 청크 목록을 디스크 캐시에서 불러와 파싱을 건너뛴다(#161, `cache` 모듈).
+      재현성 덕분에 캐시에서 불러온 결과와 새로 파싱한 결과는 같다. 테스트는 `_CACHE_ENABLED`를 꺼서 캐시를 쓰지 않는다.
 
 청크 ID 구성 요소의 출처(#43에서 정함):
     매뉴얼의 표지를 뺀 모든 쪽 우측 하단 꼬리글은 아래 형식이다.
@@ -33,6 +35,7 @@
     - `text`: 꼬리글 읽기, 쪽별 본문 추출(#79), 절 나누기·텍스트 초안(#80)
     - `tables`: 표 추출·검증·표 초안
     - `chunks`: 청크 번호 매기기, 청크 ID 중복 검사(#81)
+    - `cache`: 청크 목록의 디스크 캐시(#161)
     - `ocr`: [보류] 이미지 페이지 OCR(주석)
     `parse_manuals`가 쓰는 하위 모듈 함수는 이 모듈 이름공간에서 찾으므로, 테스트가 바꿔 끼울 때는
     `mpilot.db.parser`(이 패키지)에 해야 효과가 있다.
@@ -46,6 +49,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from mpilot.db.parser.cache import _cache_file, _load_chunks, _save_chunks
 from mpilot.db.parser.chunks import _check_unique_chunk_ids, _number_chunks
 from mpilot.db.parser.tables import _extract_tables, _table_to_drafts
 from mpilot.db.parser.text import (
@@ -59,11 +63,15 @@ from mpilot.models import Chunk, Equipment, ValidationError
 
 __all__ = ["parse_manuals"]
 
+_CACHE_ENABLED = True  # 디스크 캐시 사용 여부. 테스트는 PDF 읽기를 가짜로 바꾸므로 꺼 둔다(tests/conftest.py)
+
 
 def parse_manuals(directory: Path) -> list[Chunk]:
     """매뉴얼 PDF를 출처가 붙은 검색 단위로 분해한다.
 
     PDF마다(파일 이름순) 표 추출 → 표 영역을 뺀 쪽별 본문 → 절 나누기 → 텍스트·표 초안 → 번호 매기기 순으로 잇는다.
+    PDF·`parser` 소스·`pdfplumber` 버전이 지난 실행과 같으면 파싱하지 않고 디스크 캐시(매뉴얼 폴더 옆 `cache/`)의
+    청크 목록을 돌려준다. 캐시가 없거나 깨졌으면 파싱한 뒤 새로 저장한다.
     `manual_id`·`version`은 꼬리글에서 읽은 `PageText`에서, 설비는 문서번호의 설비 코드로 정한다.
     이미지 페이지 OCR 초안은 OCR을 보류한 동안 넣지 않는다(`ocr` 모듈의 주석을 풀 때 여기에 더한다).
 
@@ -79,9 +87,35 @@ def parse_manuals(directory: Path) -> list[Chunk]:
             ID 구성 요소에 `:`가 있을 때, 청크 ID가 겹칠 때.
         DependencyError: PDF를 읽거나 파싱하는 데 실패했을 때.
     """
+    pdf_paths = _list_pdf_files(directory)  # 파일 이름순이라 늘 같은 순서로 돈다
+    cache_file = _cache_file(directory, pdf_paths) if _CACHE_ENABLED else None  # 입력 지문이 이름에 든 캐시 파일
+    if cache_file is not None:
+        cached = _load_chunks(cache_file)  # 없거나 깨졌으면 None
+        if cached is not None:
+            return cached  # PDF·parser가 그대로라 파싱 결과도 같다
+    chunks = _parse_pdfs(pdf_paths)
+    if cache_file is not None:
+        _save_chunks(cache_file, chunks)  # 저장에 실패해도 오류를 내지 않는다
+    return chunks
+
+
+def _parse_pdfs(pdf_paths: list[Path]) -> list[Chunk]:
+    """매뉴얼 PDF들을 실제로 읽어 청크 목록을 만든다(캐시를 거치지 않는 본래 흐름).
+
+    Args:
+        pdf_paths: 파싱할 PDF 경로. `_list_pdf_files`가 돌려준 파일 이름순 목록.
+
+    Returns:
+        list[Chunk]: `parse_manuals`가 돌려주는 것과 같은 청크 목록.
+
+    Raises:
+        ValidationError: 설비를 알 수 없을 때, 같은 설비 매뉴얼이 두 개일 때, ID 구성 요소에 `:`가 있을 때,
+            청크 ID가 겹칠 때.
+        DependencyError: PDF를 읽거나 파싱하는 데 실패했을 때.
+    """
     chunks: list[Chunk] = []  # 돌려줄 청크(매뉴얼 파일 이름순, 매뉴얼 안에서는 위치순)
     files_by_equipment: dict[Equipment, str] = {}  # 설비 → 그 설비 매뉴얼 파일 이름. 같은 설비 중복 확인용
-    for pdf_path in _list_pdf_files(directory):  # 파일 이름순이라 늘 같은 순서로 돈다
+    for pdf_path in pdf_paths:
         tables = _extract_tables(pdf_path)  # 표를 먼저 뽑아야 본문에서 표 영역을 뺄 수 있다
         page_texts = _extract_page_texts(pdf_path, tables)  # 표지를 뺀 쪽별 본문. 꼬리글이 하나도 없으면 여기서 ValidationError
         manual_id, version = page_texts[0].manual_id, page_texts[0].version  # 모든 쪽이 같은 값임을 _extract_page_texts가 확인했다
