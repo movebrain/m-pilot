@@ -23,6 +23,9 @@ from mpilot.models import (
     DependencyError,
     Equipment,
     GuideFailure,
+    InvalidStateError,
+    NotFoundError,
+    Resolution,
     Route,
     Source,
     ValidationError,
@@ -142,15 +145,15 @@ def test_save_support_case_rejects_unknown_guide_failure(rdb):
 # ---------------------------------------------------------------------------
 
 
-def test_save_self_guide_case_stores_completed(rdb):
+def test_save_self_guide_case_stores_in_progress(rdb):
     detail = rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, ANSWERED)
 
     case = detail.service_case
-    assert (case.source, case.route, case.status) == (Source.REPORTED, Route.SELF_GUIDE, CaseStatus.COMPLETED)
+    assert (case.source, case.route, case.status) == (Source.REPORTED, Route.SELF_GUIDE, CaseStatus.IN_PROGRESS)
     assert case.guide_failure is None
     assert case.guidance_answer == ANSWERED  # 내용·단계·출처가 그대로 되돌아온다
     assert_recent_utc(case.created_at)
-    assert case.completed_at == case.created_at
+    assert case.completed_at is None  # 완료는 고객이 해결완료를 확인할 때다
     assert detail.resolution is None
 
 
@@ -185,6 +188,72 @@ def test_save_self_guide_case_rejects_held_answer(rdb):
     with pytest.raises(ValidationError):
         rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, HELD)
     assert count_rows(rdb, service_cases) == 0
+
+
+# ---------------------------------------------------------------------------
+# resolve_self_guide_case / escalate_self_guide_case
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_self_guide_case_completes_and_records_time(rdb):
+    rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, ANSWERED)
+
+    case = rdb.resolve_self_guide_case("SC-0000BBBB").service_case
+
+    assert (case.route, case.status, case.guide_failure) == (Route.SELF_GUIDE, CaseStatus.COMPLETED, None)
+    assert case.guidance_answer == ANSWERED
+    assert_recent_utc(case.completed_at)
+    assert case.completed_at >= case.created_at
+    assert rdb.fetch_case_detail("SC-0000BBBB").service_case == case
+
+
+def test_escalate_self_guide_case_moves_to_support_and_keeps_in_progress(rdb):
+    rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, ANSWERED)
+
+    detail = rdb.escalate_self_guide_case("SC-0000BBBB")
+
+    case = detail.service_case
+    assert (case.route, case.status, case.guide_failure) == (
+        Route.SUPPORT, CaseStatus.IN_PROGRESS, GuideFailure.UNRESOLVED
+    )
+    assert case.guidance_answer == ANSWERED  # 고객에게 보여 준 안내는 남긴다
+    assert case.completed_at is None and detail.resolution is None
+    assert rdb.fetch_case_detail("SC-0000BBBB") == detail
+
+
+def test_escalated_case_accepts_chat_and_resolution_then_becomes_history(rdb):
+    rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, ANSWERED)
+    rdb.escalate_self_guide_case("SC-0000BBBB")
+
+    rdb.save_chat_turn("SC-0000BBBB", "질문", ANSWERED)
+    done = rdb.save_confirmed_resolution("SC-0000BBBB", Resolution(cause="원인", action="조치", result="결과"))
+
+    assert (done.service_case.route, done.service_case.status) == (Route.SUPPORT, CaseStatus.COMPLETED)
+    assert [d.service_case.case_id for d in rdb.fetch_resolved_cases()] == ["SC-0000BBBB"]
+
+
+@pytest.mark.parametrize("answer", ["resolve_self_guide_case", "escalate_self_guide_case"])
+def test_self_guide_answer_is_one_shot(rdb, answer):
+    rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, ANSWERED)
+    rdb.resolve_self_guide_case("SC-0000BBBB")
+    with pytest.raises(InvalidStateError):
+        getattr(rdb, answer)("SC-0000BBBB")
+
+
+def test_escalated_case_cannot_be_resolved_as_self_guide(rdb):
+    rdb.save_self_guide_case("SC-0000BBBB", SRM_S101, ANSWERED)
+    rdb.escalate_self_guide_case("SC-0000BBBB")
+    with pytest.raises(InvalidStateError):
+        rdb.resolve_self_guide_case("SC-0000BBBB")
+
+
+@pytest.mark.parametrize("answer", ["resolve_self_guide_case", "escalate_self_guide_case"])
+def test_self_guide_answer_rejects_support_case_and_unknown_id(rdb, answer):
+    rdb.save_support_case("SC-0000AAAA", SRM_S101, None)
+    with pytest.raises(InvalidStateError):
+        getattr(rdb, answer)("SC-0000AAAA")
+    with pytest.raises(NotFoundError):
+        getattr(rdb, answer)("SC-없음")
 
 
 # ---------------------------------------------------------------------------

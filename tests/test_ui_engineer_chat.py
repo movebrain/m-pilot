@@ -19,6 +19,7 @@ from mpilot.models import (
     DependencyError,
     Equipment,
     ErrorCode,
+    GuideFailure,
     NotFoundError,
     Role,
     Resolution,
@@ -43,11 +44,16 @@ HISTORY = Citation(kind=CitationKind.HISTORY, ref_id="history:SEED-1", locator="
 RESOLUTION = Resolution(cause="엔코더 케이블 접촉 불량", action="커넥터 재체결", result="정상 동작 확인")
 
 
-def _detail(status=CaseStatus.IN_PROGRESS) -> CaseDetail:
+GUIDE = Answer(
+    verdict=Verdict.ANSWERED, steps=[AnswerStep(text="커넥터 상태를 확인한다.", citations=[MANUAL])], notice=None,
+)
+
+
+def _detail(status=CaseStatus.IN_PROGRESS, route=Route.SUPPORT, guide_failure=None, guidance_answer=None) -> CaseDetail:
     return CaseDetail(
         service_case=ServiceCase(
             case_id="SC-1", equipment=Equipment.SRM, code="S115", memo=None, source=Source.REPORTED,
-            status=status, route=Route.SUPPORT, guide_failure=None, guidance_answer=None, created_at=_NOW,
+            status=status, route=route, guide_failure=guide_failure, guidance_answer=guidance_answer, created_at=_NOW,
             completed_at=_NOW if status == CaseStatus.COMPLETED else None,
         ),
         error_code=_CODE,
@@ -80,7 +86,8 @@ def test_chat_state_of_dumps_turns_to_plain_dicts():
     assert state["completed"] is True
     assert [t["question"] for t in state["turns"]] == ["질문1", "질문2"]
     assert state["turns"][0]["answer"]["steps"][0]["citations"][0]["ref_id"] == MANUAL.ref_id
-    assert chat.chat_state_of([], completed=False) == {"turns": [], "completed": False}
+    assert chat.chat_state_of([], completed=False) == {"turns": [], "completed": False, "waiting_customer": False}
+    assert chat.chat_state_of([], False, waiting_customer=True)["waiting_customer"] is True
 
 
 def test_resolution_html_only_for_completed():
@@ -104,10 +111,21 @@ def test_citation_source_text_joins_label_and_body_in_order(monkeypatch):
     assert text.index(MANUAL.ref_id) < text.index(HISTORY.ref_id)
 
 
-def test_can_ask_only_before_completed():
+def test_can_ask_only_for_open_support_cases():
     assert chat.can_ask(_detail(CaseStatus.RECEIVED))
     assert chat.can_ask(_detail(CaseStatus.IN_PROGRESS))
     assert not chat.can_ask(_detail(CaseStatus.COMPLETED))
+    # 고객 확인 전 셀프 가이드 건은 이관(route=support) 전까지 읽기 전용이다.
+    assert not chat.can_ask(_detail(CaseStatus.IN_PROGRESS, Route.SELF_GUIDE, None, GUIDE))
+    assert not chat.can_ask(_detail(CaseStatus.COMPLETED, Route.SELF_GUIDE, None, GUIDE))
+    # [기술지원접수]으로 이관된 건은 조치 중이라 질문할 수 있다.
+    assert chat.can_ask(_detail(CaseStatus.IN_PROGRESS, Route.SUPPORT, GuideFailure.UNRESOLVED, GUIDE))
+
+
+def test_guide_box_html_shows_steps_only_when_guide_was_given():
+    assert chat.guide_box_html(_detail()) == ""
+    text = chat.guide_box_html(_detail(CaseStatus.IN_PROGRESS, Route.SELF_GUIDE, None, GUIDE))
+    assert "고객 안내(셀프 가이드)" in text and "1. 커넥터 상태를 확인한다." in text
 
 
 # 화면 핸들러 ------------------------------------------------------------------------
@@ -164,7 +182,25 @@ def test_enter_completed_case_is_read_only(screen):
 def test_enter_completed_case_without_chat(screen):
     screen["detail"], screen["turns"] = _detail(CaseStatus.COMPLETED), []
     _, _, state, *_ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
-    assert state == {"turns": [], "completed": True}
+    assert state == {"turns": [], "completed": True, "waiting_customer": False}
+
+
+def test_enter_pending_self_guide_is_read_only_with_guide(screen):
+    # 고객이 아직 해결 여부를 누르지 않은 셀프 가이드 건: 열리지만 질문은 못 하고 안내 단계가 보인다.
+    screen["detail"] = _detail(CaseStatus.IN_PROGRESS, Route.SELF_GUIDE, None, GUIDE)
+    screen["turns"] = []
+    _, _, state, record, *_, question, resolve, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
+    assert state == {"turns": [], "completed": False, "waiting_customer": True}
+    assert "커넥터 상태를 확인한다." in record
+    assert question.visible and not question.interactive and not resolve.visible and not send.interactive
+
+
+def test_enter_escalated_case_allows_chat(screen):
+    screen["detail"] = _detail(CaseStatus.IN_PROGRESS, Route.SUPPORT, GuideFailure.UNRESOLVED, GUIDE)
+    _, _, state, record, *_, question, resolve, send, _ = screen["handlers"]["on_screen_change"](chat.SCREEN, "SC-1")
+    assert state["completed"] is False and state["waiting_customer"] is False
+    assert "커넥터 상태를 확인한다." in record  # 이관된 건도 고객이 받은 안내를 함께 본다
+    assert question.interactive and resolve.visible and send.interactive
 
 
 def test_enter_unknown_case_goes_back(screen):

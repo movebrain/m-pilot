@@ -9,8 +9,10 @@
     - 답변의 각 단계에 출처 표기와 [원문보기] 버튼을 나란히 보이고, 누르면 모달 팝업으로 원문을 보여 준다.
     - 근거 부족은 조치 없이 안내만 보여 주고, AI 오류(`DependencyError`)는 고정 문구로 안내한다.
     - 첫 질문에서 신고가 '조치 중'이 되는 것은 서비스가 처리하며 이 화면은 결과만 반영한다.
-    - 완료된 건은 읽기 전용이다. [조치 결과 작성]은 숨기고, 질문 입력창·[전송]은 화면 구조를 그대로
-      유지하기 위해 숨기지 않고 비활성화만 한다. 완료 후 채팅·재개는 범위 밖이다.
+    - 완료된 건과 고객 확인 전 셀프 가이드 건은 읽기 전용이다. [조치 결과 작성]은 숨기고, 질문 입력창·[전송]은
+      화면 구조를 그대로 유지하기 위해 숨기지 않고 비활성화만 한다. 완료 후 채팅·재개는 범위 밖이다.
+      고객이 [기술지원접수]으로 이관(`route=support`)한 건은 조치 중이므로 질문할 수 있다.
+    - 셀프 가이드를 받은 건은 고객에게 나간 안내 단계를 조치 결과 박스 아래에 보여 준다.
     - 질문 전송 중에는 버튼을 비활성화한다.
 
 화면 전환: 대화 → 이력 저장(조치 결과 작성) / 대시보드(뒤로).
@@ -23,8 +25,9 @@ from __future__ import annotations
 import gradio as gr
 
 from mpilot import service
-from mpilot.models import Answer, CaseDetail, CaseStatus, ChatTurn, Citation, NotFoundError, Verdict
+from mpilot.models import Answer, CaseDetail, CaseStatus, ChatTurn, Citation, NotFoundError, Route, Verdict
 from mpilot.ui import common
+from mpilot.ui.customer_report_detail import guide_steps_html
 
 SCREEN = common.SCREEN_ENGINEER_CHAT
 
@@ -36,6 +39,9 @@ EMPTY_CHAT_NOTICE = "아직 대화가 없습니다. 첫 질문을 보내면 신�
 
 COMPLETED_NO_CHAT_NOTICE = "AI 대화 없이 완료된 건입니다."
 """완료된 건에 대화가 없을 때 보이는 문구(시드 이력 포함). 더 질문할 수 없으므로 질문 안내를 하지 않는다."""
+
+SELF_GUIDE_WAITING_NOTICE = "고객이 셀프 가이드를 확인하고 있습니다. 고객이 기술지원접수를 누르면 이 대화를 쓸 수 있습니다."
+"""고객 확인 전 셀프 가이드 건에 대화가 없을 때 보이는 문구."""
 
 RESOLUTION_BOX_COLOR = "#e0f2fe"
 """조치 결과 박스 배경색(연한 하늘색). 접수 정보 박스(회색)와 구분한다."""
@@ -72,7 +78,7 @@ def case_summary_html(detail: CaseDetail) -> str:
     return common.info_box_html(fields, max_width=INFO_BOX_MAX_WIDTH)
 
 
-def chat_state_of(turns: list[ChatTurn], completed: bool) -> dict:
+def chat_state_of(turns: list[ChatTurn], completed: bool, waiting_customer: bool = False) -> dict:
     """대화 기록 렌더링(`render_chat`)에 넘길 상태를 만든다.
 
     `gr.render`는 바뀌었는지 보려고 입력 상태를 해시하는데, `ChatTurn`처럼 `list` 필드를 가진 pydantic
@@ -82,12 +88,13 @@ def chat_state_of(turns: list[ChatTurn], completed: bool) -> dict:
     Args:
         turns: 오래된 순 대화 목록.
         completed: 완료된 건이면 `True`. 대화가 없을 때 보일 문구만 달라진다.
+        waiting_customer: 고객 확인 전 셀프 가이드 건이면 `True`. 대화가 없을 때 보일 문구만 달라진다.
 
     Returns:
-        dict: `{"turns": [턴마다 model_dump() 결과], "completed": ...}`.
+        dict: `{"turns": [턴마다 model_dump() 결과], "completed": ..., "waiting_customer": ...}`.
             `gr.render`의 입력 `gr.State` 값으로 그대로 쓴다.
     """
-    return {"turns": [turn.model_dump() for turn in turns], "completed": completed}
+    return {"turns": [turn.model_dump() for turn in turns], "completed": completed, "waiting_customer": waiting_customer}
 
 
 def resolution_html(detail: CaseDetail) -> str:
@@ -120,9 +127,28 @@ def can_ask(detail: CaseDetail) -> bool:
         detail: 신고 상세.
 
     Returns:
-        bool: 완료되지 않은 건이면 `True`. 완료 건(셀프 가이드 건 포함)은 `False`.
+        bool: 완료되지 않은 엔지니어 처리 건(`support`)이면 `True`. 완료 건과 고객 확인 전 셀프 가이드 건은 `False`.
     """
-    return detail.service_case.status != CaseStatus.COMPLETED
+    case = detail.service_case
+    return case.status != CaseStatus.COMPLETED and case.route == Route.SUPPORT
+
+
+def guide_box_html(detail: CaseDetail) -> str:
+    """고객에게 나간 셀프 가이드 단계를 조치 결과 박스 아래에 둘 HTML로 만든다.
+
+    Args:
+        detail: 신고 상세.
+
+    Returns:
+        str: 셀프 가이드를 받은 건은 제목과 단계가 든 박스 HTML. 받지 않은 건은 빈 문자열.
+    """
+    answer = detail.service_case.guidance_answer
+    if answer is None:
+        return ""
+    return (
+        f'<div style="margin-top:12px;background:#f4f4f5;border-radius:8px;padding:16px;text-align:left">'
+        f'<div style="font-weight:700">고객 안내(셀프 가이드)</div>{guide_steps_html(answer)}</div>'
+    )
 
 
 def citation_source_text(citations: list[Citation]) -> str:
@@ -168,7 +194,13 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
                         # 턴은 chat_state_of()가 평범한 dict로 바꿔 둔 것이라, 여기서 Answer로 되살린다.
                         turns: list[dict] = state["turns"]
                         if not turns:
-                            gr.Markdown(COMPLETED_NO_CHAT_NOTICE if state["completed"] else EMPTY_CHAT_NOTICE)
+                            if state["completed"]:
+                                notice = COMPLETED_NO_CHAT_NOTICE
+                            elif state["waiting_customer"]:
+                                notice = SELF_GUIDE_WAITING_NOTICE
+                            else:
+                                notice = EMPTY_CHAT_NOTICE
+                            gr.Markdown(notice)
                             return
                         for no, turn in enumerate(turns, start=1):
                             if no > 1:
@@ -219,11 +251,14 @@ def build_engineer_chat_screen(role: gr.State, case_id: gr.State, screen: gr.Sta
         detail = service.get_engineer_case(selected or "")
         turns = service.list_chat_turns(selected or "")
         open_ = can_ask(detail)
-        # 완료된 건은 읽기 전용: 질문 입력창·전송 버튼은 그대로 두고 비활성화만 한다(화면 구조를 신고
+        completed = detail.service_case.status == CaseStatus.COMPLETED
+        waiting_customer = not open_ and not completed
+        # 완료된 건과 고객 확인 전 셀프 가이드 건은 읽기 전용: 질문 입력창·전송 버튼은 그대로 두고 비활성화만 한다(화면 구조를 신고
         # 상태와 상관없이 그대로 유지하기 위해 숨기지 않는다). [조치 결과 작성]만 숨긴다.
         # send_btn은 잠금 해제 때문에 맨 끝에 둔다. 신고를 새로 불러올 때마다 열려 있던 원문 모달은 닫는다.
         return (
-            case_summary_html(detail), chat_state_of(turns, completed=not open_), resolution_html(detail),
+            case_summary_html(detail), chat_state_of(turns, completed, waiting_customer),
+            resolution_html(detail) + guide_box_html(detail),
             gr.Column(visible=False), "",
             gr.Textbox(visible=True, interactive=open_), gr.Button(visible=open_),
             gr.Button(visible=True, interactive=open_),

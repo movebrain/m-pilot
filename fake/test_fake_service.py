@@ -61,7 +61,7 @@ def resolution(result: str = "정상 동작 확인") -> Resolution:
 def test_public_functions_match_service_signatures():
     # service의 공개 함수(spec §2.3.3)가 모두 같은 시그니처로 있어야 install로 바꿔 끼울 수 있다.
     names = fake_service.public_function_names(service)
-    assert len(names) == 12  # CHG-01로 login이 빠졌다
+    assert len(names) == 14  # CHG-01로 login이 빠지고 resolve_self_guide·request_support가 들어왔다
     for name in names:
         assert inspect.signature(getattr(fake_service, name)) == inspect.signature(getattr(service, name))
 
@@ -104,7 +104,9 @@ def test_seed_history_is_completed_support_with_resolution():
 def test_sample_cases_cover_allowed_combinations():
     reported = [d.service_case for d in fake_service.list_engineer_cases() if d.service_case.source == Source.REPORTED]
     combos = {(c.route, c.guide_failure, c.status) for c in reported}
-    assert (Route.SELF_GUIDE, None, CaseStatus.COMPLETED) in combos
+    assert (Route.SELF_GUIDE, None, CaseStatus.IN_PROGRESS) in combos  # 고객 확인 전
+    assert (Route.SELF_GUIDE, None, CaseStatus.COMPLETED) in combos  # 해결완료
+    assert (Route.SUPPORT, GuideFailure.UNRESOLVED, CaseStatus.IN_PROGRESS) in combos  # 기술지원접수로 이관
     assert (Route.SUPPORT, None, CaseStatus.RECEIVED) in combos
     assert (Route.SUPPORT, None, CaseStatus.IN_PROGRESS) in combos
     assert (Route.SUPPORT, GuideFailure.HELD, CaseStatus.RECEIVED) in combos
@@ -165,7 +167,7 @@ def test_submit_customer_code_becomes_self_guide():
     case_id = fake_service.submit_case(CaseInput(equipment=code.equipment, code=code.code, memo=None))
     assert case_id.startswith("SC-") and len(case_id) == 11
     case = fake_service.get_engineer_case(case_id).service_case
-    assert (case.route, case.status, case.guide_failure) == (Route.SELF_GUIDE, CaseStatus.COMPLETED, None)
+    assert (case.route, case.status, case.guide_failure) == (Route.SELF_GUIDE, CaseStatus.IN_PROGRESS, None)
     cited = {c.ref_id for s in case.guidance_answer.steps for c in s.citations}
     assert cited == {f"error:{code.equipment}:{code.code}"}  # 코드 표 행을 인용한다
 
@@ -178,6 +180,41 @@ def test_submit_engineer_code_goes_to_support():
         None,
         None,
     )
+
+
+def self_guide_case_id() -> str:
+    code = first_code(candidate=True)
+    return fake_service.submit_case(CaseInput(equipment=code.equipment, code=code.code, memo=None))
+
+
+def test_resolve_self_guide_completes_case():
+    case_id = self_guide_case_id()
+    fake_service.resolve_self_guide(case_id)
+    case = fake_service.get_engineer_case(case_id).service_case
+    assert (case.route, case.status, case.guide_failure) == (Route.SELF_GUIDE, CaseStatus.COMPLETED, None)
+    assert case.completed_at is not None
+
+
+def test_request_support_escalates_and_keeps_in_progress():
+    case_id = self_guide_case_id()
+    fake_service.request_support(case_id)
+    case = fake_service.get_engineer_case(case_id).service_case
+    assert (case.route, case.status, case.guide_failure) == (Route.SUPPORT, CaseStatus.IN_PROGRESS, GuideFailure.UNRESOLVED)
+    assert case.guidance_answer is not None  # 고객이 받은 안내는 남는다
+    fake_service.send_chat_question(case_id, "질문")  # 이관된 뒤에는 엔지니어가 질문할 수 있다
+
+
+@pytest.mark.parametrize("name", ["resolve_self_guide", "request_support"])
+def test_self_guide_answers_are_one_shot(name):
+    case_id = self_guide_case_id()
+    fake_service.resolve_self_guide(case_id)
+    with pytest.raises(InvalidStateError):
+        getattr(fake_service, name)(case_id)
+
+
+def test_pending_self_guide_blocks_engineer_chat():
+    with pytest.raises(InvalidStateError):
+        fake_service.send_chat_question(self_guide_case_id(), "질문")
 
 
 @pytest.mark.parametrize(("memo", "failure"), [("[held]", GuideFailure.HELD), ("[fail]", GuideFailure.GENERATION_FAILED)])

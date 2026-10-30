@@ -30,6 +30,7 @@ from mpilot.models import (
     Equipment,
     ErrorCode,
     GuideFailure,
+    InvalidStateError,
     NotFoundError,
     Resolution,
     Route,
@@ -108,6 +109,41 @@ def get_customer_case(case_id: str) -> CustomerCaseResult:
     if case.source != Source.REPORTED:
         raise NotFoundError(f"접수번호 {case_id}을(를) 찾을 수 없습니다.")
     return _to_customer_result(store, case)
+
+
+def resolve_self_guide(case_id: str) -> None:
+    """고객이 셀프 가이드로 해결됐다고 확인한 건을 완료로 바꾼다.
+
+    Raises:
+        NotFoundError: 접수번호가 없거나 시드 이력일 때.
+        InvalidStateError: 확인을 기다리는 셀프 가이드 건이 아닐 때.
+    """
+    store = _get_store()
+    case = _pending_self_guide(store, case_id)
+    store.cases[case_id] = case.model_copy(update={"status": CaseStatus.COMPLETED, "completed_at": datetime.now()})
+
+
+def request_support(case_id: str) -> None:
+    """고객이 해결되지 않았다고 한 셀프 가이드 건을 엔지니어 처리 건으로 이관한다(조치 중 유지).
+
+    Raises:
+        NotFoundError: 접수번호가 없거나 시드 이력일 때.
+        InvalidStateError: 확인을 기다리는 셀프 가이드 건이 아닐 때.
+    """
+    store = _get_store()
+    case = _pending_self_guide(store, case_id)
+    store.cases[case_id] = case.model_copy(
+        update={"route": Route.SUPPORT, "guide_failure": GuideFailure.UNRESOLVED}
+    )
+
+
+def _pending_self_guide(store: _Store, case_id: str) -> ServiceCase:
+    """고객 확인을 기다리는 셀프 가이드 건(`self_guide`·`in_progress`)을 꺼낸다. 시드 이력은 고객에게 없는 건이다."""
+    get_customer_case(case_id)
+    case = _get_case(store, case_id)
+    if case.route != Route.SELF_GUIDE or case.status != CaseStatus.IN_PROGRESS:
+        raise InvalidStateError("이미 처리된 셀프 가이드 건")
+    return case
 
 
 def list_error_codes(equipment: Equipment) -> list[ErrorCode]:
@@ -210,12 +246,12 @@ def send_chat_question(case_id: str, question: str) -> None:
     Raises:
         ValidationError: 질문 길이가 범위를 벗어날 때.
         NotFoundError: 접수번호가 없을 때.
-        InvalidStateError: 이미 완료된 건일 때.
+        InvalidStateError: 이미 완료된 건이거나 이관 전 셀프 가이드 건일 때.
         DependencyError: 질문에 [fail]이 있을 때.
     """
     store = _get_store()
     case = _get_case(store, case_id)
-    raise_if_case_completed(case)  # 완료 건은 질문 불가
+    raise_if_case_completed(case)  # 완료 건·이관 전 셀프 가이드 건은 질문 불가
     question = question.strip()
     if not 1 <= len(question) <= 2000:
         raise ValidationError("질문은 1~2,000자로 입력해 주세요.")
@@ -377,9 +413,21 @@ def _add_sample_reported_cases(store: _Store) -> None:
         ("SC-mock0004", customer, f"{_MOCK} 가이드 보류 예시 [held]", 3),
         ("SC-mock0005", customer, f"{_MOCK} 가이드 생성 실패 예시 [fail]", 2),
         ("SC-mock0006", engineer, f"{_MOCK} 조치 완료 예시", 1),
+        ("SC-mock0007", customer, f"{_MOCK} 셀프 가이드 해결완료 예시", 7),
+        ("SC-mock0008", customer, f"{_MOCK} 셀프 가이드 기술지원접수(이관) 예시", 8),
     ]
     for case_id, error_code, memo, hours_ago in samples:
         store.cases[case_id] = _new_reported_case(case_id, error_code, memo, now - timedelta(hours=hours_ago))
+
+    # 0007: 고객이 해결완료를 눌러 완료, 0008: 기술지원접수를 눌러 엔지니어 처리 건으로 이관(조치 중 유지)
+    resolved = store.cases["SC-mock0007"]
+    store.cases[resolved.case_id] = resolved.model_copy(
+        update={"status": CaseStatus.COMPLETED, "completed_at": resolved.created_at + timedelta(minutes=10)}
+    )
+    escalated = store.cases["SC-mock0008"]
+    store.cases[escalated.case_id] = escalated.model_copy(
+        update={"route": Route.SUPPORT, "guide_failure": GuideFailure.UNRESOLVED}
+    )
 
     # 0003: 질문 하나를 넣어 in_progress로 만듦
     in_progress = store.cases["SC-mock0003"]
@@ -422,19 +470,18 @@ def _new_reported_case(case_id: str, error_code: ErrorCode, memo: str | None, cr
             guide_failure = GuideFailure.GENERATION_FAILED
         else:
             route, answer = Route.SELF_GUIDE, _fake_customer_guidance(error_code)
-    completed = route == Route.SELF_GUIDE  # 셀프 가이드는 접수 즉시 완료
     return ServiceCase(
         case_id=case_id,
         equipment=error_code.equipment,
         code=error_code.code,
         memo=memo,
         source=Source.REPORTED,
-        status=CaseStatus.COMPLETED if completed else CaseStatus.RECEIVED,
+        status=CaseStatus.IN_PROGRESS if route == Route.SELF_GUIDE else CaseStatus.RECEIVED,  # 셀프 가이드는 고객 확인 전까지 조치 중
         route=route,
         guide_failure=guide_failure,
         guidance_answer=answer,
         created_at=created_at,
-        completed_at=created_at if completed else None,
+        completed_at=None,
     )
 
 
@@ -564,6 +611,7 @@ def _to_customer_result(store: _Store, case: ServiceCase) -> CustomerCaseResult:
         error_name=store.error_codes[(case.equipment, case.code)].name,
         memo=case.memo,
         status=case.status,
+        route=case.route,
         created_at=case.created_at,
         guidance_answer=case.guidance_answer,
         action=resolution.action if resolution else None,  # 조치·결과만 공개, 원인은 뺌

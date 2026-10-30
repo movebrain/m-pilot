@@ -22,9 +22,11 @@ from mpilot.models import (
     CitationKind,
     DependencyError,
     Equipment,
+    GuideFailure,
     InvalidStateError,
     NotFoundError,
     Resolution,
+    Route,
     SearchSettings,
     Source,
     ValidationError,
@@ -158,12 +160,50 @@ def test_save_case_with_duplicate_id_raises_dependency_error(db):
         fake_db.save_support_case("SC-aaaa0001", _input(), None)
 
 
-def test_save_self_guide_case_is_completed_without_resolution(db):
+def test_save_self_guide_case_is_in_progress_without_resolution(db):
     saved = fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
     case = saved.service_case
-    assert case.status is CaseStatus.COMPLETED and case.guidance_answer == _answered()
-    assert saved.resolution is None
+    assert case.status is CaseStatus.IN_PROGRESS and case.guidance_answer == _answered()
+    assert saved.resolution is None and case.completed_at is None
+
+
+def test_resolve_self_guide_case_completes_it_once(db):
+    fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
+    case = fake_db.resolve_self_guide_case("SC-aaaa0001").service_case
+    assert (case.route, case.status) == (Route.SELF_GUIDE, CaseStatus.COMPLETED)
     assert case.completed_at is not None and case.completed_at >= case.created_at
+    with pytest.raises(InvalidStateError):
+        fake_db.resolve_self_guide_case("SC-aaaa0001")
+    with pytest.raises(InvalidStateError):
+        fake_db.escalate_self_guide_case("SC-aaaa0001")
+
+
+def test_escalate_self_guide_case_moves_to_support_and_keeps_guide(db):
+    fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
+    case = fake_db.escalate_self_guide_case("SC-aaaa0001").service_case
+    assert (case.route, case.status, case.guide_failure) == (
+        Route.SUPPORT, CaseStatus.IN_PROGRESS, GuideFailure.UNRESOLVED
+    )
+    assert case.guidance_answer == _answered() and case.completed_at is None
+    fake_db.save_chat_turn("SC-aaaa0001", "질문", _answered())  # 이관 뒤에는 질문을 저장할 수 있다
+    with pytest.raises(InvalidStateError):
+        fake_db.escalate_self_guide_case("SC-aaaa0001")
+
+
+def test_pending_self_guide_case_blocks_chat_and_resolution(db):
+    fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
+    with pytest.raises(InvalidStateError):
+        fake_db.save_chat_turn("SC-aaaa0001", "질문", _answered())
+    with pytest.raises(InvalidStateError):
+        fake_db.save_confirmed_resolution("SC-aaaa0001", Resolution(cause="원인", action="조치", result="결과"))
+
+
+def test_self_guide_answers_reject_support_case_and_unknown_id(db):
+    fake_db.save_support_case("SC-aaaa0002", _input(), None)
+    with pytest.raises(InvalidStateError):
+        fake_db.resolve_self_guide_case("SC-aaaa0002")
+    with pytest.raises(NotFoundError):
+        fake_db.escalate_self_guide_case("SC-없음")
 
 
 def test_save_self_guide_case_requires_answered_guidance(db):
