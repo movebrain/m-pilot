@@ -98,8 +98,17 @@ def traits():
     return {"severity": "하"}
 
 
+@pytest.fixture
+def retrieved():
+    """질문(고객 안내는 증상 메모) 글자 → 가짜 검색이 돌려줄 문서 ID 목록(또는 던질 예외). 없으면 빈 목록이다.
+
+    `calls`에는 (쓴 검색, 질문 글자)가 쌓인다. 쓴 검색은 `customer`·`engineer`(1차)·`manual`·`history`(폴백)다.
+    """
+    return {"calls": []}
+
+
 @pytest.fixture(autouse=True)
-def fakes(monkeypatch, behavior, traits):
+def fakes(monkeypatch, behavior, traits, retrieved):
     monkeypatch.setattr(
         evaluate, "load_config",
         lambda: SimpleNamespace(chat_model_name="chat-x", embedding_model_name="embed-x", search=SETTINGS),
@@ -125,6 +134,33 @@ def fakes(monkeypatch, behavior, traits):
 
     monkeypatch.setattr(evaluate.pipeline, "run_engineer_answer", fake_engineer)
     monkeypatch.setattr(evaluate.pipeline, "run_customer_guidance", fake_customer)
+
+    def hits(kind, key):
+        retrieved["calls"].append((kind, key))
+        result = retrieved.get(key, [])
+        if isinstance(result, Exception):
+            raise result
+        want_history = kind == "history"
+        if kind in ("manual", "history"):  # 폴백은 컬렉션마다 따로 부른다
+            result = [ref for ref in result if ref.startswith("history:") == want_history]
+        return [SimpleNamespace(ref_id=ref) for ref in result]
+
+    def fake_search_customer(context, settings):
+        assert settings == SETTINGS
+        return hits("customer", context.memo)
+
+    def fake_search_engineer(context, question, settings):
+        assert settings == SETTINGS
+        return hits("engineer", question)
+
+    def fake_retriever_search(kind, equipment, query, k, code=None):
+        assert equipment is None and code is None  # 폴백 검색은 설비·코드로 거르지 않는다
+        assert k == (SETTINGS.manual_k if kind is CitationKind.MANUAL else SETTINGS.history_k)
+        return hits(kind.value, query)
+
+    monkeypatch.setattr(evaluate.pipeline, "search_customer_evidence", fake_search_customer)
+    monkeypatch.setattr(evaluate.pipeline, "search_engineer_evidence", fake_search_engineer)
+    monkeypatch.setattr(evaluate.retriever, "search", fake_retriever_search)
 
 
 def purpose_rows(behavior, purpose, n_answerable, n_unanswerable):
@@ -573,3 +609,72 @@ def test_요약_문구는_합격_불합격_미완료를_구분한다(tmp_path, b
     short = evaluate._format_summary(run(tmp_path, full_set(behavior, engineer=(5, 5), customer=(30, 20)))["summary"])
     assert "결과: 평가 미완료" in short
     assert "[엔지니어 대화] 평가 미완료(답변 가능 5/30, 답변 불가 5/20)" in short
+
+
+# --- 검색 지표 ------------------------------------------------------------------
+HIST = "history:SC-1"
+HIST2 = "history:SC-2"
+
+
+def test_컬렉션별_Recall_Hit_역순위를_센다():
+    metrics = evaluate._retrieval([OTHER, GOLD, HIST2, "history:SC-9"], (GOLD, GOLD2, HIST2))
+    assert metrics["manual"] == {"recall": 0.5, "hit": True, "rr": 0.5}  # 정답 2개 중 1개, 컬렉션 안 2위
+    assert metrics["history"] == {"recall": 1.0, "hit": True, "rr": 1.0}
+
+
+def test_정답이_없는_컬렉션은_None이고_못_찾으면_0이다():
+    metrics = evaluate._retrieval([OTHER], (GOLD,))
+    assert metrics == {"manual": {"recall": 0.0, "hit": False, "rr": 0.0}, "history": None}
+
+
+def test_상태마다_운영과_같은_검색을_잰다(tmp_path, behavior, retrieved):
+    rows = [
+        ("SRM", CODE, "자기 설비", "answered", [GOLD], ENG, "own_history"),
+        ("SRM", CODE, "다른 설비", "answered", [GOLD], ENG, "other_code"),
+        ("SRM", CODE, "근거 없음", "insufficient_evidence", [], ENG, "none_code"),
+        ("SRM", CODE, "고객", "answered", [GOLD], CUS),
+        ("SRM", CODE, "고객 불가", "insufficient_evidence", [], CUS),
+    ]
+    behavior.update({"자기 설비": held(), "다른 설비": held(), "근거 없음": held(), "고객": held(), "고객 불가": held()})
+
+    results = run(tmp_path, rows)["results"]
+
+    assert retrieved["calls"] == [
+        ("engineer", "자기 설비"), ("manual", "다른 설비"), ("history", "다른 설비"), ("customer", "고객"),
+    ]
+    assert [r["search"] for r in results] == ["first", "fallback", None, "first", None]
+    assert results[2]["retrieval"] is None and results[4]["retrieval"] is None
+
+
+def test_검색_결과와_지표를_문항별로_남기고_목적별로_평균낸다(tmp_path, behavior, retrieved):
+    rows = [
+        ("SRM", CODE, "a", "answered", [GOLD, HIST], ENG, "own_history"),
+        ("SRM", CODE, "b", "answered", [GOLD], ENG),
+        ("SRM", CODE, "고객", "answered", [GOLD], CUS),
+    ]
+    behavior.update({"a": answered(GOLD), "b": answered(GOLD), "고객": answered(GOLD)})
+    retrieved.update({"a": [GOLD, HIST], "b": [OTHER, GOLD], "고객": [OTHER]})
+
+    result = run(tmp_path, rows)
+
+    assert result["results"][1]["retrieved_ref_ids"] == [OTHER, GOLD]
+    eng = result["summary"][ENG]["retrieval"]
+    assert eng["manual"] == {"questions": 2, "recall": 1.0, "hit_rate": 1.0, "mrr": 0.75}
+    assert eng["history"] == {"questions": 1, "recall": 1.0, "hit_rate": 1.0, "mrr": 1.0}
+    cus = result["summary"][CUS]["retrieval"]
+    assert cus["manual"] == {"questions": 1, "recall": 0.0, "hit_rate": 0.0, "mrr": 0.0}
+    assert cus["history"] is None  # 고객 안내는 이력을 검색하지 않는다
+    assert "검색 manual 2건: Recall 1.00, Hit 1.00, MRR 0.75" in evaluate._format_summary(result["summary"])
+
+
+def test_검색이_실패해도_답변_평가는_계속하고_실패를_센다(tmp_path, behavior, retrieved):
+    rows = [("SRM", CODE, "a", "answered", [GOLD]), ("SRM", CODE, "b", "answered", [GOLD])]
+    behavior.update({"a": answered(GOLD), "b": answered(GOLD)})
+    retrieved.update({"a": DependencyError("임베딩 장애"), "b": [GOLD]})
+
+    result = run(tmp_path, rows)
+
+    first = result["results"][0]
+    assert first["outcome"] == "hit" and first["retrieval"] is None and "임베딩 장애" in first["search_error"]
+    retrieval = result["summary"][ENG]["retrieval"]
+    assert retrieval["search_failed"] == 1 and retrieval["manual"]["questions"] == 1
