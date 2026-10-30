@@ -246,13 +246,28 @@ def page_label(page: int, total: int) -> str:
 PAGE_LABEL_CLASS = "mpilot-page-label"
 """페이지 표시 Markdown에 붙이는 `elem_classes` 값. 버튼과 높이·글자를 맞춘다."""
 
+PAGINATION_ROW_CLASS = "mpilot-pagination-row"
+"""이전/다음 버튼과 페이지 표시를 가운데로 모으고 간격을 좁히는 Row에 붙이는 `elem_classes` 값."""
+
 PAGINATION_CSS = f"""
+.{PAGE_LABEL_CLASS} {{
+    flex-grow: 0 !important;
+    flex-basis: auto !important;
+    width: auto !important;
+}}
+
 .{PAGE_LABEL_CLASS} p {{
     margin: 0 !important;
     text-align: center !important;
+    font-weight: 700 !important;
+}}
+
+.{PAGINATION_ROW_CLASS} {{
+    justify-content: center !important;
+    gap: 8px !important;
 }}
 """
-"""`gr.Blocks(css=...)`에 넣어 페이지 표시 문구를 버튼과 나란히 가운데 정렬하는 스타일."""
+"""`gr.Blocks(css=...)`에 넣어 페이지 표시 문구를 굵게, 버튼과 가까이 가운데 모아 보이는 스타일."""
 
 CENTER_ROW_CLASS = "mpilot-center-row"
 """Row 안 내용을 가운데로 모으는 `elem_classes` 값(확인 버튼처럼 혼자 있는 버튼을 가운데 두는 용도)."""
@@ -263,6 +278,13 @@ CENTER_ROW_CSS = f"""
 }}
 """
 """`gr.Blocks(css=...)`에 넣어 `CENTER_ROW_CLASS`의 내용을 가운데로 모으는 스타일."""
+
+PROSE_PADDING_CSS = """
+.prose {
+    padding: 0 !important;
+}
+"""
+"""`gr.Blocks(css=...)`에 넣어 Gradio Markdown 기본 타이포그래피(`.prose`)의 안쪽 여백을 없애는 스타일."""
 
 CENTERED_TEXT_CLASS = "mpilot-centered-text"
 """셀프 가이드·조치 결과처럼 가운데 정렬하고 글자 크기로 강약을 주는 Markdown에 붙이는 `elem_classes` 값."""
@@ -291,10 +313,106 @@ WIDE_GAP_ROW_CLASS = "mpilot-wide-gap-row"
 
 WIDE_GAP_ROW_CSS = f"""
 .{WIDE_GAP_ROW_CLASS} {{
-    gap: 48px !important;
+    gap: 20px !important;
 }}
 """
 """`gr.Blocks(css=...)`에 넣어 `WIDE_GAP_ROW_CLASS`의 좌우 간격을 넓히는 스타일."""
+
+CHAT_HISTORY_BOX_CLASS = "mpilot-chat-history-box"
+"""장애 분석 대화의 질문·답변 기록에 붙이는 `elem_classes` 값. 연회색 1px 테두리 안에 높이를 고정하고
+넘치면 스크롤되게 해, 대화가 없을 때(접수)·진행 중일 때(조치 중)·많이 쌓였을 때(조치 완료)
+모두 같은 모양으로 보이게 한다."""
+
+CHAT_HISTORY_BOX_CSS = f"""
+.{CHAT_HISTORY_BOX_CLASS} {{
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 8px !important;
+    padding: 16px !important;
+    height: 420px !important;
+    overflow-y: auto !important;
+}}
+
+.{CHAT_HISTORY_BOX_CLASS} :not(button):not(button *) {{
+    /* Gradio 기본 블록·prose 테두리가 겹쳐 보이지 않도록, 바깥 테두리 하나만 남긴다.
+       [원문보기] 버튼 자체는 제 모양을 유지해야 하므로 버튼과 그 안쪽은 건드리지 않는다. */
+    border: none !important;
+    box-shadow: none !important;
+    background: none !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `CHAT_HISTORY_BOX_CLASS`를 스크롤되는 고정 높이 박스로 보이는 스타일.
+안쪽 Gradio 기본 테두리는 모두 지워 바깥 테두리 하나만 보이게 한다(버튼은 예외)."""
+
+QUESTION_INPUT_ROW_CLASS = "mpilot-question-input-row"
+"""질문 입력창과 전송 버튼을 한 알약 모양 테두리 안에 나란히 두는 Row에 붙이는 `elem_classes` 값.
+높이를 고정해 `CHAT_HISTORY_BOX_CLASS`와 마찬가지로 신고 상태와 상관없이 같은 모양으로 보이게 한다."""
+
+QUESTION_INPUT_ROW_CSS = f"""
+.{QUESTION_INPUT_ROW_CLASS} {{
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 24px !important;
+    padding: 4px 6px 4px 20px !important;
+    align-items: center !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    max-height: 56px !important;
+}}
+
+.{QUESTION_INPUT_ROW_CLASS} .block,
+.{QUESTION_INPUT_ROW_CLASS} textarea {{
+    border: none !important;
+    box-shadow: none !important;
+    background: none !important;
+    padding: 0 !important;
+}}
+
+.{QUESTION_INPUT_ROW_CLASS} textarea {{
+    resize: none !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `QUESTION_INPUT_ROW_CLASS`를 알약 모양 단일 테두리로 보이는 스타일."""
+
+WIDE_NOTICE_BOX_CLASS = "mpilot-wide-notice-box"
+"""셀프 가이드·조치 결과처럼 고객에게 안내할 내용을 넓은 연회색 박스 안에 정리해 보이는 `elem_classes` 값."""
+
+WIDE_NOTICE_BOX_CSS = f"""
+.{WIDE_NOTICE_BOX_CLASS} {{
+    background: #f4f4f5 !important;
+    border-radius: 12px !important;
+    padding: 24px 32px !important;
+    max-width: 640px !important;
+    margin: 0 auto !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `WIDE_NOTICE_BOX_CLASS`를 넓은 연회색 안내 박스로 보이는 스타일."""
+
+LIGHT_BORDER_BOX_CLASS = "mpilot-light-border-box"
+"""셀프 가이드처럼 배경색 없이 연회색 1px 테두리 안에 줄글만 두는 `elem_classes` 값."""
+
+LIGHT_BORDER_BOX_CSS = f"""
+.{LIGHT_BORDER_BOX_CLASS} {{
+    border: 1px solid #e4e4e7 !important;
+    border-radius: 8px !important;
+    padding: 16px 24px !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `LIGHT_BORDER_BOX_CLASS`를 배경 없는 연회색 테두리 박스로 보이는 스타일."""
+
+VIEW_SOURCE_BUTTON_CLASS = "mpilot-view-source-button"
+"""단계별 출처 옆 [원문보기] 버튼에 붙이는 `elem_classes` 값. 본문 글자 크기에 맞춘 작은 버튼으로 보인다."""
+
+VIEW_SOURCE_BUTTON_CSS = f"""
+.{VIEW_SOURCE_BUTTON_CLASS} {{
+    flex-grow: 0 !important;
+    min-width: fit-content !important;
+    width: fit-content !important;
+    height: auto !important;
+    padding: 4px 8px !important;
+    font-size: 12px !important;
+    white-space: nowrap !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `VIEW_SOURCE_BUTTON_CLASS`를 8px 안팎의 작은 버튼으로 보이는 스타일."""
 
 MODAL_OVERLAY_CLASS = "mpilot-modal-overlay"
 """출처 원문처럼 화면 전체를 덮는 모달의 바깥(반투명 배경) 레이어에 붙이는 `elem_classes` 값.
@@ -341,9 +459,9 @@ def pagination_row(initial_label: str | Callable[[], str] = "1 / 1"):
     Yields:
         tuple[gr.Button, gr.Markdown, gr.Button]: (이전 버튼, 페이지 표시, 다음 버튼).
     """
-    with gr.Row(equal_height=True):
+    with gr.Row(equal_height=True, elem_classes=[PAGINATION_ROW_CLASS]):
         prev_btn = gr.Button("‹ 이전", size="sm", scale=0, min_width=90)
-        label = gr.Markdown(initial_label, elem_classes=[PAGE_LABEL_CLASS])
+        label = gr.Markdown(initial_label, elem_classes=[PAGE_LABEL_CLASS], container=False, scale=0)
         next_btn = gr.Button("다음 ›", size="sm", scale=0, min_width=90)
         yield prev_btn, label, next_btn
 
@@ -360,7 +478,10 @@ ENGINEER_ACCENT = "#374151"
 
 
 def accent_css(role: Role | str) -> str:
-    """역할별 시그니처 색을 기본 버튼·선택 표시에 적용하는 스타일.
+    """역할별 시그니처 색을 기본 버튼·선택 표시·목록 행 호버에 적용하는 스타일.
+
+    목록 행(`.virtual-row`)의 Gradio 기본 호버색은 주황색이라 역할 시그니처 색과 어긋나므로,
+    고객은 옅은 남색, 엔지니어는 옅은 회색으로 바꾼다.
 
     Args:
         role: `Role` 값 또는 같은 문자열. 고객은 남색, 엔지니어는 진회색이다.
@@ -368,7 +489,9 @@ def accent_css(role: Role | str) -> str:
     Returns:
         str: `gr.Blocks(css=...)`에 더할 스타일.
     """
-    color = CUSTOMER_ACCENT if Role(role) == Role.CUSTOMER else ENGINEER_ACCENT
+    is_customer = Role(role) == Role.CUSTOMER
+    color = CUSTOMER_ACCENT if is_customer else ENGINEER_ACCENT
+    row_hover = "#e8eef7" if is_customer else "#f3f4f6"
     return f"""
 .gradio-container {{
     --button-primary-background-fill: {color} !important;
@@ -377,6 +500,10 @@ def accent_css(role: Role | str) -> str:
     --button-primary-border-color-hover: {color} !important;
     --checkbox-background-color-selected: {color} !important;
     --checkbox-border-color-selected: {color} !important;
+}}
+
+.gradio-container .virtual-row:hover {{
+    background: {row_hover} !important;
 }}
 """
 
@@ -485,7 +612,8 @@ FONT_CSS = """
 def app_css(role: Role | str) -> str:
     """역할의 앱 전체에 적용할 스타일을 한데 모은다.
 
-    스티키 메뉴, 뒤로 가기 화살표, 페이지네이션, 가운데 정렬 Row·텍스트, 넓은 간격 Row, 모달, 글꼴,
+    스티키 메뉴, 뒤로 가기 화살표, 페이지네이션, 가운데 정렬 Row·텍스트, 넓은 간격 Row, Markdown
+    기본 여백 제거, 스크롤 대화 기록 박스, 알약 모양 질문 입력 Row, 넓은 안내 박스, 모달, 글꼴,
     역할별 시그니처 색, 상단 내비바 스타일을 합친다.
 
     Args:
@@ -496,7 +624,10 @@ def app_css(role: Role | str) -> str:
     """
     return (
         STICKY_TOOLBAR_CSS + BACK_BUTTON_CSS + PAGINATION_CSS + CENTER_ROW_CSS + CENTERED_TEXT_CSS
-        + WIDE_GAP_ROW_CSS + MODAL_CSS + FONT_CSS + accent_css(role) + navbar_css(role)
+        + WIDE_GAP_ROW_CSS + PROSE_PADDING_CSS + CHAT_HISTORY_BOX_CSS + QUESTION_INPUT_ROW_CSS
+        + WIDE_NOTICE_BOX_CSS + LIGHT_BORDER_BOX_CSS + VIEW_SOURCE_BUTTON_CSS + MODAL_CSS + FONT_CSS
+        + accent_css(role)
+        + navbar_css(role)
     )
 
 # ---------------------------------------------------------------------------
@@ -706,20 +837,23 @@ def format_answer_markdown(answer: Answer, show_notice: bool = False) -> str:
 
 def info_box_html(
     fields: list[tuple[str, str]], *, color: str = "#f4f4f5", align: str = "center", title: str | None = None,
+    max_width: str = "300px",
 ) -> str:
     """`라벨 : 값` 줄을 둥근 박스 안에 세로로 나열한 HTML을 만든다.
 
     고객 신고 상세·장애 분석 대화가 접수 정보를 똑같은 모양으로 보이는 데 함께 쓴다. 장애 분석 대화의
-    조치 결과처럼 다른 색·왼쪽 정렬이 필요하면 `color`·`align`으로 바꾼다.
+    조치 결과처럼 다른 색·왼쪽 정렬이 필요하면 `color`·`align`으로 바꾼다. 장애 분석 대화는 왼쪽 열
+    자체가 넓어 300px로 고정하면 옆에 여백만 남으므로 `max_width`로 넓힌다.
 
     Args:
         fields: `(라벨, 값)` 목록. 보일 순서 그대로 한 줄씩 담는다.
         color: 박스 배경색. 기본은 옅은 회색.
         align: 박스 안 텍스트 정렬(`"center"` 또는 `"left"`). 기본은 가운데 정렬.
         title: 박스 맨 위에 둘 제목. 없으면 생략한다.
+        max_width: 박스 최대 너비. 기본은 300px(고객 신고 상세 기준).
 
     Returns:
-        str: 최대 너비 300px인 박스 HTML. `title`·`label`·`value`는 이스케이프되어 들어간다.
+        str: `max_width`를 최대 너비로 둔 박스 HTML. `title`·`label`·`value`는 이스케이프되어 들어간다.
     """
     # `gr.HTML`은 내용을 정화하지 않는다. 고객 메모·엔지니어 입력이 들어오므로 값마다 이스케이프한다.
     heading = f'<div style="font-weight:700;margin-bottom:8px">{escape(title)}</div>' if title else ""
@@ -728,7 +862,7 @@ def info_box_html(
         for label, value in fields
     )
     return (
-        f'<div style="max-width:300px;margin:0 auto;background:{color};border-radius:8px;'
+        f'<div style="max-width:{max_width};margin:0 auto;background:{color};border-radius:8px;'
         f'padding:16px;text-align:{align}">{heading}{rows}</div>'
     )
 
