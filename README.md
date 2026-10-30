@@ -305,8 +305,9 @@ B·C에서 접수한 건은 메모리에만 있어서 종료하면 사라집니�
 
 전공자가 아닌 팀원들이 **AI 도구와 함께** 개발했고, 커밋하는 사람이 설명할 수 있는 코드만 반영합니다.
 
+
 ## 문서와 토론
 
-- [기능·아키텍처 명세 `docs/spec.md`](docs/spec.md) · [기획 의도 `docs/intent.md`](docs/intent.md) · [실행 가이드 `docs/RUN.md`](docs/RUN.md) · [가짜 실행 `fake/README.md`](fake/README.md)
-- [Discussion #105: `pipeline`은 무엇을 돌려주나](https://github.com/movebrain/m-pilot/discussions/105)
-- [Discussion #100: `_extract_page_texts`는 무엇을 돌려주나](https://github.com/movebrain/m-pilot/discussions/100)
+- [기능·아키텍처 명세 `docs/spec.md`](docs/spec.md)
+- [기획 의도 `docs/intent.md`](docs/intent.md)
+- [Discussion #58: 개발 플로우 가이드](https://github.com/movebrain/m-pilot/discussions/58)
