@@ -59,7 +59,7 @@ def backend(monkeypatch):
     monkeypatch.setattr(service, "_config", AppConfig(
         db_url="mysql+pymysql://u:p@localhost/db", openai_api_key="key", chat_model_name="chat",
         embedding_model_name="emb", manuals_dir=Path("m"), codes_path=Path("c"), history_seed_path=Path("h"),
-        search=SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5),
+        search=SearchSettings(manual_k=3, history_k=3),
         llm_timeout_seconds=0.2, demo_accounts={},
     ))
     calls = {"saved": [], "guidance": [], "settings": [], "answer": ANSWERED}
@@ -101,7 +101,7 @@ def test_self_guide_answered_saves_self_guide(backend):
     _submit("SELF", memo="충전 표시등 꺼짐")
     assert backend["saved"] == [("self_guide", backend["saved"][0][1], ANSWERED)]
     assert backend["guidance"][0].memo == "충전 표시등 꺼짐"
-    assert backend["settings"] == [service._config.search]  # 검색 설정(건수·임계값)을 pipeline에 넘긴다
+    assert backend["settings"] == [service._config.search]  # 검색 설정(건수)을 pipeline에 넘긴다
 
 
 def test_held_answer_goes_to_engineer(backend):

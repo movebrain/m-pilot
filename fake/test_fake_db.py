@@ -62,7 +62,7 @@ def _config() -> AppConfig:
         manuals_dir=Path("data/manuals"),
         codes_path=Path("data/errorcodes.csv"),
         history_seed_path=Path("data/history_seed.csv"),
-        search=SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5),
+        search=SearchSettings(manual_k=3, history_k=3),
         demo_accounts={},
     )
 
@@ -262,13 +262,13 @@ def indexed():
 
 def test_manual_search_is_filtered_by_equipment_and_sorted(indexed):
     for equipment in Equipment:
-        hits = retriever.search_manual(equipment, "주행 인버터 과전류 점검", 5)
+        hits = retriever.search(CitationKind.MANUAL, equipment, "주행 인버터 과전류 점검", 5)
         assert hits and {h.equipment for h in hits} == {equipment}
         assert [h.distance for h in hits] == sorted(h.distance for h in hits)
 
 
 def test_history_search_returns_seed_history_of_same_equipment(indexed):
-    hits = retriever.search_history(Equipment.RTV, "주행 휠 스트레치 필름", 3)
+    hits = retriever.search(CitationKind.HISTORY, Equipment.RTV, "주행 휠 스트레치 필름", 3)
     assert hits and all(h.kind is CitationKind.HISTORY and h.equipment is Equipment.RTV for h in hits)
 
 
@@ -280,4 +280,4 @@ def test_confirmed_case_becomes_searchable_once(indexed):
     vectordb.index_history(done)
     vectordb.index_history(done)  # 같은 case_id는 덮어쓴다
     assert len(store.get()["ids"]) == before + 1
-    assert retriever.search_history(Equipment.RTV, "유니크원인XYZ", 1)[0].ref_id == "history:SC-index001"
+    assert retriever.search(CitationKind.HISTORY, Equipment.RTV, "유니크원인XYZ", 1)[0].ref_id == "history:SC-index001"

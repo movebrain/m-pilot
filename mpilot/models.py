@@ -409,12 +409,10 @@ class SearchSettings(_Model):
     Attributes:
         manual_k: 매뉴얼 근거로 가져올 상위 건수. 처음에는 3으로 시작한다.
         history_k: 이력 근거로 가져올 상위 건수. 처음에는 3으로 시작한다.
-        evidence_threshold: 근거 충분성 임계값. 0 이상의 유한한 실수다. 사람이 평가 결과를 보고 정한다.
     """
 
     manual_k: int
     history_k: int
-    evidence_threshold: float = Field(ge=0, allow_inf_nan=False)
 
 
 class Chunk(_Model):
