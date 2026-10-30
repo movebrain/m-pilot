@@ -37,3 +37,15 @@ def test_build_case_input_rejects_long_memo():
     form.build_case_input("AGV", "A120", "가" * form.MEMO_MAX_LENGTH)  # 경계값은 통과
     with pytest.raises(ValidationError):
         form.build_case_input("AGV", "A120", "가" * (form.MEMO_MAX_LENGTH + 1))
+
+
+def test_card_html_marks_only_the_selected_card():
+    selected = form.card_html("AGV", selected=True)
+    other = form.card_html("AGV", selected=False)
+    assert f"border:1px solid {form.ACCENT}" in selected and f"border:1px solid {form.ACCENT}" not in other
+    assert "background:" + form.ACCENT in selected and "background:" + form.ACCENT not in other  # 라디오 점이 찬다
+    assert "AGV" in selected and form.EQUIPMENT_DESC["AGV"] in selected
+
+
+def test_card_html_without_description_still_renders():
+    assert "Unknown" in form.card_html("Unknown", selected=False)

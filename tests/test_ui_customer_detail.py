@@ -59,6 +59,21 @@ def test_guide_steps_html_numbers_each_step_in_order():
     assert html.index("1. 충전 스테이션으로 복귀시킨다.") < html.index("2. 충전 중에는 이동하지 않는다.")
 
 
+def test_info_html_escapes_memo():
+    text = detail.info_html(_case(memo="<img src=x onerror=alert(1)>"))
+    assert "<img" not in text and "&lt;img src=x onerror=alert(1)&gt;" in text
+
+
+def test_guide_steps_html_escapes_step_text_and_citation():
+    bad = Citation(kind=CitationKind.MANUAL, ref_id="manual:agv_rev1_1:8:9", locator="<b>p.8</b>")
+    answer = Answer(verdict="answered", steps=[
+        AnswerStep(text="<script>alert(1)</script>", citations=[bad]),
+    ], notice=None)
+    html = detail.guide_steps_html(answer)
+    assert "<script>" not in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<b>" not in html and "&lt;b&gt;p.8&lt;/b&gt;" in html
+
+
 def test_engineer_case_has_no_guide_box():
     assert detail.guide_html(_case()) == ""
 
