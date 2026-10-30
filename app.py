@@ -14,7 +14,8 @@
       화면만 띄운다(DB·RAG 연결 전 화면 확인용).
     - 화면 상태 3개(`role`, `case_id`, `screen`)를 `gr.State`로 만들어 그 역할의 화면 함수에 같게 넘긴다.
       `role`은 앱마다 고정하고, `screen`은 그 역할의 첫 화면에서 시작한다.
-    - 모든 화면 위에 "모든 데이터는 가상" 배너를 보인다.
+    - 모든 화면 위에 역할별 시그니처 색(고객 남색·엔지니어 진회색)의 상단 내비바(로고·메뉴)를,
+      맨 아래에 "모든 데이터는 가상" 배너를 보인다.
     - 업무 규칙은 두지 않는다. 규칙은 `models`·`service`에 있다.
 
 의존: `ui/*`, `service`, `config`, `models`, `db.rdb`, `db.vectordb`, `rag.generator`(의존 규칙 §2.5).
@@ -64,6 +65,17 @@ SCREEN_BUILDERS: dict[Role, tuple[ScreenBuilder, ...]] = {
 }
 """역할별 앱에 조립하는 화면 함수. 순서는 `common.ROLE_SCREENS`와 같다."""
 
+NAV_ITEMS: dict[Role, tuple[tuple[str, str], ...]] = {
+    Role.CUSTOMER: (
+        ("신고 목록", common.SCREEN_CUSTOMER_LIST),
+        ("신고 작성", common.SCREEN_CUSTOMER_FORM),
+    ),
+    Role.ENGINEER: (
+        ("대시보드", common.SCREEN_ENGINEER_LIST),
+    ),
+}
+"""역할별 상단 내비바 메뉴. 신고 상세·장애 분석 대화·이력 저장은 특정 건을 골라야만 열려 메뉴에 두지 않는다."""
+
 
 def initialize() -> None:
     """설정을 읽고 DB·검색 저장소·모델을 연결한 뒤 검색 색인을 준비한다.
@@ -101,16 +113,17 @@ def build_app(role: Role) -> gr.Blocks:
         role: 이 앱의 역할. 그 역할의 화면 3개만 조립한다.
 
     Returns:
-        gr.Blocks: 배너와 화면 3개, 공유 상태 3개가 들어 있는 앱. 첫 화면만 보인다.
+        gr.Blocks: 내비바·배너와 화면 3개, 공유 상태 3개가 들어 있는 앱. 첫 화면만 보인다.
     """
     title = "M-Pilot 고객" if role == Role.CUSTOMER else "M-Pilot 엔지니어"
-    with gr.Blocks(title=title) as demo:
-        gr.Markdown(common.VIRTUAL_DATA_BANNER)
+    with gr.Blocks(title=title, fill_width=True) as demo:
         role_state = gr.State(role)
         case_id = gr.State(None)
         screen = gr.State(common.first_screen(role))
+        common.build_navbar(title, NAV_ITEMS[role], screen)
         for build_screen in SCREEN_BUILDERS[role]:
             build_screen(role_state, case_id, screen)
+        gr.Markdown(common.VIRTUAL_DATA_BANNER, elem_classes=[common.CENTERED_TEXT_CLASS])
     return demo
 
 
@@ -144,4 +157,4 @@ def main(role: Role, port: int, argv: Sequence[str] | None = None) -> None:
         except (ValidationError, DependencyError) as e:
             print(f"{STARTUP_FAILED_MESSAGE} ({type(e).__name__})", file=sys.stderr)
             raise SystemExit(1) from None
-    build_app(role).launch(server_port=port)
+    build_app(role).launch(server_port=port, css=common.app_css(role))

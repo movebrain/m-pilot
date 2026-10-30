@@ -12,14 +12,21 @@
     - 가상 데이터 배너: 모든 화면에 '모든 데이터는 가상'을 보인다.
     - 용어는 '에러', '심각도', '고객 안내', '서비스 이력 추가'를 쓴다('알람·오류·등급·환류' 등은 쓰지 않는다).
     - 업무 규칙과 서비스 호출은 두지 않는다.
+    - 공통 레이아웃 조각: 고객·엔지니어 대시보드가 함께 쓰는 상태 필터 메뉴(`status_filter_row`)처럼
+      여러 화면이 똑같이 그리는 작은 컴포넌트 묶음을 만든다. 서비스 호출·업무 규칙은 두지 않는다.
 
-의존: `models`만 import한다.
+의존: `models`, `gradio`를 import한다.
 소유: UI·총괄 파트
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from html import escape
+
+import gradio as gr
 
 from mpilot.models import (
     Answer,
@@ -39,8 +46,458 @@ from mpilot.models import (
 # 가상 데이터 배너
 # ---------------------------------------------------------------------------
 
-VIRTUAL_DATA_BANNER = "⚠️ **모든 데이터는 가상입니다.** 실제 설비·고객·서비스 이력이 아닙니다."
-"""모든 화면 맨 위에 `gr.Markdown(VIRTUAL_DATA_BANNER)`로 보이는 문구."""
+VIRTUAL_DATA_BANNER = "**모든 데이터는 가상입니다.** 실제 설비·고객·서비스 이력이 아닙니다."
+"""모든 화면 맨 아래 가운데에 `gr.Markdown(VIRTUAL_DATA_BANNER)`로 보이는 문구."""
+
+STICKY_TOOLBAR_CLASS = "mpilot-sticky-toolbar"
+"""스크롤해도 화면 위에 고정해 보일 영역(상태 필터 등)에 붙이는 `elem_classes` 값."""
+
+NAVBAR_HEIGHT = "61px"
+"""내비바 실측 높이(패딩 포함). 상태 필터가 내비바 아래에 겹치지 않고 붙도록 top 오프셋으로도 쓴다."""
+
+STICKY_TOOLBAR_CSS = f"""
+.gradio-container {{
+    /* Gradio 기본값(overflow: hidden)이 세로축까지 막아서, sticky가 실제로 스크롤하는
+       문서(body)가 아니라 이 컨테이너를 기준으로 계산돼 버려 먹히지 않는다.
+       overflow-x·overflow-y 중 하나만 visible이면 스펙상 visible이 auto로 강제 변환되어
+       그래도 스크롤 컨테이너 취급되므로, 가로축도 함께 visible로 바꿔야 한다. */
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+}}
+
+
+.{STICKY_TOOLBAR_CLASS} {{
+    position: sticky !important;
+    top: {NAVBAR_HEIGHT} !important;
+    z-index: 9999 !important;
+    background: var(--background-fill-primary, white) !important;
+    box-shadow: none !important;
+    padding-top: var(--spacing-sm);
+    padding-bottom: var(--spacing-sm);
+}}
+
+/* Gradio 기본 .html-container padding(--block-padding)이 gr.HTML로 만든 설비 카드·
+   뒤로 가기 화살표의 레이아웃을 깨뜨려서 없앤다. */
+.gradio-container .html-container {{
+    padding: 0 !important;
+}}
+
+/* 신고 목록 표: 실제로 보이는 행은 table이 아니라 virtual-row/body-cell div다
+   (table tbody tr는 열 너비 계산용 숨김 요소). 행을 누를 수 있다는 걸 보이려 커서를
+   포인터로 바꾼다. body-cell 안 span(svelte-odwpey)이 자체로 cursor: text를 걸어 두므로
+   그것도 같이 덮어써야 한다. Gradio 기본 셀 선택 때 나오는 주황색 깜빡임 애니메이션은 끈다. */
+.gradio-container .virtual-row,
+.gradio-container .body-cell,
+.gradio-container .body-cell .cell-wrap,
+.gradio-container .body-cell span.svelte-odwpey {{
+    cursor: pointer !important;
+}}
+
+.gradio-container .body-cell.flash.cell-selected {{
+    animation: none !important;
+    background: transparent !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `STICKY_TOOLBAR_CLASS`를 고정 위치로 만드는 스타일."""
+
+BACK_BUTTON_CLASS = "mpilot-back-btn"
+"""뒤로 가기 화살표 아이콘에 붙이는 `elem_classes` 값."""
+
+BACK_TITLE_CLASS = "mpilot-back-title"
+"""뒤로 가기 화살표 옆 제목 Markdown에 붙이는 `elem_classes` 값. 위아래 여백을 없애 화살표와 줄을 맞춘다."""
+
+BACK_ROW_CLASS = "mpilot-back-row"
+"""뒤로 가기 Row에 붙이는 `elem_classes` 값. Gradio 기본 Row 간격(`--layout-gap`)이 화살표·제목 사이를
+너무 넓게 띄워서 줄인다."""
+
+BACK_ICON_SVG = (
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" '
+    'stroke-width="3" stroke-linecap="round" stroke-linejoin="round">'
+    '<polyline points="15 18 9 12 15 6"></polyline>'
+    "</svg>"
+)
+"""둥근 끝의 `‹` 모양 뒤로 가기 아이콘(SVG)."""
+
+BACK_BUTTON_CSS = f"""
+.{BACK_BUTTON_CLASS} {{
+    /* gr.HTML의 바깥 wrapper div는 scale=0을 줘도 flex-grow:1로 남아 제목과 폭을 반씩
+       나눠 가지므로(Button과 달리 래퍼가 하나 더 있다), 직접 눌러서 고정 폭으로 만든다. */
+    display: flex !important;
+    align-items: center !important;
+    cursor: pointer !important;
+    flex-grow: 0 !important;
+    flex-basis: auto !important;
+    width: 40px !important;
+    color: var(--body-text-color, #27272a);
+}}
+
+.{BACK_TITLE_CLASS} p {{
+    margin: 0 !important;
+}}
+
+.{BACK_ROW_CLASS} {{
+    gap: 8px !important;
+    align-items: center !important;
+}}
+
+.{BACK_ROW_CLASS} > * {{
+    align-self: center !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 화살표 아이콘을 누를 수 있게 보이고, 옆 제목과 줄·간격을 맞추는 스타일."""
+
+
+@contextmanager
+def back_button_row(title: str):
+    """화살표 아이콘 뒤로 가기 버튼과 화면 제목을 같은 줄에 둔다.
+
+    Args:
+        title: 제목 Markdown 문구(예: `"## 고객 신고 작성"`).
+
+    Yields:
+        gr.HTML: 뒤로 가기 아이콘. `with` 블록 안에서 같은 Row에 화면의 주 동작 버튼(제출 등)을
+            오른쪽에 더 넣을 수 있다. 그 버튼엔 `scale=0`을 줘야 한다(제목이 남는 폭을 다 차지해
+            오른쪽 끝에 붙는다). 화면은 아이콘에 `click` 이벤트를 붙여 이전 화면으로 돌아가게 한다.
+    """
+    with gr.Row(equal_height=True, elem_classes=[BACK_ROW_CLASS]):
+        back_btn = gr.HTML(BACK_ICON_SVG, elem_classes=[BACK_BUTTON_CLASS], scale=0, min_width=40)
+        gr.Markdown(title, elem_classes=[BACK_TITLE_CLASS])
+        yield back_btn
+
+
+@contextmanager
+def status_filter_row():
+    """상태 필터(전체/접수/조치 중/조치 완료) 메뉴를 스크롤해도 고정되는 Row로 만든다.
+
+    고객·엔지니어 대시보드가 똑같이 쓰는 공통 메뉴다. `with` 블록 안에서 같은 Row에
+    다른 컴포넌트(고객 대시보드의 '신고하기' 버튼 등)를 더 넣을 수 있다.
+
+    Yields:
+        gr.Radio: 상태 필터 컴포넌트. 화면이 `change` 이벤트를 붙이고 값을 읽는다.
+    """
+    with gr.Row(equal_height=False, elem_classes=[STICKY_TOOLBAR_CLASS]) as row:
+        status_filter = gr.Radio(choices=status_choices(), value="", container=False, scale=4)
+        yield status_filter
+
+
+# ---------------------------------------------------------------------------
+# 목록 페이지네이션
+# ---------------------------------------------------------------------------
+
+PAGE_SIZE = 20
+"""목록 한 페이지에 보여줄 건수."""
+
+TABLE_MAX_HEIGHT = 1200
+"""페이지당 최대 건수(`PAGE_SIZE`)가 내부 스크롤 없이 다 보이도록 넉넉히 잡은 표 높이(px)."""
+
+
+def page_count(total: int) -> int:
+    """전체 건수로 전체 페이지 수를 센다.
+
+    Args:
+        total: 전체 건수.
+
+    Returns:
+        int: 전체 페이지 수(건수가 0이어도 최소 1).
+    """
+    return max(1, -(-total // PAGE_SIZE))
+
+
+def clamp_page(page: int, total: int) -> int:
+    """페이지 번호를 0 이상, 마지막 페이지 이하로 자른다.
+
+    Args:
+        page: 요청한 페이지 번호(0부터).
+        total: 전체 건수.
+
+    Returns:
+        int: 범위 안으로 자른 페이지 번호.
+    """
+    return max(0, min(page, page_count(total) - 1))
+
+
+def page_slice(rows: list, page: int) -> list:
+    """목록에서 한 페이지(`PAGE_SIZE`건)만 잘라낸다.
+
+    Args:
+        rows: 필터가 적용된 전체 행 목록.
+        page: 보여줄 페이지 번호(0부터). 범위를 벗어나면 안으로 자른다.
+
+    Returns:
+        list: 그 페이지의 행 목록.
+    """
+    start = clamp_page(page, len(rows)) * PAGE_SIZE
+    return rows[start:start + PAGE_SIZE]
+
+
+def page_label(page: int, total: int) -> str:
+    """'3 / 10' 같은 페이지 표시 문구를 만든다.
+
+    Args:
+        page: 지금 페이지 번호(0부터). 범위를 벗어나면 안으로 자른다.
+        total: 전체 건수.
+
+    Returns:
+        str: `"{지금 페이지}/{전체 페이지}"` 문구(1부터 센 번호로 보인다).
+    """
+    return f"{clamp_page(page, total) + 1} / {page_count(total)}"
+
+
+PAGE_LABEL_CLASS = "mpilot-page-label"
+"""페이지 표시 Markdown에 붙이는 `elem_classes` 값. 버튼과 높이·글자를 맞춘다."""
+
+PAGINATION_CSS = f"""
+.{PAGE_LABEL_CLASS} p {{
+    margin: 0 !important;
+    text-align: center !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 페이지 표시 문구를 버튼과 나란히 가운데 정렬하는 스타일."""
+
+CENTER_ROW_CLASS = "mpilot-center-row"
+"""Row 안 내용을 가운데로 모으는 `elem_classes` 값(확인 버튼처럼 혼자 있는 버튼을 가운데 두는 용도)."""
+
+CENTER_ROW_CSS = f"""
+.{CENTER_ROW_CLASS} {{
+    justify-content: center !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `CENTER_ROW_CLASS`의 내용을 가운데로 모으는 스타일."""
+
+CENTERED_TEXT_CLASS = "mpilot-centered-text"
+"""셀프 가이드·조치 결과처럼 가운데 정렬하고 글자 크기로 강약을 주는 Markdown에 붙이는 `elem_classes` 값."""
+
+CENTERED_TEXT_CSS = f"""
+.{CENTERED_TEXT_CLASS}, .{CENTERED_TEXT_CLASS} * {{
+    text-align: center !important;
+}}
+
+.{CENTERED_TEXT_CLASS} ol, .{CENTERED_TEXT_CLASS} ul {{
+    padding-left: 0 !important;
+    list-style-position: inside !important;
+}}
+
+.{CENTERED_TEXT_CLASS} ul {{
+    /* 출처 같은 하위 목록은 작고 옅게 둬 본문 글자와 강약을 준다. */
+    font-size: 0.85em !important;
+    opacity: 0.7 !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `CENTERED_TEXT_CLASS`를 가운데 정렬·글자 강약으로 보이는 스타일."""
+
+WIDE_GAP_ROW_CLASS = "mpilot-wide-gap-row"
+"""장애 분석 대화처럼 왼쪽 정보·오른쪽 대화를 나란히 두는 Row에 붙이는 `elem_classes` 값.
+기본 Row 간격(`--layout-gap`)보다 넓게 띄워 두 영역을 또렷이 나눈다."""
+
+WIDE_GAP_ROW_CSS = f"""
+.{WIDE_GAP_ROW_CLASS} {{
+    gap: 48px !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `WIDE_GAP_ROW_CLASS`의 좌우 간격을 넓히는 스타일."""
+
+MODAL_OVERLAY_CLASS = "mpilot-modal-overlay"
+"""출처 원문처럼 화면 전체를 덮는 모달의 바깥(반투명 배경) 레이어에 붙이는 `elem_classes` 값.
+Gradio에 모달 컴포넌트가 없어 CSS로 흉내 낸다."""
+
+MODAL_CARD_CLASS = "mpilot-modal-card"
+"""모달 가운데 흰 카드 영역에 붙이는 `elem_classes` 값."""
+
+MODAL_CSS = f"""
+.{MODAL_OVERLAY_CLASS} {{
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.5) !important;
+    z-index: 20000 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}}
+
+.{MODAL_CARD_CLASS} {{
+    background: var(--background-fill-primary, white) !important;
+    max-width: 600px !important;
+    width: 90% !important;
+    max-height: 80vh !important;
+    overflow: auto !important;
+    padding: 24px !important;
+    border-radius: 8px !important;
+}}
+"""
+"""`gr.Blocks(css=...)`에 넣어 `MODAL_OVERLAY_CLASS`·`MODAL_CARD_CLASS`를 화면 가운데 모달 카드로 보이는 스타일."""
+
+
+@contextmanager
+def pagination_row(initial_label: str | Callable[[], str] = "1 / 1"):
+    """이전/다음 버튼과 페이지 표시("3 / 10")를 한 줄에 둔다.
+
+    고객·엔지니어 대시보드가 똑같이 쓰는 공통 페이지네이션 UI다. 버튼을 누른 뒤 실제 페이지 번호·행은
+    화면이 `click` 이벤트에서 `page_slice`·`clamp_page`·`page_label`로 다시 계산해 채운다.
+
+    Args:
+        initial_label: 페이지 표시의 처음 값. 함수를 주면 화면을 열 때마다 새로 계산해 보인다
+            (`table`의 초깃값과 맞춰야 할 때 쓴다).
+
+    Yields:
+        tuple[gr.Button, gr.Markdown, gr.Button]: (이전 버튼, 페이지 표시, 다음 버튼).
+    """
+    with gr.Row(equal_height=True):
+        prev_btn = gr.Button("‹ 이전", size="sm", scale=0, min_width=90)
+        label = gr.Markdown(initial_label, elem_classes=[PAGE_LABEL_CLASS])
+        next_btn = gr.Button("다음 ›", size="sm", scale=0, min_width=90)
+        yield prev_btn, label, next_btn
+
+
+# ---------------------------------------------------------------------------
+# 역할별 시그니처 색
+# ---------------------------------------------------------------------------
+
+CUSTOMER_ACCENT = "#1d3461"
+"""고객 앱 시그니처 색(남색)."""
+
+ENGINEER_ACCENT = "#374151"
+"""엔지니어 앱 시그니처 색(진회색)."""
+
+
+def accent_css(role: Role | str) -> str:
+    """역할별 시그니처 색을 기본 버튼·선택 표시에 적용하는 스타일.
+
+    Args:
+        role: `Role` 값 또는 같은 문자열. 고객은 남색, 엔지니어는 진회색이다.
+
+    Returns:
+        str: `gr.Blocks(css=...)`에 더할 스타일.
+    """
+    color = CUSTOMER_ACCENT if Role(role) == Role.CUSTOMER else ENGINEER_ACCENT
+    return f"""
+.gradio-container {{
+    --button-primary-background-fill: {color} !important;
+    --button-primary-background-fill-hover: {color}cc !important;
+    --button-primary-border-color: {color} !important;
+    --button-primary-border-color-hover: {color} !important;
+    --checkbox-background-color-selected: {color} !important;
+    --checkbox-border-color-selected: {color} !important;
+}}
+"""
+
+# ---------------------------------------------------------------------------
+# 상단 내비바(로고·메뉴)
+# ---------------------------------------------------------------------------
+
+NAVBAR_CLASS = "mpilot-navbar"
+NAVBAR_LOGO_CLASS = "mpilot-navbar-logo"
+NAVBAR_MENU_CLASS = "mpilot-navbar-menu"
+NAVBAR_LINK_CLASS = "mpilot-navbar-link"
+
+
+def navbar_css(role: Role | str) -> str:
+    """상단 내비바를 역할별 시그니처 색의 고정 바로 만드는 스타일.
+
+    Args:
+        role: `Role` 값 또는 같은 문자열. 고객은 남색, 엔지니어는 진회색 바탕이다.
+
+    Returns:
+        str: `gr.Blocks(css=...)`에 더할 스타일.
+    """
+    color = CUSTOMER_ACCENT if Role(role) == Role.CUSTOMER else ENGINEER_ACCENT
+    return f"""
+.{NAVBAR_CLASS} {{
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10000 !important;
+    background: {color} !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    padding: 14px 24px !important;
+    margin-bottom: var(--spacing-lg) !important;
+    /* 내비바만 뷰 가장자리까지 꽉 차게, 부모(.app)의 기본 여백(16px 32px)만큼 밖으로 뺀다.
+       나머지 화면 내용은 그 여백을 그대로 유지한다. */
+    margin-left: -32px !important;
+    margin-right: -32px !important;
+    margin-top: -16px !important;
+    width: calc(100% + 64px) !important;
+}}
+
+.{NAVBAR_CLASS} * {{
+    color: white !important;
+}}
+
+.{NAVBAR_LOGO_CLASS} p {{
+    font-size: 1.25rem !important;
+    font-weight: 700 !important;
+    margin: 0 !important;
+}}
+
+.{NAVBAR_MENU_CLASS} {{
+    flex-grow: 0 !important;
+    flex-wrap: nowrap !important;
+    width: auto !important;
+    justify-content: flex-end !important;
+    gap: 4px !important;
+}}
+
+.{NAVBAR_LINK_CLASS} {{
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-weight: 500 !important;
+    white-space: nowrap !important;
+}}
+
+.{NAVBAR_LINK_CLASS}:hover {{
+    background: rgba(255, 255, 255, 0.15) !important;
+}}
+"""
+
+
+def build_navbar(title: str, nav_items: list[tuple[str, str]], screen: gr.State) -> None:
+    """화면 맨 위 내비바(로고·메뉴)를 만든다. 역할의 앱이 한 번만 둔다.
+
+    Args:
+        title: 왼쪽에 보일 로고·타이틀 문구.
+        nav_items: `(메뉴 라벨, 누르면 바꿀 screen 값)` 목록. 오른쪽에 순서대로 둔다.
+        screen: 공유 `screen` 상태. 메뉴를 누르면 그 화면으로 바꾼다.
+
+    Returns:
+        None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
+    """
+    with gr.Row(elem_classes=[NAVBAR_CLASS]):
+        gr.Markdown(f"**{title}**", elem_classes=[NAVBAR_LOGO_CLASS])
+        with gr.Row(elem_classes=[NAVBAR_MENU_CLASS]):
+            for label, target in nav_items:
+                nav_btn = gr.Button(label, elem_classes=[NAVBAR_LINK_CLASS], size="sm")
+                nav_btn.click(lambda t=target: t, outputs=screen)
+
+
+FONT_CSS = """
+@import url('https://cdn.jsdelivr.net/npm/@kfonts/nanum-square@0.2.0/index.css');
+
+.gradio-container, .gradio-container * {
+    font-family: '나눔스퀘어', sans-serif !important;
+}
+"""
+"""전체 화면 글꼴을 나눔스퀘어로 바꾸는 스타일(jsDelivr CDN, OFL-1.1 라이선스)."""
+
+
+def app_css(role: Role | str) -> str:
+    """역할의 앱 전체에 적용할 스타일을 한데 모은다.
+
+    스티키 메뉴, 뒤로 가기 화살표, 페이지네이션, 가운데 정렬 Row·텍스트, 넓은 간격 Row, 모달, 글꼴,
+    역할별 시그니처 색, 상단 내비바 스타일을 합친다.
+
+    Args:
+        role: `Role` 값 또는 같은 문자열.
+
+    Returns:
+        str: `gr.Blocks.launch(css=...)`에 그대로 넘기는 전체 스타일.
+    """
+    return (
+        STICKY_TOOLBAR_CSS + BACK_BUTTON_CSS + PAGINATION_CSS + CENTER_ROW_CSS + CENTERED_TEXT_CSS
+        + WIDE_GAP_ROW_CSS + MODAL_CSS + FONT_CSS + accent_css(role) + navbar_css(role)
+    )
 
 # ---------------------------------------------------------------------------
 # 화면 이름 (`screen` 공유 상태에 넣는 값). spec §2.3.3 화면 전환 그림의 상태 이름과 같다.
@@ -245,6 +702,35 @@ def format_answer_markdown(answer: Answer, show_notice: bool = False) -> str:
             sources = ", ".join(citation_label(c) for c in step.citations)
             lines.append(f"   - 출처: {sources}")
     return "\n".join(lines)
+
+
+def info_box_html(
+    fields: list[tuple[str, str]], *, color: str = "#f4f4f5", align: str = "center", title: str | None = None,
+) -> str:
+    """`라벨 : 값` 줄을 둥근 박스 안에 세로로 나열한 HTML을 만든다.
+
+    고객 신고 상세·장애 분석 대화가 접수 정보를 똑같은 모양으로 보이는 데 함께 쓴다. 장애 분석 대화의
+    조치 결과처럼 다른 색·왼쪽 정렬이 필요하면 `color`·`align`으로 바꾼다.
+
+    Args:
+        fields: `(라벨, 값)` 목록. 보일 순서 그대로 한 줄씩 담는다.
+        color: 박스 배경색. 기본은 옅은 회색.
+        align: 박스 안 텍스트 정렬(`"center"` 또는 `"left"`). 기본은 가운데 정렬.
+        title: 박스 맨 위에 둘 제목. 없으면 생략한다.
+
+    Returns:
+        str: 최대 너비 300px인 박스 HTML. `title`·`label`·`value`는 이스케이프되어 들어간다.
+    """
+    # `gr.HTML`은 내용을 정화하지 않는다. 고객 메모·엔지니어 입력이 들어오므로 값마다 이스케이프한다.
+    heading = f'<div style="font-weight:700;margin-bottom:8px">{escape(title)}</div>' if title else ""
+    rows = "".join(
+        f'<div style="margin:3px 0"><span style="color:#71717a">{escape(label)}</span> : {escape(value)}</div>'
+        for label, value in fields
+    )
+    return (
+        f'<div style="max-width:300px;margin:0 auto;background:{color};border-radius:8px;'
+        f'padding:16px;text-align:{align}">{heading}{rows}</div>'
+    )
 
 
 # ---------------------------------------------------------------------------
