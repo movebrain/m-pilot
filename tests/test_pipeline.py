@@ -1,4 +1,4 @@
-"""pipeline 테스트: 입력 검증, 범위 밖 질문의 검색 진행, 근거 확보·생성·검증 연결, 고객 안내(매뉴얼 검색), 보류 답변 모양."""
+"""pipeline 테스트: 입력 검증, 질문 라우팅, 근거 확보·생성·검증(재생성) 연결, 폴백, 고객 안내(매뉴얼 검색), 보류 답변 모양."""
 
 from types import SimpleNamespace
 
@@ -62,6 +62,11 @@ def fakes(monkeypatch):
         # 엔지니어 답변
         generated_seq=None,  # 값이 있으면 생성 호출마다 하나씩 꺼내 쓴다(1차·폴백 판정을 따로 정할 때)
         check_ok=True,  # 인용 검증을 통과하는가(고객 안내와 엔지니어 답변 공용)
+        check_seq=None,  # 값이 있으면 검증 호출마다 하나씩 꺼내 쓴다(재생성 시험용)
+        check_equipment=[],  # 인용 검증 호출마다 넘긴 설비
+        routed=None,  # 라우팅 모델이 고를 설비. None이면 신고 설비
+        route_error=None,  # 라우팅 모델 장애로 던질 예외
+        route_calls=0,
         search_error=None,  # 검색 장애로 던질 예외
         generate_error=None,  # 생성 장애로 던질 예외
         generated=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
@@ -99,7 +104,14 @@ def fakes(monkeypatch):
     def passes_check(answer, hits, equipment, allow_other_equipment=False):
         fake.check_calls += 1
         fake.allow_flags.append(allow_other_equipment)
-        return fake.check_ok
+        fake.check_equipment.append(equipment)
+        return fake.check_seq.pop(0) if fake.check_seq else fake.check_ok
+
+    def route_question(context, question):
+        fake.route_calls += 1
+        if fake.route_error:
+            raise fake.route_error
+        return fake.routed or context.error_code.equipment
 
     def generate_customer_guidance(context, hits):
         fake.guidance_calls += 1
@@ -111,6 +123,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(pipeline.retriever, "search", search)
     monkeypatch.setattr(pipeline.generator, "generate_engineer_answer", generate_engineer_answer)
     monkeypatch.setattr(pipeline.generator, "passes_check", passes_check)
+    monkeypatch.setattr(pipeline.generator, "route_question", route_question)
     monkeypatch.setattr(pipeline.generator, "generate_customer_guidance", generate_customer_guidance)
     return fake
 
@@ -141,13 +154,11 @@ def test_잘못된_검색_설정은_ValidationError(settings):
 
 
 # --- 범위 밖 질문도 검색으로 이어진다 ----------------------------------
-@pytest.mark.parametrize("question", [
-    "컨베이어 이재 시간 초과 원인이 뭐야?",
-    "SRM 포트에서 정위치 정지 실패 원인?",
-])
-def test_다른_설비나_컨베이어를_말해도_신고_설비로_검색한다(fakes, question):
+def test_4종_밖_설비를_말하면_신고_설비로_검색한다(fakes):
+    question = "컨베이어 이재 시간 초과 원인이 뭐야?"
     answer = ask(question, equipment="AGV")
     assert answer.verdict == Verdict.ANSWERED
+    assert answer.notice is None
     expected_query = f"S-104 주행 위치 편차 {question}"
     assert [
         (kind, equipment.value, query, k)
@@ -156,6 +167,77 @@ def test_다른_설비나_컨베이어를_말해도_신고_설비로_검색한�
         ("manual", "AGV", expected_query, 3 * pipeline.MANUAL_FETCH_FACTOR),
         ("history", "AGV", expected_query, 3),
     ]
+
+
+# --- 엔지니어 답변: 질문 라우팅 ----------------------------------------
+@pytest.mark.parametrize(("question", "expected"), [
+    ("SRM 포트에서 정위치 정지 실패 원인?", ("SRM", None)),
+    ("srm 리셋 방법", ("SRM", None)),
+    ("스태커 크레인 주행 소음", ("SRM", None)),
+    ("미니로더 휠 슬립이 나면?", ("Mini Loader", None)),
+    ("Mini Loader M401 조치", ("Mini Loader", "M401")),
+    ("m401은 어떻게 해?", ("Mini Loader", "M401")),
+    ("A-343 알람이 떠요", ("AGV", "A343")),
+    ("M401이랑 M402 차이", ("Mini Loader", None)),  # 같은 설비 코드가 여럿이면 코드로 거르지 않는다
+    ("RTV와 AGV 차이가 뭐야?", ("SRM", None)),  # 여러 설비면 신고 설비
+    ("RTVX 모델", (None, None)),  # 영문 별칭은 단어 경계에서만
+    ("SRM100 형번", ("SRM", None)),  # 영문 별칭 뒤 숫자는 형번이라 그 설비로 본다
+    ("XS101 부품", (None, None)),  # 코드는 앞에 영문·숫자가 붙으면 아니다
+    ("리셋은 어떻게 해?", (None, None)),
+])
+def test_설비_이름과_에러코드로_라우팅한다(question, expected):
+    equipment, code = pipeline._route_by_rules(question, pipeline.Equipment.SRM)
+    assert (equipment.value if equipment else None, code) == expected
+
+
+def test_다른_설비를_말하면_그_설비로_질문_원문을_검색하고_모델에_묻지_않는다(fakes):
+    question = "SRM 포트에서 정위치 정지 실패 원인?"
+    ask(question, equipment="AGV")
+    assert [(kind, equipment.value, query, k) for kind, equipment, query, k in fakes.searches] == [
+        ("manual", "SRM", question, 3), ("history", "SRM", question, 3),
+    ]
+    assert fakes.route_calls == 0
+
+
+def test_다른_설비의_에러코드를_말하면_그_코드의_매뉴얼만_남긴다(fakes):
+    own = chunk_hit("manual:mld:5:1", "M401")
+    other = chunk_hit("manual:mld:6:1", "M402")
+    common = chunk_hit("manual:mld:7:1")
+    fakes.manual_hits = [other, own, common]
+    question = "M401은 어떻게 조치해?"
+    ask(question, equipment="RTV")
+    assert fakes.searches[0] == ("manual", pipeline.Equipment.MINI_LOADER, question, 3 * pipeline.MANUAL_FETCH_FACTOR)
+    assert fakes.hits_seen == [[own, common, "history-hit"]]
+
+
+def test_다른_설비로_답하면_그_설비로_인용을_검증하고_안내를_붙인다(fakes):
+    answer = ask("SRM 포트에서 정위치 정지 실패 원인?", equipment="AGV")
+    assert answer.verdict == Verdict.ANSWERED
+    assert answer.notice == pipeline.ROUTED_EQUIPMENT_NOTICE
+    assert fakes.cross_flags == [True]  # 생성에는 다른 설비 근거 규칙을 붙인다
+    assert fakes.check_equipment == [pipeline.Equipment.SRM]
+    assert fakes.allow_flags == [False]  # 대상 설비와는 일치해야 한다
+
+
+def test_설비를_말하지_않으면_모델이_고른_설비로_검색한다(fakes):
+    fakes.routed = pipeline.Equipment.RTV
+    ask("레일 위 대차가 멈췄어", equipment="AGV")
+    assert fakes.route_calls == 1
+    assert [s[1] for s in fakes.searches] == [pipeline.Equipment.RTV, pipeline.Equipment.RTV]
+
+
+def test_라우팅_모델이_실패하면_신고_설비로_계속한다(fakes):
+    fakes.route_error = DependencyError("모델 장애")
+    answer = ask("위치가 어긋나요")
+    assert answer.verdict == Verdict.ANSWERED
+    assert [s[1].value for s in fakes.searches] == ["SRM", "SRM"]
+
+
+def test_다른_설비로_라우팅해도_보류하면_폴백한다(fakes):
+    fakes.generated_seq = [HOLD, ANSWERED]
+    answer = ask("SRM 포트에서 정위치 정지 실패 원인?", equipment="AGV")
+    assert [s[1] for s in fakes.searches][2:] == [None, None]
+    assert answer.notice == pipeline.CROSS_EQUIPMENT_NOTICE
 
 
 def test_밖_설비_질문에_모델이_근거_부족이라_하면_근거_부족으로_알린다(fakes):
@@ -212,10 +294,20 @@ def test_모델이_답하면_생성한_답변을_돌려준다(fakes):
     assert fakes.check_calls == 1
 
 
-def test_인용_검증에_실패하면_DependencyError(fakes):
+def test_인용_검증에_실패하면_한_번_다시_생성하고_그래도_실패하면_DependencyError(fakes):
     fakes.check_ok = False
     with pytest.raises(DependencyError):
         ask("위치가 어긋나요")
+    assert fakes.generate_calls == 1 + pipeline.MAX_REGENERATIONS
+    assert len(fakes.searches) == 2  # 재생성은 다시 검색하지 않는다
+
+
+def test_다시_생성한_답이_검증을_통과하면_그_답을_돌려준다(fakes):
+    second = Answer(verdict=Verdict.ANSWERED, steps=[AnswerStep(text="두 번째", citations=[])], notice=None)
+    fakes.generated_seq = [ANSWERED, second]
+    fakes.check_seq = [False, True]
+    assert ask("위치가 어긋나요") is second
+    assert fakes.generate_calls == 2
 
 
 @pytest.mark.parametrize("hold", [
@@ -242,7 +334,7 @@ def test_생성_장애는_DependencyError_그대로_올라간다(fakes):
 
 
 # --- 엔지니어 답변: 다른 설비 폴백 -------------------------------------
-QUESTION = "SRM 포트에서 정위치 정지 실패 원인?"
+QUESTION = "포트에서 정위치 정지 실패 원인?"  # 설비를 말하지 않아 신고 설비로 라우팅된다
 
 
 def test_모델이_답하면_폴백하지_않는다(fakes):
