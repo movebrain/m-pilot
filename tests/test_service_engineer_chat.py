@@ -36,7 +36,7 @@ from mpilot.models import (
     Verdict,
 )
 
-_SETTINGS = SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5)
+_SETTINGS = SearchSettings(manual_k=3, history_k=3)
 _CODE = ErrorCode(
     equipment=Equipment.SRM, code="S115", name="리프트 엔코더 편차", severity=Severity.HIGH,
     action_owner=ActionOwner.ENGINEER, cause="원인", action="조치", manual_id="srm_rev1_2", page=41,
@@ -156,8 +156,9 @@ def test_timeout_is_not_saved(backend):
 @pytest.mark.parametrize("detail", [
     _detail(status=CaseStatus.COMPLETED),
     _detail(status=CaseStatus.COMPLETED, route=Route.SELF_GUIDE),
+    _detail(status=CaseStatus.IN_PROGRESS, route=Route.SELF_GUIDE),  # 고객이 기술지원접수로 이관하기 전
 ])
-def test_completed_case_skips_pipeline(backend, detail):
+def test_closed_case_skips_pipeline(backend, detail):
     backend["detail"] = detail
     with pytest.raises(InvalidStateError):
         service.send_chat_question("SC-1", "질문")

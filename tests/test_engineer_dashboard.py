@@ -82,13 +82,6 @@ def test_case_rows_follow_headers_and_labels():
     assert row == ["SC-1", "SRM", "S115", "리프트 엔코더 편차", "상", "고객 안내", "조치 완료", "2026-10-27 10:00"]
 
 
-def test_is_support_row():
-    support, self_guide = dashboard.case_rows([_detail("SC-1", 27), _detail("SC-2", 27, route=Route.SELF_GUIDE)])
-    assert dashboard.is_support_row(support)
-    assert not dashboard.is_support_row(self_guide)
-    assert not dashboard.is_support_row([""])
-
-
 def test_load_rows_hides_error_text(monkeypatch):
     warnings = []
 
@@ -128,14 +121,15 @@ def test_select_support_row_opens_chat(monkeypatch):
     assert handlers["on_select"](rows, SimpleNamespace(index=[1, 0])) == ("SC-b", dashboard.common.SCREEN_ENGINEER_CHAT)
 
 
-def test_select_self_guide_row_stays_with_notice(monkeypatch):
-    notices = []
+def test_select_self_guide_and_completed_rows_open_chat(monkeypatch):
+    # 고객 확인 전 셀프 가이드 건과 완료 건도 열린다(대화 화면이 읽기 전용으로 보여 준다).
     _, handlers, _ = _build(monkeypatch)
-    monkeypatch.setattr(dashboard.gr, "Info", notices.append)
-    rows = dashboard.case_rows([_detail("SC-g", 27, route=Route.SELF_GUIDE)])
-
-    assert handlers["on_select"](rows, SimpleNamespace(index=[0, 0])) == (gr.skip(), gr.skip())
-    assert notices == [dashboard.SELF_GUIDE_NOTICE]
+    rows = dashboard.case_rows([
+        _detail("SC-g", 27, route=Route.SELF_GUIDE, status=CaseStatus.IN_PROGRESS),
+        _detail("SC-d", 26, status=CaseStatus.COMPLETED),
+    ])
+    assert handlers["on_select"](rows, SimpleNamespace(index=[0, 0])) == ("SC-g", dashboard.common.SCREEN_ENGINEER_CHAT)
+    assert handlers["on_select"](rows, SimpleNamespace(index=[1, 0])) == ("SC-d", dashboard.common.SCREEN_ENGINEER_CHAT)
 
 
 def test_select_empty_row_stays(monkeypatch):
@@ -146,8 +140,9 @@ def test_select_empty_row_stays(monkeypatch):
 def test_screen_change_reloads_only_when_visible(monkeypatch):
     _, handlers, calls = _build(monkeypatch)
 
-    column, rows = handlers["on_screen_change"](dashboard.SCREEN, "completed")
-    assert column.visible and rows[0][0] == "SC-1" and calls == [CaseStatus.COMPLETED]
+    column, rows, label, page = handlers["on_screen_change"](dashboard.SCREEN, "completed")
+    assert column.visible and rows[0][0] == "SC-1" and page == 0 and calls == [CaseStatus.COMPLETED]
+    assert label == "1 / 1"
 
-    column, rows = handlers["on_screen_change"](dashboard.common.SCREEN_ENGINEER_CHAT, "")
+    column, rows, label, page = handlers["on_screen_change"](dashboard.common.SCREEN_ENGINEER_CHAT, "")
     assert not column.visible and rows == gr.skip() and calls == [CaseStatus.COMPLETED]

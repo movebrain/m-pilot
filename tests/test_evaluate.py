@@ -30,7 +30,7 @@ OTHER = "manual:SRM_SPEC_v1:50:2"
 ENG = evaluate.ENGINEER
 CUS = evaluate.CUSTOMER
 
-SETTINGS = SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.35)
+SETTINGS = SearchSettings(manual_k=3, history_k=3)
 
 
 def make_code(equipment: str, code: str, severity: str = "하") -> ErrorCode:
@@ -185,7 +185,7 @@ def test_생성_실패는_메시지를_남기고_다음_문항을_계속한다(t
 
 def test_pipeline이_거부한_검색_설정은_삼키지_않고_올린다(tmp_path, behavior, monkeypatch):
     def reject(*args):
-        raise ValidationError("evidence_threshold가 허용 범위를 벗어났습니다")
+        raise ValidationError("manual_k는 1 이상이어야 합니다")
 
     monkeypatch.setattr(evaluate.pipeline, "run_engineer_answer", reject)
     monkeypatch.setattr(evaluate.pipeline, "run_customer_guidance", reject)
@@ -267,7 +267,16 @@ def test_고객_안내_문항의_질문은_증상_메모로_넘기고_비우면_
     assert memos == ["모터에서 소리가 난다", None]
 
 
-def test_고객_안내_문항의_코드는_셀프_가이드_후보여야_한다(tmp_path, traits, monkeypatch):
+def test_답변_불가_고객_안내_문항은_후보가_아닌_코드도_된다(tmp_path, behavior, traits):
+    traits["severity"] = "상"  # 엔지니어 필요 코드를 고객 안내 흐름에 직접 넣어 안전 장치를 시험한다
+    behavior["메모"] = held()
+
+    result = run(tmp_path, [("SRM", CODE, "메모", "insufficient_evidence", [], CUS)])
+
+    assert result["results"][0]["outcome"] == "correct_hold"
+
+
+def test_답변_가능_고객_안내_문항의_코드는_셀프_가이드_후보여야_한다(tmp_path, traits, monkeypatch):
     calls = []
     monkeypatch.setattr(evaluate.pipeline, "run_customer_guidance", lambda *a: calls.append(a))
     traits["severity"] = "상"  # 심각도 상은 셀프 가이드 후보가 아니다
@@ -379,7 +388,7 @@ def test_결과를_JSON_파일로_남기고_반환값과_같다(tmp_path, behavi
     assert set(result) == {"evaluated_at", "versions", "settings", "results", "summary", "caveats"}
     assert set(result["summary"]) == {ENG, CUS, "complete", "passed"}
     assert {r["purpose"] for r in result["results"]} == {ENG, CUS}
-    assert result["settings"] == {"manual_k": 3, "history_k": 3, "evidence_threshold": 0.35}
+    assert result["settings"] == {"manual_k": 3, "history_k": 3}
     assert result["versions"]["chat_model"] == "chat-x" and result["versions"]["embedding_model"] == "embed-x"
     assert len(result["versions"]["prompts_sha256"]) == 64 and len(result["versions"]["questions_sha256"]) == 64
     assert result["caveats"], "낙관적 수치라는 주의가 결과에 함께 남아야 한다"

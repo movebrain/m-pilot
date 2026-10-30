@@ -44,6 +44,7 @@ from mpilot.models import (
     Equipment,
     ErrorCode,
     GuideFailure,
+    InvalidStateError,
     Resolution,
     Route,
     ServiceCase,
@@ -245,7 +246,7 @@ def fetch_case_detail(case_id: str) -> CaseDetail:
 def _save_new_case(
     case_id: str, data: CaseInput, route: Route, guide_failure: GuideFailure | None, answer: Answer | None
 ) -> CaseDetail:
-    """새 신고를 저장한다. 셀프 가이드(`answer`가 있음)는 곧바로 완료로 둔다."""
+    """새 신고를 저장한다. 셀프 가이드(`answer`가 있음)는 고객 확인 전까지 조치 중으로 둔다."""
     with _lock:
         store = _require_store()
         if (data.equipment, data.code) not in store.error_codes:
@@ -253,11 +254,10 @@ def _save_new_case(
         if case_id in store.cases:
             raise DependencyError(f"접수번호가 이미 있습니다: {case_id}")
         now = datetime.now(UTC)
-        done = answer is not None
         store.cases[case_id] = ServiceCase(
             case_id=case_id, equipment=data.equipment, code=data.code, memo=data.memo, source=Source.REPORTED,
-            status=CaseStatus.COMPLETED if done else CaseStatus.RECEIVED, route=route,
-            guide_failure=guide_failure, guidance_answer=answer, created_at=now, completed_at=now if done else None,
+            status=CaseStatus.IN_PROGRESS if answer is not None else CaseStatus.RECEIVED, route=route,
+            guide_failure=guide_failure, guidance_answer=answer, created_at=now, completed_at=None,
         )
         return fake_service._to_detail(store, store.cases[case_id])
 
@@ -272,6 +272,29 @@ def save_self_guide_case(case_id: str, data: CaseInput, guidance_answer: Answer)
 def save_support_case(case_id: str, data: CaseInput, guide_failure: GuideFailure | None) -> CaseDetail:
     """`rdb.save_support_case`의 가짜. 계약은 같다."""
     return _save_new_case(case_id, data, Route.SUPPORT, guide_failure, None)
+
+
+def _update_pending_self_guide(case_id: str, **update) -> CaseDetail:
+    """고객 확인을 기다리는 셀프 가이드 건(`self_guide`·`in_progress`)을 잠그고 `update`를 적용한다."""
+    with _lock:
+        store = _require_store()
+        case = fake_service._get_case(store, case_id)
+        if case.route is not Route.SELF_GUIDE or case.status is not CaseStatus.IN_PROGRESS:
+            raise InvalidStateError("이미 처리된 셀프 가이드 건")
+        store.cases[case_id] = case.model_copy(update=update)
+        return fake_service._to_detail(store, store.cases[case_id])
+
+
+def resolve_self_guide_case(case_id: str) -> CaseDetail:
+    """`rdb.resolve_self_guide_case`의 가짜. 계약은 같다."""
+    return _update_pending_self_guide(
+        case_id, status=CaseStatus.COMPLETED, completed_at=datetime.now(UTC)
+    )
+
+
+def escalate_self_guide_case(case_id: str) -> CaseDetail:
+    """`rdb.escalate_self_guide_case`의 가짜. 계약은 같다."""
+    return _update_pending_self_guide(case_id, route=Route.SUPPORT, guide_failure=GuideFailure.UNRESOLVED)
 
 
 def fetch_chat_turns(case_id: str) -> list[ChatTurn]:
@@ -333,6 +356,8 @@ _TARGETS = (
             "fetch_case_detail": fetch_case_detail,
             "save_self_guide_case": save_self_guide_case,
             "save_support_case": save_support_case,
+            "resolve_self_guide_case": resolve_self_guide_case,
+            "escalate_self_guide_case": escalate_self_guide_case,
             "fetch_chat_turns": fetch_chat_turns,
             "save_chat_turn": save_chat_turn,
             "save_confirmed_resolution": save_confirmed_resolution,

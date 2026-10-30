@@ -6,7 +6,9 @@
 
 책임(spec §2.7):
     - 문항의 `purpose`(`engineer_chat`·`customer_guidance`)별로 따로 집계한다. 고객 안내 문항의 `question`은
-      신고 증상 메모이며 비워도 된다. 고객 안내 문항의 코드는 셀프 가이드 후보여야 한다.
+      신고 증상 메모이며 비워도 된다. 답변 가능 고객 안내 문항의 코드는 셀프 가이드 후보여야 한다. 답변 불가 문항은
+      조치 구분이 엔지니어 필요인 코드를 고객 안내 흐름에 직접 넣어 만든다(운영에서는 경로 분기가 먼저 엔지니어에게
+      접수하므로, 고객에게 엔지니어 조치를 안내하지 않는 안전 장치를 시험한다).
     - 문항은 답변 가능(`expected=answered`, 정답 근거 `gold_ref_ids`가 있다)과 답변 불가
       (`expected=insufficient_evidence`, `gold_ref_ids=[]`)로 나뉜다.
     - 지표와 합격선: 환각(답변 불가 문항 중 `answered`) 1건 이하, 엉뚱한 출처(답변 가능 문항 중 `answered`인데
@@ -16,18 +18,19 @@
     - 정답 근거 기준: 엔지니어 대화는 인용에 `gold_ref_ids`가 하나라도 있으면 만족한다. 고객 안내는 고객이
       수행할 수 있는 절차만 담아야 하므로 인용이 모두 `gold_ref_ids` 안에 있어야 만족한다.
     - 목적별로 답변 가능 30개·답변 불가 20개에 못 미치면 합격 여부를 판정하지 않는다(평가 미완료). 전체 합격은
-      두 목적이 모두 합격일 때다(`evidence_threshold`를 둘이 공유한다).
+      두 목적이 모두 합격일 때다(두 목적이 같은 `manual_k`를 공유한다).
     - 생성 실패(`DependencyError`)는 별도로 센다. 답변 가능 문항에서는 정답 적중이 아니고, 답변 불가 문항에서는
       환각이 아니다.
     - 기록 항목: `versions`(모델 이름, 프롬프트·문항 파일 해시), `settings`(검색 설정), `results`(문항별 판정·인용·
       결과 분류), `summary`(건수·합격선·합격 여부), `caveats`(작은 표본 해석 주의).
-    - 후보 `evidence_threshold`마다 `.env`의 값을 바꿔 따로 실행한다. 결과 파일이 설정을 함께 남긴다.
+    - 후보 `manual_k`·`history_k`(`.env`의 `MANUAL_K`·`HISTORY_K`)마다 따로 실행한다. 결과 파일이 설정을 함께 남긴다.
     - 사람 검수(생성된 고객 안내 전부, 엔지니어 `answered` 답변 최소 5건)는 이 스크립트 밖에서 한다. 고객 안내의
       안전 수칙 준수는 자동으로 재지 않는다.
 
-실행 전제: 검색 색인이 만들어져 있어야 한다(앱을 한 번 시작하면 `service.prepare_search_index`가 만든다).
+실행 전제: `main`이 `app.initialize()`로 DB·검색 저장소·모델을 연결하고 검색 색인을 준비한다. `run_eval`을 직접
+부르려면 같은 연결이 끝나 있어야 한다.
 
-의존: `config`, `db.rdb`, `db.vectordb`, `models`, `rag.generator`, `rag.pipeline`을 쓸 수 있다.
+의존: `config`, `db.rdb`, `models`, `rag.generator`, `rag.pipeline`, `app`(`initialize`)을 쓸 수 있다.
 소유: RAG 파트
 """
 
@@ -43,7 +46,7 @@ from pathlib import Path
 from pydantic import ValidationError as PydanticValidationError
 
 from mpilot.config import load_config
-from mpilot.db import rdb, vectordb
+from mpilot.db import rdb
 from mpilot.models import (
     Answer,
     CaseContext,
@@ -74,7 +77,7 @@ MIN_HIT = 21  # 정답 적중 최소 건수(답변 가능 30개의 70%, 초기 �
 
 _CAVEATS = [
     "합격선은 이 문항 안의 결정 규칙이며 실제 환각률의 보증이 아니다.",
-    "임계값 선택과 합격 판정에 같은 문항을 쓰므로 수치가 실제보다 낙관적이다.",
+    "k 선택과 합격 판정에 같은 문항을 쓰므로 수치가 실제보다 낙관적이다.",
     "고객 안내는 인용이 모두 정답 근거 안에 있어야 적중이고, 엔지니어 대화는 하나라도 있으면 적중이다.",
 ]
 
@@ -184,10 +187,11 @@ def _find_error_code(question: _Question, cache: dict[Equipment, dict[str, Error
         raise ValidationError(
             f"{question.no}번째 행: 에러코드 표에 없는 코드입니다: {question.equipment.value} {question.code}"
         )
-    if question.purpose == CUSTOMER and not is_self_guide_candidate(found):
+    # 답변 불가 문항은 후보가 아닌 코드를 고객 흐름에 직접 넣어 안전 장치를 시험하므로 후보 검사에서 뺀다.
+    if question.purpose == CUSTOMER and question.expected == Verdict.ANSWERED and not is_self_guide_candidate(found):
         raise ValidationError(
-            f"{question.no}번째 행: 고객 안내 문항의 코드는 셀프 가이드 후보(심각도 상 아님, 고객사 조치)여야 합니다: "
-            f"{question.equipment.value} {question.code}"
+            f"{question.no}번째 행: 답변 가능 고객 안내 문항의 코드는 셀프 가이드 후보(심각도 상 아님, 고객사 조치)여야 "
+            f"합니다: {question.equipment.value} {question.code}"
         )
     return found
 
@@ -400,23 +404,21 @@ def _format_summary(summary: dict[str, object]) -> str:
 
 
 def main() -> int:
-    """설정·DB·검색 저장소·모델을 연결해 평가를 실행하고 성공 0·실패 1을 반환한다.
+    """앱과 같은 설정으로 연결·색인을 준비해 평가를 실행하고 성공 0·실패 1을 반환한다.
 
-    채팅 모델은 `temperature=0`으로 만든다(실행마다 결과가 달라지는 편차를 줄인다).
+    `app.initialize()`가 만든 채팅 모델을 `temperature=0`으로 다시 만들어 끼운다(실행마다 결과가 달라지는 편차를
+    줄인다).
 
     Returns:
         int: 평가가 끝나면 `0`(합격 여부와 무관), 검증 오류나 DB·모델 장애 등 앱 예외가 났으면 `1`.
             앱 예외는 밖으로 던지지 않고 안내를 출력한 뒤 `1`로 바꿔 돌려준다.
     """
-    # langchain_openai는 실제 실행 때만 필요하므로 여기서 불러온다(app.py와 같다).
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    import app  # Gradio를 불러오므로 실행할 때만 가져온다
+    from langchain_openai import ChatOpenAI  # 실제 실행 때만 필요하다(app.py와 같다)
 
     try:
+        app.initialize()
         config = load_config()
-        rdb.connect(config.db_url.get_secret_value())
-        vectordb.connect(
-            OpenAIEmbeddings(model=config.embedding_model_name, api_key=config.openai_api_key.get_secret_value())
-        )
         generator.set_chat_model(
             ChatOpenAI(
                 model=config.chat_model_name,

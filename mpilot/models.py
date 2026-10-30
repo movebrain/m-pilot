@@ -96,10 +96,11 @@ class Route(StrEnum):
 
 
 class GuideFailure(StrEnum):
-    """셀프 가이드 후보가 엔지니어 접수된 사유."""
+    """셀프 가이드 후보가 엔지니어 접수된 사유. `unresolved`는 고객이 안내를 받고도 해결 안 됨을 눌러 이관한 경우다."""
 
     HELD = "held"
     GENERATION_FAILED = "generation_failed"
+    UNRESOLVED = "unresolved"
 
 
 class Source(StrEnum):
@@ -272,7 +273,8 @@ class ServiceCase(_Model):
         status: 처리 상태.
         route: 처리 경로.
         guide_failure: 셀프 가이드 후보였으나 엔지니어 접수된 사유. 그 밖에는 `None`.
-        guidance_answer: 셀프 가이드 내용·단계·출처. `route`가 `self_guide`일 때만 값이 있다.
+        guidance_answer: 셀프 가이드 내용·단계·출처. `route`가 `self_guide`이거나 `guide_failure`가
+            `unresolved`(안내를 보여 준 뒤 이관)일 때만 값이 있다.
         created_at: 신고 시각.
         completed_at: 완료 시각. 완료 전에는 `None`.
     """
@@ -316,8 +318,9 @@ class CustomerCaseResult(_Model):
         error_name: 에러명.
         memo: 증상 메모.
         status: 진행 상태.
+        route: 처리 경로. 셀프 가이드 건에서 해결 확인 버튼을 보일지 정한다.
         created_at: 신고 시각.
-        guidance_answer: 셀프 가이드(단계·출처). 셀프 가이드 건에만 있다.
+        guidance_answer: 셀프 가이드(단계·출처). 셀프 가이드를 받은 건(이관된 건 포함)에만 있다.
         action: 엔지니어가 등록한 실제 조치. 완료된 기술지원 건에만 있다.
         result: 엔지니어가 등록한 조치 결과. 완료된 기술지원 건에만 있다.
     """
@@ -328,6 +331,7 @@ class CustomerCaseResult(_Model):
     error_name: str
     memo: str | None
     status: CaseStatus
+    route: Route
     created_at: datetime
     guidance_answer: Answer | None
     action: str | None
@@ -409,12 +413,10 @@ class SearchSettings(_Model):
     Attributes:
         manual_k: 매뉴얼 근거로 가져올 상위 건수. 처음에는 3으로 시작한다.
         history_k: 이력 근거로 가져올 상위 건수. 처음에는 3으로 시작한다.
-        evidence_threshold: 근거 충분성 임계값. 0 이상의 유한한 실수다. 사람이 평가 결과를 보고 정한다.
     """
 
     manual_k: int
     history_k: int
-    evidence_threshold: float = Field(ge=0, allow_inf_nan=False)
 
 
 class Chunk(_Model):
@@ -462,18 +464,21 @@ def is_self_guide_candidate(error_code: ErrorCode) -> bool:
 
 
 def raise_if_case_completed(case: ServiceCase) -> None:
-    """완료된 건에 질문 저장·조치 결과 등록을 못 하게 막는다(spec §2.10 상태 전이).
+    """완료된 건과 아직 셀프 가이드인 건에 질문 저장·조치 결과 등록을 못 하게 막는다(spec §2.10 상태 전이).
 
-    셀프 가이드 건은 접수 때 곧바로 `completed`가 되므로 같은 규칙으로 막힌다.
+    셀프 가이드 건은 고객이 [기술지원접수]으로 이관(`route=support`)하기 전까지 엔지니어 처리 대상이 아니다.
+    해결완료로 완료된 건은 `completed`라서 같은 규칙으로 막힌다.
 
     Args:
-        case: 상태를 확인할 신고 건. `status`만 읽는다.
+        case: 상태를 확인할 신고 건. `status`와 `route`만 읽는다.
 
     Returns:
-        None: 완료되지 않은 건이면 아무 일도 하지 않는다.
+        None: 완료되지 않은 엔지니어 처리 건이면 아무 일도 하지 않는다.
 
     Raises:
-        InvalidStateError: `case.status`가 `completed`일 때('이미 완료').
+        InvalidStateError: `case.status`가 `completed`이거나 `case.route`가 `self_guide`일 때.
     """
     if case.status == CaseStatus.COMPLETED:
         raise InvalidStateError("이미 완료")
+    if case.route == Route.SELF_GUIDE:
+        raise InvalidStateError("셀프 가이드 건")

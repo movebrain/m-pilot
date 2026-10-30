@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import gradio as gr
 
-from mpilot.models import CaseStatus, CustomerCaseResult, Equipment, Role, ValidationError
+from mpilot.models import CaseStatus, CustomerCaseResult, Equipment, Role, Route, ValidationError
 from mpilot.ui import customer_dashboard as dashboard
 
 
 def _result(case_id: str, status: CaseStatus) -> CustomerCaseResult:
     return CustomerCaseResult(
         case_id=case_id, equipment=Equipment.MINI_LOADER, code="E-101", error_name="포크 위치 센서 오감지",
-        memo=None, status=status, created_at=datetime(2026, 10, 25, 1, 0, tzinfo=timezone.utc),
+        memo=None, status=status, route=Route.SUPPORT, created_at=datetime(2026, 10, 25, 1, 0, tzinfo=timezone.utc),
         guidance_answer=None, action=None, result=None,
     )
 
@@ -23,6 +23,20 @@ def test_case_rows_follow_headers_and_labels():
     [row] = dashboard.case_rows([_result("SC-1a2b3c4d", CaseStatus.IN_PROGRESS)])
     assert len(row) == len(dashboard.TABLE_HEADERS)
     assert row == ["SC-1a2b3c4d", "Mini Loader", "E-101", "포크 위치 센서 오감지", "조치 중", "2026-10-25 10:00"]
+
+
+def test_row_status_label_marks_self_guide_completion():
+    from mpilot.models import Answer
+
+    guide = Answer(verdict="answered", steps=[], notice=None)
+    self_guided = _result("SC-1", CaseStatus.COMPLETED)
+    self_guided = self_guided.model_copy(update={"guidance_answer": guide})
+    assert dashboard.row_status_label(self_guided) == dashboard.SELF_GUIDE_COMPLETED_LABEL
+
+
+def test_row_status_label_keeps_normal_label_for_engineer_completion():
+    assert dashboard.row_status_label(_result("SC-1", CaseStatus.COMPLETED)) == "조치 완료"
+    assert dashboard.row_status_label(_result("SC-1", CaseStatus.IN_PROGRESS)) == "조치 중"
 
 
 def test_load_rows_passes_filter(monkeypatch):
@@ -93,8 +107,9 @@ def test_select_empty_row_stays(monkeypatch):
 def test_screen_change_reloads_only_when_visible(monkeypatch):
     _, handlers, calls = _build(monkeypatch)
 
-    column, rows = handlers["on_screen_change"](dashboard.SCREEN, "in_progress")
-    assert column.visible and rows[0][0] == "SC-1" and calls == [CaseStatus.IN_PROGRESS]
+    column, rows, label, page = handlers["on_screen_change"](dashboard.SCREEN, "in_progress")
+    assert column.visible and rows[0][0] == "SC-1" and page == 0 and calls == [CaseStatus.IN_PROGRESS]
+    assert label == "1 / 1"
 
-    column, rows = handlers["on_screen_change"](dashboard.common.SCREEN_CUSTOMER_DETAIL, "")
+    column, rows, label, page = handlers["on_screen_change"](dashboard.common.SCREEN_CUSTOMER_DETAIL, "")
     assert not column.visible and rows == gr.skip() and calls == [CaseStatus.IN_PROGRESS]  # 숨겨지면 읽지 않는다

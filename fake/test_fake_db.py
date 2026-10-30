@@ -22,9 +22,11 @@ from mpilot.models import (
     CitationKind,
     DependencyError,
     Equipment,
+    GuideFailure,
     InvalidStateError,
     NotFoundError,
     Resolution,
+    Route,
     SearchSettings,
     Source,
     ValidationError,
@@ -62,7 +64,7 @@ def _config() -> AppConfig:
         manuals_dir=Path("data/manuals"),
         codes_path=Path("data/errorcodes.csv"),
         history_seed_path=Path("data/history_seed.csv"),
-        search=SearchSettings(manual_k=3, history_k=3, evidence_threshold=0.5),
+        search=SearchSettings(manual_k=3, history_k=3),
         demo_accounts={},
     )
 
@@ -158,12 +160,50 @@ def test_save_case_with_duplicate_id_raises_dependency_error(db):
         fake_db.save_support_case("SC-aaaa0001", _input(), None)
 
 
-def test_save_self_guide_case_is_completed_without_resolution(db):
+def test_save_self_guide_case_is_in_progress_without_resolution(db):
     saved = fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
     case = saved.service_case
-    assert case.status is CaseStatus.COMPLETED and case.guidance_answer == _answered()
-    assert saved.resolution is None
+    assert case.status is CaseStatus.IN_PROGRESS and case.guidance_answer == _answered()
+    assert saved.resolution is None and case.completed_at is None
+
+
+def test_resolve_self_guide_case_completes_it_once(db):
+    fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
+    case = fake_db.resolve_self_guide_case("SC-aaaa0001").service_case
+    assert (case.route, case.status) == (Route.SELF_GUIDE, CaseStatus.COMPLETED)
     assert case.completed_at is not None and case.completed_at >= case.created_at
+    with pytest.raises(InvalidStateError):
+        fake_db.resolve_self_guide_case("SC-aaaa0001")
+    with pytest.raises(InvalidStateError):
+        fake_db.escalate_self_guide_case("SC-aaaa0001")
+
+
+def test_escalate_self_guide_case_moves_to_support_and_keeps_guide(db):
+    fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
+    case = fake_db.escalate_self_guide_case("SC-aaaa0001").service_case
+    assert (case.route, case.status, case.guide_failure) == (
+        Route.SUPPORT, CaseStatus.IN_PROGRESS, GuideFailure.UNRESOLVED
+    )
+    assert case.guidance_answer == _answered() and case.completed_at is None
+    fake_db.save_chat_turn("SC-aaaa0001", "질문", _answered())  # 이관 뒤에는 질문을 저장할 수 있다
+    with pytest.raises(InvalidStateError):
+        fake_db.escalate_self_guide_case("SC-aaaa0001")
+
+
+def test_pending_self_guide_case_blocks_chat_and_resolution(db):
+    fake_db.save_self_guide_case("SC-aaaa0001", _input(), _answered())
+    with pytest.raises(InvalidStateError):
+        fake_db.save_chat_turn("SC-aaaa0001", "질문", _answered())
+    with pytest.raises(InvalidStateError):
+        fake_db.save_confirmed_resolution("SC-aaaa0001", Resolution(cause="원인", action="조치", result="결과"))
+
+
+def test_self_guide_answers_reject_support_case_and_unknown_id(db):
+    fake_db.save_support_case("SC-aaaa0002", _input(), None)
+    with pytest.raises(InvalidStateError):
+        fake_db.resolve_self_guide_case("SC-aaaa0002")
+    with pytest.raises(NotFoundError):
+        fake_db.escalate_self_guide_case("SC-없음")
 
 
 def test_save_self_guide_case_requires_answered_guidance(db):
@@ -262,13 +302,13 @@ def indexed():
 
 def test_manual_search_is_filtered_by_equipment_and_sorted(indexed):
     for equipment in Equipment:
-        hits = retriever.search_manual(equipment, "주행 인버터 과전류 점검", 5)
+        hits = retriever.search(CitationKind.MANUAL, equipment, "주행 인버터 과전류 점검", 5)
         assert hits and {h.equipment for h in hits} == {equipment}
         assert [h.distance for h in hits] == sorted(h.distance for h in hits)
 
 
 def test_history_search_returns_seed_history_of_same_equipment(indexed):
-    hits = retriever.search_history(Equipment.RTV, "주행 휠 스트레치 필름", 3)
+    hits = retriever.search(CitationKind.HISTORY, Equipment.RTV, "주행 휠 스트레치 필름", 3)
     assert hits and all(h.kind is CitationKind.HISTORY and h.equipment is Equipment.RTV for h in hits)
 
 
@@ -280,4 +320,4 @@ def test_confirmed_case_becomes_searchable_once(indexed):
     vectordb.index_history(done)
     vectordb.index_history(done)  # 같은 case_id는 덮어쓴다
     assert len(store.get()["ids"]) == before + 1
-    assert retriever.search_history(Equipment.RTV, "유니크원인XYZ", 1)[0].ref_id == "history:SC-index001"
+    assert retriever.search(CitationKind.HISTORY, Equipment.RTV, "유니크원인XYZ", 1)[0].ref_id == "history:SC-index001"

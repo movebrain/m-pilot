@@ -9,12 +9,9 @@
     - `--offline`: 키 없이 배선만 확인한다. 해시 임베딩을 쓰고 LLM은 연결하지 않아, 고객 안내 생성은
       `DependencyError`가 되어 엔지니어 접수(`generation_failed`)로 떨어진다. 오류가 아니라 정해진 동작이다.
     - `--both`: 엔지니어 앱(7861)도 같은 프로세스에 띄운다. 없으면 고객 앱(7860)만 띄운다.
-    - `--evidence-threshold T`: 엔지니어 검색 근거 충분성 임계값(`EVIDENCE_THRESHOLD`)을 T로 정한다. 없으면 프로세스
-      환경변수 값, 그것도 없으면 1.0이다. 환경변수가 `.env`보다 우선하므로 `.env`에 적은 값은 쓰이지 않는다.
-      1.0은 가짜 DB 청크 기준으로 잰 수동 테스트용 임시 값이며 평가(#49)로 정한 값이 아니다.
     - 앱이 쓰지 않는 MySQL·데모 계정 값은 `load_config`가 요구하므로, `.env`나 환경에 없을 때만 더미를 둔다.
 
-실행: 저장소 루트에서 `python -m fake.run [--offline] [--both] [--evidence-threshold T]`.
+실행: 저장소 루트에서 `python -m fake.run [--offline] [--both]`.
 의존: `app`, `fake_db`, `mpilot.db.vectordb`, `mpilot.rag.generator`.
 소유: UI·총괄 파트
 """
@@ -22,7 +19,6 @@
 from __future__ import annotations
 
 import argparse
-import math
 import os
 import sys
 from collections.abc import Sequence
@@ -50,9 +46,6 @@ _OFFLINE_ENV = {
     "OPENAI_CHAT_MODEL": "offline",
     "OPENAI_EMBEDDING_MODEL": "offline",
 }
-# 실제 임베딩 기준 검색 거리는 관련 질문이 0.75~1.22, 무관·교차 설비 질문이 1.00 이상이었다(가짜 DB 청크, 질문 19개).
-# 1.0은 그 표본에서 무관 질문을 통과시키지 않는 가장 높은 값이다. 평가(#49)로 정한 값이 아니다.
-_DEFAULT_EVIDENCE_THRESHOLD = 1.0
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -60,33 +53,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="가짜 DB 위에서 M-Pilot 앱 실행")
     parser.add_argument("--offline", action="store_true", help="OpenAI 키 없이 해시 임베딩으로 배선만 확인한다")
     parser.add_argument("--both", action="store_true", help="고객 앱(7860)에 더해 엔지니어 앱(7861)도 띄운다")
-    parser.add_argument(
-        "--evidence-threshold", type=float, default=None,
-        help=f"엔지니어 검색 근거 충분성 임계값(0 이상). 없으면 환경변수 EVIDENCE_THRESHOLD, 그것도 없으면 {_DEFAULT_EVIDENCE_THRESHOLD}",
-    )
-    args = parser.parse_args(argv)
-    if args.evidence_threshold is not None and not (math.isfinite(args.evidence_threshold) and args.evidence_threshold >= 0):
-        parser.error("--evidence-threshold는 0 이상의 유한한 실수여야 한다")
-    return args
-
-
-def _apply_evidence_threshold(threshold: float | None) -> str:
-    """`EVIDENCE_THRESHOLD` 환경변수를 정한다. 옵션 > 이미 있는 환경변수 > 기본값 순이다.
-
-    환경변수가 `.env`보다 우선하므로 이 값을 정하면 `.env`에 적힌 값은 쓰이지 않는다(`load_config` 규칙).
-
-    Args:
-        threshold: `--evidence-threshold` 값. 없으면 None.
-
-    Returns:
-        str: 환경변수에 들어간 값(시작 로그에 보여 주기 위함).
-    """
-    if threshold is not None:
-        value = str(threshold)
-    else:
-        value = os.environ.get("EVIDENCE_THRESHOLD") or str(_DEFAULT_EVIDENCE_THRESHOLD)
-    os.environ["EVIDENCE_THRESHOLD"] = value
-    return value
+    return parser.parse_args(argv)
 
 
 def _set_dummy_env(offline: bool) -> None:
@@ -119,7 +86,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     """
     args = _parse_args(argv)
     _set_dummy_env(args.offline)
-    evidence_threshold = _apply_evidence_threshold(args.evidence_threshold)
 
     # 환경 값을 채운 뒤에 불러온다(import 시점에 설정을 읽지는 않지만 순서를 고정해 둔다).
     import app as app_mod
@@ -141,7 +107,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(f"{app_mod.STARTUP_FAILED_MESSAGE} ({type(e).__name__})", file=sys.stderr)
         raise SystemExit(1) from None
     mode = "offline" if args.offline else "real OpenAI models"
-    print(f"initialized: {mode}, evidence_threshold={evidence_threshold}", flush=True)
+    print(f"initialized: {mode}", flush=True)
     app_mod.build_app(Role.CUSTOMER).launch(server_port=_CUSTOMER_PORT, prevent_thread_lock=args.both)
     if args.both:
         app_mod.build_app(Role.ENGINEER).launch(server_port=_ENGINEER_PORT)

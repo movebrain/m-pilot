@@ -5,7 +5,8 @@
 
 책임:
     - 목록은 `service.list_customer_cases`만 쓴다. 고객에게는 직접 접수한 신고만 보인다.
-    - 상태(`received`, `in_progress`, `completed`)별로 거를 수 있다. 기간·원본 필터, 상태별 건수, 페이지 이동은 범위 밖이다.
+    - 상태(`received`, `in_progress`, `completed`)별로 거를 수 있다. `common.PAGE_SIZE`건씩 페이지로 나눠 보여
+      주고(내부 스크롤 없음), 이전·다음 버튼으로 넘긴다. 기간·원본 필터, 상태별 건수는 범위 밖이다.
     - 표의 행을 누르면 `case_id`를 채우고 고객 신고 상세로, '신고하기'를 누르면 고객 신고 작성으로 이동한다.
     - 조회에 실패하면 표를 비우고 고정 문구(`common.error_message`)만 보인다.
 
@@ -19,13 +20,31 @@ from __future__ import annotations
 import gradio as gr
 
 from mpilot import service
-from mpilot.models import CustomerCaseResult
+from mpilot.models import CaseStatus, CustomerCaseResult
 from mpilot.ui import common
 
 SCREEN = common.SCREEN_CUSTOMER_LIST
 
 TABLE_HEADERS = ["접수번호", "설비", "코드", "에러명", "상태", "접수 시각"]
 """신고 표의 열 이름. `case_rows`가 만드는 행의 순서와 같다."""
+
+SELF_GUIDE_COMPLETED_LABEL = "조치완료(셀프가이드 안내)"
+"""셀프 가이드로 완료된 건의 상태 칸 문구. 고객 목록에는 경로(route) 칸이 따로 없어, 엔지니어가
+조치한 건과 구분하도록 상태 라벨 자체를 다르게 쓴다."""
+
+
+def row_status_label(case: CustomerCaseResult) -> str:
+    """표의 상태 칸에 보일 라벨을 만든다.
+
+    Args:
+        case: 고객 공개 신고.
+
+    Returns:
+        str: 셀프 가이드로 완료된 건은 `SELF_GUIDE_COMPLETED_LABEL`, 그 밖은 `common.status_label` 그대로.
+    """
+    if case.status == CaseStatus.COMPLETED and case.guidance_answer is not None:
+        return SELF_GUIDE_COMPLETED_LABEL
+    return common.status_label(case.status)
 
 
 def case_rows(cases: list[CustomerCaseResult]) -> list[list[str]]:
@@ -35,7 +54,8 @@ def case_rows(cases: list[CustomerCaseResult]) -> list[list[str]]:
         cases: `service.list_customer_cases`가 돌려준 공개 신고 목록(최신순).
 
     Returns:
-        list[list[str]]: `TABLE_HEADERS` 순서의 행 목록. 상태는 화면 라벨, 시각은 한국 시간이다.
+        list[list[str]]: `TABLE_HEADERS` 순서의 행 목록. 상태는 화면 라벨(`row_status_label`),
+            시각은 한국 시간이다.
     """
     return [
         [
@@ -43,7 +63,7 @@ def case_rows(cases: list[CustomerCaseResult]) -> list[list[str]]:
             str(c.equipment),
             c.code,
             c.error_name,
-            common.status_label(c.status),
+            row_status_label(c),
             common.format_datetime(c.created_at),
         ]
         for c in cases
@@ -57,7 +77,8 @@ def load_rows(filter_value: str | None = None) -> list[list[str]]:
         filter_value: 상태 필터(`gr.Radio`)의 값. 빈 문자열이나 `None`은 '전체'다.
 
     Returns:
-        list[list[str]]: 표의 행. 조회에 실패하면 빈 목록이며 `gr.Warning`으로 고정 문구를 보인다.
+        list[list[str]]: 필터에 맞는 전체 행(페이지로 자르기 전). 조회에 실패하면 빈 목록이며
+            `gr.Warning`으로 고정 문구를 보인다.
     """
     try:
         cases = service.list_customer_cases(common.parse_status_filter(filter_value))
@@ -65,6 +86,21 @@ def load_rows(filter_value: str | None = None) -> list[list[str]]:
         gr.Warning(common.error_message(e))
         return []
     return case_rows(cases)
+
+
+def load_page(filter_value: str | None, page: int) -> tuple[list[list[str]], str, int]:
+    """상태 필터 값으로 목록을 읽어 한 페이지만큼의 행을 만든다.
+
+    Args:
+        filter_value: 상태 필터(`gr.Radio`)의 값. 빈 문자열이나 `None`은 '전체'다.
+        page: 보여줄 페이지 번호(0부터). 범위를 벗어나면 안으로 자른다.
+
+    Returns:
+        tuple[list[list[str]], str, int]: (그 페이지의 행, 페이지 표시 문구, 자른 페이지 번호).
+    """
+    rows = load_rows(filter_value)
+    page = common.clamp_page(page, len(rows))
+    return common.page_slice(rows, page), common.page_label(page, len(rows)), page
 
 
 def picked_case_id(rows: list[list[str]], row_index: int) -> str | None:
@@ -93,21 +129,38 @@ def build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: g
     Returns:
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
+    page = gr.State(0)
     with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
-        gr.Markdown("## 고객 신고 목록")
-        new_btn = gr.Button("신고하기", variant="primary")
-        status_filter = gr.Radio(choices=common.status_choices(), value="", label="상태")
-        # value에 함수를 주면 페이지를 열 때마다 목록을 새로 읽는다.
+        with common.status_filter_row() as status_filter:
+            new_btn = gr.Button("신고하기", variant="primary", size="lg", scale=0, min_width=120)
+        # value·initial_label에 함수를 주면 페이지를 열 때마다 첫 페이지를 새로 읽는다.
         table = gr.Dataframe(
-            headers=TABLE_HEADERS, value=load_rows, interactive=False, wrap=True,
-            type="array", label="신고를 누르면 상세를 봅니다",
+            headers=TABLE_HEADERS, value=lambda: load_page(None, 0)[0], interactive=False, wrap=True,
+            type="array", label="신고를 누르면 상세를 봅니다", show_row_numbers=True,
+            max_height=common.TABLE_MAX_HEIGHT,
         )
+        with common.pagination_row(lambda: load_page(None, 0)[1]) as (prev_btn, page_label, next_btn):
+            pass
 
     def on_screen_change(current: str, filter_value: str | None):
-        # 이 화면이 다시 보일 때마다 목록을 새로 읽는다(새 신고·상태 변화 반영).
+        # 이 화면이 다시 보일 때마다 첫 페이지부터 새로 읽는다(새 신고·상태 변화 반영).
         if not common.is_screen_visible(current, SCREEN):
-            return gr.Column(visible=False), gr.skip()
-        return gr.Column(visible=True), load_rows(filter_value)
+            return gr.Column(visible=False), gr.skip(), gr.skip(), gr.skip()
+        rows, label, new_page = load_page(filter_value, 0)
+        return gr.Column(visible=True), rows, label, new_page
+
+    def on_filter_change(filter_value: str | None):
+        # 필터를 바꾸면 첫 페이지로 되돌아간다.
+        rows, label, new_page = load_page(filter_value, 0)
+        return rows, label, new_page
+
+    def on_prev(filter_value: str | None, current_page: int):
+        rows, label, new_page = load_page(filter_value, current_page - 1)
+        return rows, label, new_page
+
+    def on_next(filter_value: str | None, current_page: int):
+        rows, label, new_page = load_page(filter_value, current_page + 1)
+        return rows, label, new_page
 
     def on_select(rows: list[list[str]], evt: gr.SelectData):
         selected = picked_case_id(rows, evt.index[0])
@@ -115,7 +168,10 @@ def build_customer_dashboard_screen(role: gr.State, case_id: gr.State, screen: g
             return gr.skip(), gr.skip()
         return selected, common.SCREEN_CUSTOMER_DETAIL
 
-    screen.change(on_screen_change, inputs=[screen, status_filter], outputs=[column, table])
-    status_filter.change(load_rows, inputs=status_filter, outputs=table)
+    page_outputs = [table, page_label, page]
+    screen.change(on_screen_change, inputs=[screen, status_filter], outputs=[column, *page_outputs])
+    status_filter.change(on_filter_change, inputs=status_filter, outputs=page_outputs)
+    prev_btn.click(on_prev, inputs=[status_filter, page], outputs=page_outputs)
+    next_btn.click(on_next, inputs=[status_filter, page], outputs=page_outputs)
     table.select(on_select, inputs=table, outputs=[case_id, screen])
     new_btn.click(lambda: common.SCREEN_CUSTOMER_FORM, outputs=screen)
