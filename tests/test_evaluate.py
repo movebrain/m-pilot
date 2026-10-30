@@ -119,13 +119,14 @@ def test_없는_문서를_인용하면_인용_검증이_실패한다(env, tmp_pa
     assert summary["passed"]["citation_valid"] is False
 
 
-def test_다른_설비_문서_인용은_폴백_안내가_있을_때만_통과한다(env, tmp_path):
+def test_다른_설비_문서_인용은_폴백이나_라우팅_안내가_있을_때만_통과한다(env, tmp_path):
     env.docs["manual:rtv:1:1"] = "RTV"
     other = answered("manual:rtv:1:1")
     cross = answered("manual:rtv:1:1", notice=evaluate.pipeline.CROSS_EQUIPMENT_NOTICE)
-    env.answers = [other, cross] + [answered()] * 6 + [HOLD] * 4 + [answered()] * 8 + [HOLD] * 4
+    routed = answered("manual:rtv:1:1", notice=evaluate.pipeline.ROUTED_EQUIPMENT_NOTICE)
+    env.answers = [other, cross, routed] + [answered()] * 5 + [HOLD] * 4 + [answered()] * 8 + [HOLD] * 4
     results = run(tmp_path, make_rows())["results"]
-    assert [r["citations_ok"] for r in results[:2]] == [False, True]
+    assert [r["citations_ok"] for r in results[:3]] == [False, True, True]
 
 
 def test_한_문항의_장애는_error로_기록하고_나머지를_계속_실행한다(env, tmp_path):

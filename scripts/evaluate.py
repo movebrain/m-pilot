@@ -16,7 +16,7 @@
     - 기록 항목: `versions`(모델·프롬프트·문항 파일 버전), `settings`(검색 설정), `results`(질문별 판정·인용),
       `summary`(목적별 지표). 합격선을 바꾸면 이유를 평가 결과에 남긴다.
     - 인용 검증은 이 스크립트가 다시 검사한다. 색인에서 인용 문서를 다시 읽어 있는지와 설비가 신고 설비인지를
-      본다(폴백으로 답한 건은 설비 일치를 제외). `locator` 일치는 `generator.passes_check`가 실행 때마다 막는다.
+      본다(폴백이나 다른 설비로 라우팅해 답한 건은 설비 일치를 제외). `locator` 일치는 `generator.passes_check`가 실행 때마다 막는다.
       고객 안내의 안전 수칙 준수는 자동 검증하지 않아 지표로 세지 않는다.
     - 한 문항의 모델·검색 장애는 그 문항의 판정을 `error`로 기록하고 나머지를 계속 실행한다.
     - 사람 검수(생성된 고객 안내 전부, 엔지니어 `answered` 답변 최소 5건)는 이 스크립트 밖에서 한다.
@@ -138,13 +138,13 @@ def _run_row(row: dict[str, str], settings) -> dict[str, object]:
     result.update(verdict=answer.verdict.value, steps=len(answer.steps), notice=answer.notice,
                   citations=[c.ref_id for c in citations])
     if answer.verdict == Verdict.ANSWERED:
-        cross = answer.notice == pipeline.CROSS_EQUIPMENT_NOTICE
+        cross = answer.notice in (pipeline.CROSS_EQUIPMENT_NOTICE, pipeline.ROUTED_EQUIPMENT_NOTICE)
         result["citations_ok"] = all(_citation_exists(c, equipment, cross) for c in citations)
     return result
 
 
 def _citation_exists(citation, equipment: Equipment, cross: bool) -> bool:
-    """인용 문서가 색인에 있고, 폴백이 아니면 신고 설비의 문서인지 본다."""
+    """인용 문서가 색인에 있고, 다른 설비 근거 답변(폴백·라우팅)이 아니면 신고 설비의 문서인지 본다."""
     try:
         doc = vectordb.get_document(CitationKind(citation.kind), citation.ref_id)
     except NotFoundError:
