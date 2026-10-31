@@ -9,18 +9,18 @@ from mpilot.models import (
     CaseStatus,
     Equipment,
     ErrorCode,
+    GuideFailure,
     InvalidStateError,
     Route,
     ServiceCase,
     Severity,
     Source,
-    has_customer_procedure,
     is_self_guide_candidate,
     raise_if_case_completed,
 )
 
 
-def make_code(severity=Severity.LOW, owner=ActionOwner.CUSTOMER, refs=("MN-1",)) -> ErrorCode:
+def make_code(severity=Severity.LOW, owner=ActionOwner.CUSTOMER) -> ErrorCode:
     return ErrorCode(
         equipment=Equipment.AGV,
         code="R001",
@@ -32,7 +32,6 @@ def make_code(severity=Severity.LOW, owner=ActionOwner.CUSTOMER, refs=("MN-1",))
         manual_id="agv",
         page=1,
         section="1",
-        customer_procedure_ref_ids=list(refs),
     )
 
 
@@ -67,14 +66,21 @@ def test_is_self_guide_candidate(severity, owner, expected):
     assert is_self_guide_candidate(make_code(severity, owner)) is expected
 
 
-def test_has_customer_procedure():
-    assert has_customer_procedure(make_code(refs=("MN-1", "MN-2"))) is True
-    assert has_customer_procedure(make_code(refs=())) is False
-
-
 @pytest.mark.parametrize("status", [CaseStatus.RECEIVED, CaseStatus.IN_PROGRESS])
 def test_raise_if_case_completed_passes_open_case(status):
     assert raise_if_case_completed(make_case(status)) is None
+
+
+def test_raise_if_case_completed_blocks_pending_self_guide_case():
+    # 고객이 [기술지원접수]으로 이관(route=support)하기 전의 셀프 가이드 건은 엔지니어 처리 대상이 아니다.
+    case = make_case(CaseStatus.IN_PROGRESS).model_copy(update={"route": Route.SELF_GUIDE})
+    with pytest.raises(InvalidStateError, match="셀프 가이드"):
+        raise_if_case_completed(case)
+
+
+def test_raise_if_case_completed_passes_escalated_case():
+    case = make_case(CaseStatus.IN_PROGRESS).model_copy(update={"guide_failure": GuideFailure.UNRESOLVED})
+    assert raise_if_case_completed(case) is None
 
 
 def test_raise_if_case_completed_blocks_completed_case():

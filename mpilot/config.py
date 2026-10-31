@@ -135,14 +135,13 @@ def load_config(env_path: Path | None = None) -> AppConfig:
             codes_path=_ROOT / "data" / "errorcodes.csv",
             history_seed_path=_ROOT / "data" / "history_seed.csv",
             search=SearchSettings(
-                manual_k=int(env.get("MANUAL_K", "3")),
-                history_k=int(env.get("HISTORY_K", "3")),
-                evidence_threshold=float(need("EVIDENCE_THRESHOLD")),
+                manual_k=int(env.get("MANUAL_K", "11")),
+                history_k=int(env.get("HISTORY_K", "5")),
             ),
             llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS", "60")),
             demo_accounts={a.login_id: a for a in accounts},
         )
-    except ValueError as e:
+    except (ValueError, PydanticValidationError) as e:
         # pydantic 오류 문구는 입력값(비밀번호 등)을 담을 수 있어 필드 위치만 알린다.
         if isinstance(e, PydanticValidationError):
             fields = ", ".join(".".join(map(str, err["loc"])) for err in e.errors())

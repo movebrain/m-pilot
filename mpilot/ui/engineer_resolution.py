@@ -11,28 +11,156 @@
     - 이미 완료된 건은 '이미 완료'로 안내한다. 확정 뒤에는 수정할 수 없다.
     - 제출 중에는 버튼을 비활성화한다. 원인(`cause`)은 고객에게 공개되지 않는다.
 
-화면 전환: 이력 저장 → 대화(뒤로).
+화면 전환: 이력 저장 → 대화(뒤로) / 대시보드(확정 후).
 사용 서비스: `get_engineer_case`, `confirm_resolution`.
 소유: UI·총괄 파트
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import gradio as gr
 
-if TYPE_CHECKING:
-    import gradio as gr
+from mpilot import service
+from mpilot.models import CaseDetail, CaseStatus, NotFoundError, Resolution, ValidationError
+from mpilot.ui import common
+
+SCREEN = common.SCREEN_ENGINEER_RESOLVE
+
+FIELD_MAX_LENGTH = 5000
+"""원인·조치·결과 각각의 최대 글자 수(`Resolution`과 같다)."""
+
+INDEXED_NOTICE = "조치 완료로 등록했습니다. 이 이력은 이후 질문의 검색 근거가 됩니다."
+"""확정과 검색 반영이 모두 성공했을 때의 안내."""
+
+NOT_INDEXED_NOTICE = "조치 완료로 등록했습니다. 검색 반영은 실패해 앱을 다시 시작하면 반영됩니다."
+"""확정은 됐지만 검색 반영(`index_history`)이 실패했을 때의 안내."""
+
+COMPLETED_NOTICE = "이미 조치 완료된 건이라 더 등록할 수 없습니다."
+"""완료된 건에 들어왔을 때 보이는 안내."""
+
+COLUMNS_PER_ROW = 3
+"""접수내역 표의 한 줄당 열 수. 왼쪽 좁은 열 안이라 항목 6개를 한 줄에 다 두면 좁아져 3개씩 나눈다."""
+
+
+def case_summary_html(detail: CaseDetail) -> str:
+    """신고 정보를 장애 분석 대화와 같은 모양의 '접수내역' 칼럼 표 HTML로 만든다.
+
+    장애 분석 대화 화면(`engineer_chat.case_summary_html`)과 같은 필드·모양을 써서, 두 화면을 오갈 때
+    구조가 일관되게 보이도록 한다. 왼쪽 열 안에 있으므로 고정 너비를 강제하지 않고 열 너비를 그대로
+    따른다. 증상 메모는 길어질 수 있어 열에 넣지 않고 표 맨 아래 전체 너비 한 줄로 내려 보여 준다.
+
+    Args:
+        detail: `service.get_engineer_case`가 돌려준 신고 상세.
+
+    Returns:
+        str: 접수번호·상태·설비·심각도·접수 시각·에러코드를 열로, 증상 메모를 아래 한 줄로 담은 HTML
+            (`common.info_table_html`).
+    """
+    case = detail.service_case
+    fields = [
+        ("접수번호", case.case_id),
+        ("상태", common.status_label(case.status)),
+        ("설비", str(case.equipment)),
+        ("심각도", str(detail.error_code.severity)),
+        ("접수 시각", common.format_datetime(case.created_at)),
+        ("에러코드", f"{case.code} · {detail.error_code.name}"),
+    ]
+    return common.info_table_html(
+        fields, title="접수내역", max_width="100%", columns_per_row=COLUMNS_PER_ROW,
+        note=("증상 메모", case.memo or "-"),
+    )
+
+
+def build_resolution(cause: str | None, action: str | None, result: str | None) -> Resolution:
+    """화면 입력값을 조치 기록으로 바꾼다.
+
+    Args:
+        cause: 실제 원인.
+        action: 실제 조치.
+        result: 조치 결과.
+
+    Returns:
+        Resolution: 앞뒤 공백을 지운 조치 기록.
+
+    Raises:
+        ValidationError: 비었거나 5,000자를 넘는 칸이 있을 때.
+    """
+    values = [(v or "").strip() for v in (cause, action, result)]
+    if not all(1 <= len(v) <= FIELD_MAX_LENGTH for v in values):
+        raise ValidationError("원인·조치·결과 길이")
+    return Resolution(cause=values[0], action=values[1], result=values[2])
+
+
+def confirm_notice(indexed: bool) -> str:
+    """확정 결과 안내 문구를 고른다.
+
+    Args:
+        indexed: `service.confirm_resolution`이 돌려준 검색 반영 성공 여부.
+
+    Returns:
+        str: 반영 성공이면 `INDEXED_NOTICE`, 실패면 `NOT_INDEXED_NOTICE`.
+    """
+    return INDEXED_NOTICE if indexed else NOT_INDEXED_NOTICE
 
 
 def build_engineer_resolution_screen(role: gr.State, case_id: gr.State, screen: gr.State) -> None:
     """원인·실제 조치·결과를 입력받아 조치 완료로 등록한다.
 
     Args:
-        role: 로그인한 역할(`Role` 값)을 담은 공유 상태. 엔지니어 역할이 아니면 이 화면을 보이지 않는다.
+        role: 앱이 고정한 역할(`engineer`)을 담은 공유 상태. 엔지니어 앱에서만 이 화면을 조립한다.
         case_id: 선택된 신고의 접수번호를 담은 공유 상태. 완료 처리할 신고의 접수번호. 이 화면은 읽기만 한다.
-        screen: 지금 보여 줄 화면을 가리키는 공유 상태. 화면 전환 그림의 상태 이름과 대응한다. 뒤로 가기는 장애 분석 대화로 바꾼다.
+        screen: 지금 보여 줄 화면을 가리키는 공유 상태. 화면 전환 그림의 상태 이름과 대응한다. 뒤로 가기는 장애 분석 대화, 확정 후에는 엔지니어 대시보드로 바꾼다.
 
     Returns:
         None: Gradio Blocks 안에서 호출되어 컴포넌트와 이벤트를 등록할 뿐 값을 돌려주지 않는다.
     """
-    ...
+    with gr.Column(visible=common.is_screen_visible(screen.value, SCREEN)) as column:
+        with common.back_button_row("## 조치 이력 저장") as back_btn:
+            pass
+        with gr.Row(equal_height=False, elem_classes=[common.WIDE_GAP_ROW_CLASS]):
+            with gr.Column(scale=4):  # 왼쪽: 접수내역
+                summary = gr.HTML()
+            with gr.Column(scale=6):  # 오른쪽: 조치 결과 입력
+                gr.Markdown("### 조치 결과")
+                cause = gr.Textbox(label="실제 원인 (고객에게 공개되지 않습니다)", lines=3, max_length=FIELD_MAX_LENGTH)
+                action = gr.Textbox(label="실제 조치", lines=3, max_length=FIELD_MAX_LENGTH)
+                result = gr.Textbox(label="조치 결과", lines=3, max_length=FIELD_MAX_LENGTH)
+                confirm_btn = gr.Button("조치 완료로 확정", variant="primary")
+
+    inputs = [cause, action, result]
+
+    def on_screen_change(current: str, selected: str | None):
+        # 이 화면에 들어올 때마다 신고를 다시 읽고 입력을 비운다. 완료된 건은 입력을 막는다.
+        if not common.is_screen_visible(current, SCREEN):
+            return (gr.Column(visible=False),) + (gr.skip(),) * 6
+        try:
+            detail = service.get_engineer_case(selected or "")
+        except NotFoundError as e:
+            gr.Warning(common.error_message(e))
+            return (gr.skip(),) * 6 + (common.SCREEN_ENGINEER_LIST,)
+        except Exception as e:  # 화면에는 고정 문구만 보인다
+            gr.Warning(common.error_message(e))
+            return (gr.Column(visible=True), "") + (gr.skip(),) * 5
+        open_ = detail.service_case.status != CaseStatus.COMPLETED
+        if not open_:
+            gr.Info(COMPLETED_NOTICE)
+        boxes = tuple(gr.Textbox(value="", interactive=open_) for _ in inputs)
+        return (gr.Column(visible=True), case_summary_html(detail)) + boxes + (gr.Button(interactive=open_), gr.skip())
+
+    def on_confirm(selected: str | None, cause_text: str | None, action_text: str | None, result_text: str | None):
+        # 확정에 성공하면 결과를 안내하고 대시보드로 간다. 실패하면 입력을 남겨 다시 시도하게 한다.
+        try:
+            _, indexed = service.confirm_resolution(
+                selected or "", build_resolution(cause_text, action_text, result_text)
+            )
+        except Exception as e:
+            gr.Warning(common.error_message(e))
+            return gr.skip()
+        gr.Info(confirm_notice(indexed))
+        return common.SCREEN_ENGINEER_LIST
+
+    screen.change(on_screen_change, inputs=[screen, case_id], outputs=[column, summary, *inputs, confirm_btn, screen])
+    confirm_btn.click(lambda: gr.Button(interactive=False), outputs=confirm_btn).then(
+        on_confirm, inputs=[case_id, *inputs], outputs=screen,
+    ).then(lambda: gr.Button(interactive=True), outputs=confirm_btn)
+    back_btn.click(lambda: common.SCREEN_ENGINEER_CHAT, outputs=screen)
