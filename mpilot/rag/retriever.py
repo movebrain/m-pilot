@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from mpilot.db import vectordb
@@ -34,7 +35,10 @@ from mpilot.models import (
 if TYPE_CHECKING:
     from langchain_core.documents import Document
 
-MANUAL_FETCH_FACTOR = 5  # code로 거를 때 k의 몇 배를 가져올지
+# 에러코드 절은 모두 `발생 조건 > 고객사 … 절차 > 엔지니어 조치 절차 > 복구 확인 > …` 순서다. 고객 근거는 이 제목 앞까지다.
+_ENGINEER_HEADING = re.compile(r"(?m)^\d+\. 엔지니어 조치 절차\s*$")
+# 표는 파서가 쪽 본문 뒤에 따로 청크로 붙여 제목 뒤에 놓이지만, 원인 후보 표는 고객 육안 확인을 담아 남긴다.
+_CAUSE_TABLE_PREFIX = "| 원인 후보 |"
 
 
 def search(
@@ -44,7 +48,8 @@ def search(
 
     `code`를 주면 다른 에러코드의 문서(`SearchHit.code`가 `code`와 다른 매뉴얼 청크·코드 표 행)를 뺀다. 에러코드
     절마다 구성(원인 후보 표, 안전 확보 절차 등)이 비슷해서 같은 질문에 다른 코드의 청크가 상위에 섞이기 때문이다.
-    그래서 `k`의 `MANUAL_FETCH_FACTOR`배를 가져와 거른 뒤 앞에서 `k`건을 남긴다. 코드가 없는 청크(공통 절)는 둔다.
+    검색 전에 메타데이터 `code`가 신고 코드이거나 `vectordb.COMMON_CODE`(공통 절)인 문서로 거르므로, 항상 맞는
+    문서 중 상위 `k`건을 찾는다. 공통 절 청크는 둔다.
 
     Args:
         kind: 검색할 컬렉션. `CitationKind.MANUAL`(코드 표 행 `error:...`과 매뉴얼 본문 `manual:...`) 또는
@@ -57,7 +62,7 @@ def search(
 
     Returns:
         list[SearchHit]: 필터에 맞는 문서(필터가 없으면 전체)를 `distance` 오름차순으로 정렬한 근거. 최대 `k`건이며
-            `code`로 거르고 남은 것이 모자라면 그만큼만 돌려준다. 없으면 빈 목록이다.
+            맞는 문서가 모자라면 그만큼만 돌려준다. 없으면 빈 목록이다.
 
     Raises:
         ValidationError: 질의가 비었거나 공백뿐이거나 `k`가 1보다 작을 때. `get_store`가 낸 것은 그대로 올린다.
@@ -69,17 +74,68 @@ def search(
     if k < 1:
         raise ValidationError(f"k는 1 이상이어야 한다: {k}")
     store = vectordb.get_store(kind)  # get_store의 오류는 계약된 예외라 변환하지 않는다
+    where = {"equipment": equipment.value} if equipment else None
     try:
-        scored = store.similarity_search_with_score(
-            query,
-            k=k * MANUAL_FETCH_FACTOR if code else k,
-            filter={"equipment": equipment.value} if equipment else None,
-        )
+        if code:
+            only = {"code": {"$in": [code, vectordb.COMMON_CODE]}}  # 신고 코드와 공통 절
+            where = {"$and": [where, only]} if where else only
+        scored = store.similarity_search_with_score(query, k=k, filter=where)
         scored = sorted(scored, key=lambda pair: pair[1])  # 거리가 None이면 여기서 TypeError
     except Exception as e:
         raise DependencyError(f"{kind.value} 검색에 실패했다") from e
-    hits = [_to_hit(doc, distance) for doc, distance in scored]
-    return [hit for hit in hits if hit.code in (None, code)][:k] if code else hits
+    return [_to_hit(doc, distance) for doc, distance in scored]
+
+
+def fetch_code_documents(equipment: Equipment, code: str) -> list[SearchHit]:
+    """신고 코드의 고객용 `manual` 근거(코드 표 행과 그 절의 `엔지니어 조치 절차` 앞까지)를 유사도 검색 없이 가져온다.
+
+    고객 안내는 신고 코드의 고객 절차를 빠짐없이 봐야 하므로 상위 k건이 아니라 절을 통째로 쓴다. 메타데이터
+    `equipment`·`code`로 거르므로 임베딩을 부르지 않는다. 엔지니어 절차가 근거에 들어가면 모델이 그것을 인용하므로,
+    `N. 엔지니어 조치 절차` 제목이 든 청크는 제목 앞 글만 남기고 그 뒤 청크는 뺀다. 단, 원인 후보 표는 파서가
+    쪽 본문 뒤에 붙여 제목 뒤에 놓이므로 남긴다.
+
+    Args:
+        equipment: 신고 설비.
+        code: 신고한 에러코드.
+
+    Returns:
+        list[SearchHit]: 코드 표 행을 먼저, 그다음 엔지니어 제목 앞까지의 매뉴얼 청크를 쪽·청크 번호 순으로 둔
+            근거(`distance=None`). 없으면 빈 목록이다.
+
+    Raises:
+        DependencyError: 저장소 조회에 실패했거나 문서 메타데이터가 계약과 다를 때. `get_store`가 낸 것은 그대로
+            올린다.
+    """
+    from langchain_core.documents import Document  # 모듈 위쪽은 타입 검사용으로만 가져온다
+
+    store = vectordb.get_store(CitationKind.MANUAL)
+    try:
+        found = store.get(where={"$and": [{"equipment": equipment.value}, {"code": code}]})
+    except Exception as e:
+        raise DependencyError("manual 문서를 조회하지 못했다") from e
+    docs = [
+        Document(id=ref_id, page_content=text, metadata=meta or {})
+        for ref_id, text, meta in zip(found["ids"], found["documents"], found["metadatas"])
+    ]
+    # 원문 순서대로 읽히도록 코드 표 행 다음에 쪽·청크 번호 순으로 둔다.
+    docs.sort(key=lambda d: (not d.id.startswith("error:"), d.metadata.get("page", 0), d.metadata.get("chunk_no", 0)))
+    kept: list[Document] = []
+    cut = False
+    for doc in docs:
+        if cut:
+            if doc.page_content.startswith(_CAUSE_TABLE_PREFIX):
+                kept.append(doc)
+            continue
+        heading = _ENGINEER_HEADING.search(doc.page_content)
+        if heading is None:
+            kept.append(doc)
+            continue
+        cut = True
+        # shortcut: 모델에 넘기는 글만 자른다. 인용 원문 화면은 청크 전체를 보일 수 있다(파서가 하위 절에서 청크를 나누면 해소).
+        before = doc.page_content[: heading.start()].strip()
+        if before:
+            kept.append(Document(id=doc.id, page_content=before, metadata=doc.metadata))
+    return [_to_hit(doc, None) for doc in kept]
 
 
 def _to_hit(doc: Document, distance: float | None) -> SearchHit:
@@ -113,7 +169,7 @@ def _to_hit(doc: Document, distance: float | None) -> SearchHit:
             ref_id=ref_id,
             kind=kind,
             equipment=Equipment(meta["equipment"]),
-            code=meta.get("code"),
+            code=None if meta.get("code") == vectordb.COMMON_CODE else meta.get("code"),
             text=doc.page_content,
             locator=locator,
             distance=distance,

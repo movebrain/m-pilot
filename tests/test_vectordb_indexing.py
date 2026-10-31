@@ -135,6 +135,7 @@ def test_rebuild_metadata_supports_equipment_filter_and_citation(stores):
         "section": "11.6",
         "chunk_no": 1,
         "version": "rev1.2",
+        "code": vectordb.COMMON_CODE,
     }
     history = stores[CitationKind.HISTORY].get(ids=["history:SRM-H-0010"])
     assert history["metadatas"][0]["completed_at"] == "2026-07-07T14:29:00+00:00"
@@ -205,7 +206,7 @@ def test_chunk_in_error_code_section_gets_code_metadata(stores):
     manual = stores[CitationKind.MANUAL].get(ids=["manual:srm_spec:12:1", "manual:srm_spec:12:2"])
     by_id = dict(zip(manual["ids"], manual["metadatas"], strict=True))
     assert by_id["manual:srm_spec:12:1"]["code"] == "S135"
-    assert "code" not in by_id["manual:srm_spec:12:2"]  # `11.6` 같은 절에는 코드가 없다
+    assert by_id["manual:srm_spec:12:2"]["code"] == vectordb.COMMON_CODE  # `11.6` 같은 공통 절
 
 
 def test_manual_chunk_is_embedded_with_section_but_stored_as_is(stores):

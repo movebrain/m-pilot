@@ -41,8 +41,8 @@ def test_loads_values_and_defaults(clean_env, tmp_path):
     config = load_config(write_env(tmp_path))
 
     assert config.db_url.get_secret_value() == "mysql+pymysql://u:p%40ss%2Fword@127.0.0.1:3307/db"
-    assert config.search.manual_k == 3
-    assert config.search.history_k == 3
+    assert config.search.manual_k == 11
+    assert config.search.history_k == 5
     assert config.llm_timeout_seconds == 60
     assert config.demo_accounts["customer"].role is Role.CUSTOMER
     assert config.demo_accounts["engineer"].role is Role.ENGINEER
