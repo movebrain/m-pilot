@@ -27,19 +27,16 @@ class FakeStore:
         hits = [(doc, dist) for doc, dist in self.scored if matches(doc, filter)]
         return hits[:k]  # 입력 순서를 그대로 둬 정렬은 retriever가 하는지 확인한다.
 
-    def get(self, where=None, include=None):
-        return {"metadatas": [doc.metadata for doc, _ in self.scored if matches(doc, where)]}
-
 
 def matches(doc: Document, where: dict | None) -> bool:
-    """Chroma where 중 retriever가 쓰는 동등·`$and`·`$nin`만 흉내 낸다(`$nin`은 키가 없어도 맞음)."""
+    """Chroma where 중 retriever가 쓰는 동등·`$and`·`$in`만 흉내 낸다."""
     if not where:
         return True
     if "$and" in where:
         return all(matches(doc, cond) for cond in where["$and"])
     key, value = next(iter(where.items()))
     if isinstance(value, dict):
-        return doc.metadata.get(key) not in value["$nin"]
+        return doc.metadata.get(key) in value["$in"]
     return doc.metadata.get(key) == value
 
 
@@ -259,9 +256,9 @@ def test_equipment가_None이면_필터_없이_4종_전체에서_찾는다(insta
 
 
 def code_chunk(chunk_no: int, code: str | None) -> Document:
+    """`code`가 없으면 색인처럼 공통 절 표시값을 단다."""
     doc = manual_body(Equipment.SRM, chunk_no)
-    if code:
-        doc.metadata["code"] = code
+    doc.metadata["code"] = code or vectordb.COMMON_CODE
     return doc
 
 
@@ -277,14 +274,8 @@ def test_code를_주면_다른_코드의_문서를_검색_전에_뺀다(install_
 
     assert [h.ref_id for h in hits] == [same.id, common.id, same_row.id]
     assert store.calls[0]["k"] == 3
-    assert store.calls[0]["filter"] == {"$and": [{"equipment": "SRM"}, {"code": {"$nin": ["S-999"]}}]}
-
-
-def test_다른_코드가_없으면_설비_필터만_건다(install_store):
-    store = FakeStore([(code_chunk(1, "S-104"), 0.1)])
-    install_store(manual=store)
-    retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3, code="S-104")
-    assert store.calls[0]["filter"] == {"equipment": "SRM"}
+    assert store.calls[0]["filter"] == {"$and": [{"equipment": "SRM"}, {"code": {"$in": ["S-104", "common"]}}]}
+    assert hits[1].code is None  # 공통 절 표시값은 SearchHit에서 None으로 돌려준다
 
 
 def test_code로_거르고_모자라면_있는_만큼만_돌려준다(install_store):

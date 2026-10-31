@@ -48,8 +48,8 @@ def search(
 
     `code`를 주면 다른 에러코드의 문서(`SearchHit.code`가 `code`와 다른 매뉴얼 청크·코드 표 행)를 뺀다. 에러코드
     절마다 구성(원인 후보 표, 안전 확보 절차 등)이 비슷해서 같은 질문에 다른 코드의 청크가 상위에 섞이기 때문이다.
-    검색 전에 메타데이터 필터로 거르므로(신고 코드이거나 코드가 없는 문서) 항상 맞는 문서 중 상위 `k`건을 찾는다.
-    코드가 없는 청크(공통 절)는 둔다.
+    검색 전에 메타데이터 `code`가 신고 코드이거나 `vectordb.COMMON_CODE`(공통 절)인 문서로 거르므로, 항상 맞는
+    문서 중 상위 `k`건을 찾는다. 공통 절 청크는 둔다.
 
     Args:
         kind: 검색할 컬렉션. `CitationKind.MANUAL`(코드 표 행 `error:...`과 매뉴얼 본문 `manual:...`) 또는
@@ -77,12 +77,8 @@ def search(
     where = {"equipment": equipment.value} if equipment else None
     try:
         if code:
-            # Chroma 필터에는 "키 없음"이 없어, 다른 코드를 `$nin`으로 빼면 신고 코드와 코드 없는 문서가 남는다.
-            # shortcut: 검색마다 메타데이터를 한 번 더 읽는다. 지연이 문제가 되면 설비별로 캐시한다.
-            metas = store.get(where=where, include=["metadatas"])["metadatas"]
-            others = sorted({m["code"] for m in metas if m and m.get("code") and m["code"] != code})
-            if others:
-                where = {"$and": [where, {"code": {"$nin": others}}]} if where else {"code": {"$nin": others}}
+            only = {"code": {"$in": [code, vectordb.COMMON_CODE]}}  # 신고 코드와 공통 절
+            where = {"$and": [where, only]} if where else only
         scored = store.similarity_search_with_score(query, k=k, filter=where)
         scored = sorted(scored, key=lambda pair: pair[1])  # 거리가 None이면 여기서 TypeError
     except Exception as e:
@@ -173,7 +169,7 @@ def _to_hit(doc: Document, distance: float | None) -> SearchHit:
             ref_id=ref_id,
             kind=kind,
             equipment=Equipment(meta["equipment"]),
-            code=meta.get("code"),
+            code=None if meta.get("code") == vectordb.COMMON_CODE else meta.get("code"),
             text=doc.page_content,
             locator=locator,
             distance=distance,
