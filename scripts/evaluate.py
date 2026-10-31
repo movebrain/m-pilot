@@ -11,24 +11,25 @@
       접수하므로, 고객에게 엔지니어 조치를 안내하지 않는 안전 장치를 시험한다).
     - 문항은 답변 가능(`expected=answered`, 정답 근거 `gold_ref_ids`가 있다)과 답변 불가
       (`expected=insufficient_evidence`, `gold_ref_ids=[]`)로 나뉜다.
-    - `state`가 문항의 성격을 더 나누며 `expected`를 정한다. 엔지니어 대화는 `own_code`·`own_common`·`own_history`
-      (신고 설비 자료), `other_code`·`other_common`(다른 설비 자료, 폴백 안내가 붙어야 한다), `none_code`·
-      `none_common`(4종 어디에도 근거 없음)이고 고객 안내는 `guided`·`not_guided`다. 결과 `summary`의 `by_state`에
+    - `state`가 문항의 성격을 더 나누며 `expected`를 정한다. 엔지니어 대화는 `own_code`(신고 설비 코드 절)·
+      `own_common`(신고 설비 공통 본문)·`history`(같은 설비·코드의 조치 이력, 정답은 `history:` 문서만)·`other`(다른
+      설비 자료, 폴백 안내가 붙어야 한다)·`none`(4종 어디에도 근거 없음)이고 고객 안내는 `guided`·`not_guided`다. 결과 `summary`의 `by_state`에
       상태별 결과 분류와 폴백 안내 기대에서 어긋난 건수를 센다(합격 조건이 아니다).
     - 지표와 합격선: 환각(답변 불가 문항 중 `answered`) 1건 이하, 엉뚱한 출처(답변 가능 문항 중 `answered`인데
       인용이 정답 근거 기준에 못 미침) 1건 이하, 정답 적중(답변 가능 문항 중 `answered`이고 인용이 정답 근거
-      기준을 만족) 21건 이상. 과잉 보류(답변 가능 문항 중 보류)는 합격선이 없다. 정답 적중 21건은 초기 목표이며
-      실측값이 아니다.
+      기준을 만족) 답변 가능 최소 수의 70% 이상(엔지니어 56건, 고객 안내 21건). 과잉 보류(답변 가능 문항 중 보류)는
+      합격선이 없다. 정답 적중 70%는 초기 목표이며 실측값이 아니다.
     - 정답 근거 기준: 두 목적 모두 인용에 `gold_ref_ids`가 하나라도 있으면 만족한다.
-    - 목적별로 답변 가능 30개·답변 불가 20개에 못 미치면 합격 여부를 판정하지 않는다(평가 미완료). 전체 합격은
+    - 엔지니어 대화는 답변 가능 80개·답변 불가 20개(상태 5종 × 20문항), 고객 안내는 답변 가능 30개·답변 불가 20개에
+      못 미치면 합격 여부를 판정하지 않는다(평가 미완료). 전체 합격은
       두 목적이 모두 합격일 때다(두 목적이 같은 `manual_k`를 공유한다).
     - 생성 실패(`DependencyError`)는 별도로 센다. 답변 가능 문항에서는 정답 적중이 아니고, 답변 불가 문항에서는
       환각이 아니다. 지어낸 인용(인용 검증 실패)도 생성 실패라서 목적마다 1건 이하여야 합격이다.
     - 기록 항목: `versions`(모델 이름, 프롬프트·문항 파일 해시), `settings`(검색 설정), `results`(문항별 판정·인용·
       결과 분류), `summary`(건수·합격선·합격 여부), `caveats`(작은 표본 해석 주의).
     - 검색 지표: 정답 근거가 있는 문항마다 운영과 같은 검색을 생성 없이 한 번 더 실행해 컬렉션(`manual`·`history`)별
-      Recall@k·Hit·역순위를 기록하고 목적별 평균(`summary`의 `retrieval`)을 낸다. 고객 안내와 `own_*`은 1차 검색,
-      `other_*`은 폴백 검색(설비 필터 없이 질문 원문)을 잰다. 합격 조건에는 쓰지 않는다.
+      Recall@k·Hit·역순위를 기록하고 목적별 평균(`summary`의 `retrieval`)을 낸다. 고객 안내와 `own_code`·`own_common`·`history`는
+      1차 검색, `other`은 폴백 검색(설비 필터 없이 질문 원문)을 잰다. 합격 조건에는 쓰지 않는다.
     - 후보 `manual_k`·`history_k`(`.env`의 `MANUAL_K`·`HISTORY_K`)마다 따로 실행한다. 결과 파일이 설정을 함께 남긴다.
     - 사람 검수(생성된 고객 안내 전부, 엔지니어 `answered` 답변 최소 5건)는 이 스크립트 밖에서 한다. 고객 안내의
       안전 수칙 준수는 자동으로 재지 않는다.
@@ -79,26 +80,24 @@ _LABELS = {ENGINEER: "엔지니어 대화", CUSTOMER: "고객 안내"}
 
 _COLUMNS = ["purpose", "equipment", "code", "question", "expected", "state", "gold_ref_ids"]
 
-# 문항 상태 → 기대 판정(spec §2.7). 엔지니어 대화는 자료 범위(own 신고 설비·other 다른 설비·none 4종 어디에도 없음)
-# × 질문 성격(code 에러코드 절·common 코드 없는 공통 본문·history 과거 이력), 고객 안내는 안내 가능 여부다.
+# 문항 상태 → 기대 판정(spec §2.7). 엔지니어 대화는 신고 설비 코드 절(own_code)·신고 설비 공통 본문(own_common)·
+# 같은 설비·코드의 조치 이력(history)·다른 설비 자료(other, 폴백)·4종 어디에도 없음(none), 고객 안내는 안내 가능 여부다.
 _STATES = {
     ENGINEER: {
         "own_code": Verdict.ANSWERED,
         "own_common": Verdict.ANSWERED,
-        "own_history": Verdict.ANSWERED,
-        "other_code": Verdict.ANSWERED,
-        "other_common": Verdict.ANSWERED,
-        "none_code": Verdict.INSUFFICIENT_EVIDENCE,
-        "none_common": Verdict.INSUFFICIENT_EVIDENCE,
+        "history": Verdict.ANSWERED,
+        "other": Verdict.ANSWERED,
+        "none": Verdict.INSUFFICIENT_EVIDENCE,
     },
     CUSTOMER: {"guided": Verdict.ANSWERED, "not_guided": Verdict.INSUFFICIENT_EVIDENCE},
 }
 
-MIN_ANSWERABLE = 30  # 답변 가능 문항 최소 수
-MIN_UNANSWERABLE = 20  # 답변 불가 문항 최소 수
+# 목적별 (답변 가능 최소 수, 답변 불가 최소 수, 정답 적중 최소 건수). 적중 최소는 답변 가능 최소의 70%(초기 목표)다.
+# 엔지니어는 상태 5종 × 20문항이라 답변 가능 80·답변 불가 20이다.
+_MINIMUMS = {ENGINEER: (80, 20, 56), CUSTOMER: (30, 20, 21)}
 MAX_HALLUCINATION = 1  # 환각 허용 건수
 MAX_WRONG_SOURCE = 1  # 엉뚱한 출처 허용 건수
-MIN_HIT = 21  # 정답 적중 최소 건수(답변 가능 30개의 70%, 초기 목표)
 MAX_GENERATION_FAILED = 1  # 생성 실패 허용 건수(지어낸 인용이 여기로 오므로 환각과 같은 한도)
 
 _CAVEATS = [
@@ -126,9 +125,9 @@ class _Question:
 
 def _expects_fallback(state: str) -> bool | None:
     """상태가 기대하는 폴백 안내 여부. 다른 설비 자료로 답해야 하면 `True`, 신고 설비 자료로 답해야 하면 `False`, 답을 기대하지 않거나 폴백과 무관하면 `None`."""
-    if state.startswith("other_"):
+    if state == "other":
         return True
-    return False if state.startswith("own_") else None
+    return False if state in ("own_code", "own_common", "history") else None
 
 
 def _parse_gold(no: int, text: str) -> tuple[str, ...]:
@@ -205,6 +204,9 @@ def _read_questions(path: Path) -> list[_Question]:
             raise ValidationError(f"{no}번째 행: 답변 가능(answered) 문항은 gold_ref_ids가 비어 있으면 안 됩니다.")
         if expected == Verdict.INSUFFICIENT_EVIDENCE and gold:
             raise ValidationError(f"{no}번째 행: 답변 불가(insufficient_evidence) 문항의 gold_ref_ids는 [] 여야 합니다.")
+        if state == "history" and any(not ref.startswith("history:") for ref in gold):
+            # 매뉴얼 인용으로도 적중하면 이력을 쓰는지 잴 수 없다.
+            raise ValidationError(f"{no}번째 행: history 문항의 gold_ref_ids는 history: 문서만이어야 합니다.")
         if purpose == ENGINEER:
             try:
                 ChatRequest(question=values["question"], turns=[])
@@ -282,9 +284,9 @@ def _search(question: _Question, context: CaseContext, settings: SearchSettings)
         return None, []
     if question.purpose == CUSTOMER:
         return "first", [h.ref_id for h in pipeline.search_customer_evidence(context, settings)]
-    if question.state.startswith("own_"):
+    if question.state != "other":
         return "first", [h.ref_id for h in pipeline.search_engineer_evidence(context, question.question, settings)]
-    # other_*의 정답은 다른 설비에 있어 1차(신고 설비 필터)로는 찾을 수 없으므로 폴백 검색을 잰다.
+    # other의 정답은 다른 설비에 있어 1차(신고 설비 필터)로는 찾을 수 없으므로 폴백 검색을 잰다.
     hits = retriever.search(CitationKind.MANUAL, None, question.question, settings.manual_k)
     hits += retriever.search(CitationKind.HISTORY, None, question.question, settings.history_k)
     return "fallback", [h.ref_id for h in hits]
@@ -339,7 +341,7 @@ def _summarize_retrieval(results: list[dict[str, object]]) -> dict[str, object]:
 def _by_state(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
     """상태별 문항 수와 결과 분류 건수. 합격 조건에는 쓰이지 않는다.
 
-    `fallback_mismatch`는 답한 문항 중 폴백 안내가 상태의 기대(`other_*` 있음, `own_*` 없음)와 어긋난 건수이며,
+    `fallback_mismatch`는 답한 문항 중 폴백 안내가 상태의 기대(`other` 있음, `own_code`·`own_common`·`history` 없음)와 어긋난 건수이며,
     폴백과 무관한 상태는 `None`이다.
     """
     summary: dict[str, object] = {}
@@ -356,7 +358,9 @@ def _by_state(questions: list[_Question], outcomes: list[str], fallbacks: list[b
     return summary
 
 
-def _summarize(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
+def _summarize(
+    purpose: str, questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]
+) -> dict[str, object]:
     """문항별 결과 분류로 건수·합격선·합격 여부를 계산한다.
 
     Args:
@@ -374,19 +378,21 @@ def _summarize(questions: list[_Question], outcomes: list[str], fallbacks: list[
     wrong_source = answerable.count("wrong_source")
     hit = answerable.count("hit")
     failed = outcomes.count("generation_failed")
-    complete = len(answerable) >= MIN_ANSWERABLE and len(unanswerable) >= MIN_UNANSWERABLE
+    min_answerable, min_unanswerable, min_hit = _MINIMUMS[purpose]
+    complete = len(answerable) >= min_answerable and len(unanswerable) >= min_unanswerable
     passed = (
         hallucination <= MAX_HALLUCINATION
         and wrong_source <= MAX_WRONG_SOURCE
-        and hit >= MIN_HIT
+        and hit >= min_hit
         and failed <= MAX_GENERATION_FAILED
     )
     return {
         "complete": complete,
         "counts": {"answerable": len(answerable), "unanswerable": len(unanswerable)},
+        "required": {"answerable": min_answerable, "unanswerable": min_unanswerable},
         "hallucination": {"count": hallucination, "total": len(unanswerable), "limit": MAX_HALLUCINATION},
         "wrong_source": {"count": wrong_source, "total": len(answerable), "limit": MAX_WRONG_SOURCE},
-        "hit": {"count": hit, "total": len(answerable), "minimum": MIN_HIT},
+        "hit": {"count": hit, "total": len(answerable), "minimum": min_hit},
         "over_hold": {"count": answerable.count("over_hold"), "total": len(answerable)},
         "generation_failed": {
             "answerable": answerable.count("generation_failed"),
@@ -413,7 +419,7 @@ def _summarize_all(questions: list[_Question], outcomes: list[str], fallbacks: l
     by_purpose = {}
     for purpose in _PURPOSES:
         picked = [(q, o, f) for q, o, f in zip(questions, outcomes, fallbacks) if q.purpose == purpose]
-        by_purpose[purpose] = _summarize([q for q, _, _ in picked], [o for _, o, _ in picked], [f for _, _, f in picked])
+        by_purpose[purpose] = _summarize(purpose, [q for q, _, _ in picked], [o for _, o, _ in picked], [f for _, _, f in picked])
     complete = all(s["complete"] for s in by_purpose.values())
     passed = all(s["passed"] for s in by_purpose.values())
     return {**by_purpose, "complete": complete, "passed": passed if complete else None}
@@ -494,6 +500,13 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
                 "verdict": answer.verdict.value if answer else None,
                 "fallback_used": fallback_used,
                 "cited_ref_ids": sorted(_cited_ref_ids(answer)) if answer else [],
+                # 사람 검수용 답변 본문(고객 안내가 엔지니어 절차를 옮기지 않았는지 등)
+                "steps": [
+                    {"text": step.text, "ref_ids": [c.ref_id for c in step.citations]} for step in answer.steps
+                ]
+                if answer
+                else [],
+                "notice": answer.notice if answer else None,
                 "outcome": outcome,
                 "error": error,
                 "search": search_kind,
@@ -539,8 +552,8 @@ def _format_purpose(label: str, summary: dict[str, object]) -> list[str]:
         verdict = "합격" if summary["passed"] else "불합격"
     else:
         verdict = (
-            f"평가 미완료(답변 가능 {counts['answerable']}/{MIN_ANSWERABLE}, "
-            f"답변 불가 {counts['unanswerable']}/{MIN_UNANSWERABLE})"
+            f"평가 미완료(답변 가능 {counts['answerable']}/{summary['required']['answerable']}, "
+            f"답변 불가 {counts['unanswerable']}/{summary['required']['unanswerable']})"
         )
     lines = [
         f"[{label}] {verdict}",

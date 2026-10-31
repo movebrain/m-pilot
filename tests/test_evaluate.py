@@ -53,7 +53,7 @@ def held() -> Answer:
 # 시험이 state를 따로 주지 않을 때 쓰는 기본 상태(목적, expected → state)
 DEFAULT_STATE = {
     (ENG, "answered"): "own_code",
-    (ENG, "insufficient_evidence"): "none_code",
+    (ENG, "insufficient_evidence"): "none",
     (CUS, "answered"): "guided",
     (CUS, "insufficient_evidence"): "not_guided",
 }
@@ -176,7 +176,7 @@ def purpose_rows(behavior, purpose, n_answerable, n_unanswerable):
     return rows
 
 
-def full_set(behavior, engineer=(30, 20), customer=(30, 20)):
+def full_set(behavior, engineer=(80, 20), customer=(30, 20)):
     """두 목적 모두 맞게 답하는 문항 세트. 문항 행 목록을 돌려주고 `behavior`를 채운다."""
     return purpose_rows(behavior, ENG, *engineer) + purpose_rows(behavior, CUS, *customer)
 
@@ -221,7 +221,7 @@ def test_엔지니어_문항_하나씩_결과를_분류하고_건수로_센다(t
     assert all(r["purpose"] == ENG for r in result["results"])
     summary = result["summary"][ENG]
     assert summary["counts"] == {"answerable": 5, "unanswerable": 3}
-    assert summary["hit"] == {"count": 2, "total": 5, "minimum": 21}
+    assert summary["hit"] == {"count": 2, "total": 5, "minimum": 56}
     assert summary["wrong_source"]["count"] == 1
     assert summary["over_hold"]["count"] == 1
     assert summary["hallucination"] == {"count": 1, "total": 3, "limit": 1}
@@ -335,8 +335,9 @@ def test_고객_안내_문항의_질문은_증상_메모로_넘기고_비우면_
         (("SRM", CODE, "q", "answered", [GOLD], ENG, "guided"), "engineer_chat의 state는"),  # 고객 안내 상태
         (("SRM", CODE, "q", "answered", [GOLD], CUS, "own_code"), "customer_guidance의 state는"),  # 엔지니어 상태
         (("SRM", CODE, "q", "answered", [GOLD], ENG, ""), "빈 값"),
-        (("SRM", CODE, "q", "answered", [GOLD], ENG, "none_code"), "expected는 insufficient_evidence"),
-        (("SRM", CODE, "q", "insufficient_evidence", [], ENG, "other_code"), "expected는 answered"),
+        (("SRM", CODE, "q", "answered", [GOLD], ENG, "none"), "expected는 insufficient_evidence"),
+        (("SRM", CODE, "q", "insufficient_evidence", [], ENG, "other"), "expected는 answered"),
+        (("SRM", CODE, "q", "answered", [GOLD], ENG, "history"), "history: 문서만"),
         (("SRM", CODE, "m", "answered", [GOLD], CUS, "not_guided"), "expected는 insufficient_evidence"),
     ],
 )
@@ -350,9 +351,9 @@ def test_상태별로_결과_분류를_세고_폴백_안내가_기대와_어긋�
     rows = [
         ("SRM", CODE, "신고 설비로 답함", "answered", [GOLD], ENG, "own_code"),
         ("SRM", CODE, "불필요한 폴백", "answered", [GOLD], ENG, "own_common"),
-        ("SRM", CODE, "폴백으로 답함", "answered", [GOLD], ENG, "other_code"),
-        ("SRM", CODE, "폴백 안내 없음", "answered", [GOLD], ENG, "other_common"),
-        ("SRM", CODE, "근거 없음", "insufficient_evidence", [], ENG, "none_common"),
+        ("SRM", CODE, "폴백으로 답함", "answered", [GOLD], ENG, "other"),
+        ("SRM", CODE, "폴백 안내 없음", "answered", [GOLD], ENG, "other"),
+        ("SRM", CODE, "근거 없음", "insufficient_evidence", [], ENG, "none"),
     ]
     behavior.update(
         {"신고 설비로 답함": answered(GOLD), "불필요한 폴백": fallback, "폴백으로 답함": fallback,
@@ -362,12 +363,11 @@ def test_상태별로_결과_분류를_세고_폴백_안내가_기대와_어긋�
     result = run(tmp_path, rows)
 
     by_state = result["summary"][ENG]["by_state"]
-    assert list(by_state) == ["own_code", "own_common", "other_code", "other_common", "none_common"]
+    assert list(by_state) == ["own_code", "own_common", "other", "none"]
     assert by_state["own_code"] == {"questions": 1, "outcomes": {"hit": 1}, "fallback_mismatch": 0}
     assert by_state["own_common"]["fallback_mismatch"] == 1  # 신고 설비 자료로 답해야 하는데 폴백을 썼다
-    assert by_state["other_code"]["fallback_mismatch"] == 0
-    assert by_state["other_common"]["fallback_mismatch"] == 1  # 다른 설비 자료로 답했는데 안내가 없다
-    assert by_state["none_common"] == {"questions": 1, "outcomes": {"correct_hold": 1}, "fallback_mismatch": None}
+    assert by_state["other"]["fallback_mismatch"] == 1  # 다른 설비 자료로 답했는데 안내가 없다
+    assert by_state["none"] == {"questions": 1, "outcomes": {"correct_hold": 1}, "fallback_mismatch": None}
     assert [r["fallback_used"] for r in result["results"]] == [False, True, True, False, None]
     assert [r["state"] for r in result["results"]][:2] == ["own_code", "own_common"]
 
@@ -410,7 +410,8 @@ def test_두_목적이_모두_맞으면_합격이다(tmp_path, behavior):
     assert summary["complete"] is True and summary["passed"] is True
     for purpose in (ENG, CUS):
         assert summary[purpose]["passed"] is True
-        assert summary[purpose]["hit"]["count"] == 30 and summary[purpose]["hallucination"]["count"] == 0
+        assert summary[purpose]["hit"]["count"] == summary[purpose]["counts"]["answerable"]
+        assert summary[purpose]["hallucination"]["count"] == 0
 
 
 def test_환각_한도는_목적마다_1건이다(tmp_path, behavior):
@@ -435,17 +436,18 @@ def test_엉뚱한_출처_한도는_목적마다_1건이다(tmp_path, behavior):
     assert summary["passed"] is False and summary[CUS]["wrong_source"]["count"] == 2
 
 
-def test_정답_적중은_목적마다_21건_이상이어야_한다(tmp_path, behavior):
+def test_정답_적중은_답변_가능_최소의_70퍼센트_이상이어야_한다(tmp_path, behavior):
     rows = full_set(behavior)
-    for i in range(9):  # 과잉 보류 9건 → 적중 21건
+    for i in range(24):  # 엔지니어 과잉 보류 24건 → 적중 56건
         behavior[f"가능{i}"] = held()
+    for i in range(9):  # 고객 과잉 보류 9건 → 적중 21건
         behavior[f"고객가능{i}"] = held()
     assert run(tmp_path, rows)["summary"]["passed"] is True
 
-    behavior["고객가능9"] = held()  # 고객 안내 적중 20건
+    behavior["가능24"] = held()  # 엔지니어 적중 55건
     summary = run(tmp_path, rows)["summary"]
-    assert summary[CUS]["hit"]["count"] == 20 and summary[ENG]["hit"]["count"] == 21
-    assert summary["passed"] is False
+    assert summary[ENG]["hit"] == {"count": 55, "total": 80, "minimum": 56}
+    assert summary[ENG]["passed"] is False and summary[CUS]["passed"] is True
 
 
 def test_생성_실패는_환각도_적중도_아니고_목적마다_1건까지_합격이다(tmp_path, behavior):
@@ -463,7 +465,7 @@ def test_생성_실패는_환각도_적중도_아니고_목적마다_1건까지_
 
 
 def test_문항이_모자라면_합격_여부를_판정하지_않는다(tmp_path, behavior):
-    summary = run(tmp_path, full_set(behavior, engineer=(29, 20)))["summary"]
+    summary = run(tmp_path, full_set(behavior, engineer=(80, 19)))["summary"]
     assert summary["complete"] is False and summary["passed"] is None
     assert summary[ENG]["passed"] is None and summary[CUS]["passed"] is True
 
@@ -473,7 +475,7 @@ def test_문항이_모자라면_합격_여부를_판정하지_않는다(tmp_path
 
 
 def test_한_목적의_문항이_아예_없으면_미완료다(tmp_path, behavior):
-    rows = purpose_rows(behavior, ENG, 30, 20)
+    rows = purpose_rows(behavior, ENG, 80, 20)
 
     summary = run(tmp_path, rows)["summary"]
 
@@ -598,7 +600,7 @@ def test_요약_문구는_합격_불합격_미완료를_구분한다(tmp_path, b
     rows = full_set(behavior)
     ok = evaluate._format_summary(run(tmp_path, rows)["summary"])
     assert "결과: 합격" in ok and "[엔지니어 대화] 합격" in ok and "[고객 안내] 합격" in ok
-    assert "정답 적중 30/30건 (최소 21)" in ok
+    assert "정답 적중 30/30건 (최소 21)" in ok and "정답 적중 80/80건 (최소 56)" in ok
 
     behavior["고객불가0"] = answered(GOLD)
     behavior["고객불가1"] = answered(GOLD)
@@ -608,7 +610,7 @@ def test_요약_문구는_합격_불합격_미완료를_구분한다(tmp_path, b
 
     short = evaluate._format_summary(run(tmp_path, full_set(behavior, engineer=(5, 5), customer=(30, 20)))["summary"])
     assert "결과: 평가 미완료" in short
-    assert "[엔지니어 대화] 평가 미완료(답변 가능 5/30, 답변 불가 5/20)" in short
+    assert "[엔지니어 대화] 평가 미완료(답변 가능 5/80, 답변 불가 5/20)" in short
 
 
 # --- 검색 지표 ------------------------------------------------------------------
@@ -629,9 +631,9 @@ def test_정답이_없는_컬렉션은_None이고_못_찾으면_0이다():
 
 def test_상태마다_운영과_같은_검색을_잰다(tmp_path, behavior, retrieved):
     rows = [
-        ("SRM", CODE, "자기 설비", "answered", [GOLD], ENG, "own_history"),
-        ("SRM", CODE, "다른 설비", "answered", [GOLD], ENG, "other_code"),
-        ("SRM", CODE, "근거 없음", "insufficient_evidence", [], ENG, "none_code"),
+        ("SRM", CODE, "자기 설비", "answered", ["history:SC-1"], ENG, "history"),
+        ("SRM", CODE, "다른 설비", "answered", [GOLD], ENG, "other"),
+        ("SRM", CODE, "근거 없음", "insufficient_evidence", [], ENG, "none"),
         ("SRM", CODE, "고객", "answered", [GOLD], CUS),
         ("SRM", CODE, "고객 불가", "insufficient_evidence", [], CUS),
     ]
@@ -648,7 +650,7 @@ def test_상태마다_운영과_같은_검색을_잰다(tmp_path, behavior, retr
 
 def test_검색_결과와_지표를_문항별로_남기고_목적별로_평균낸다(tmp_path, behavior, retrieved):
     rows = [
-        ("SRM", CODE, "a", "answered", [GOLD, HIST], ENG, "own_history"),
+        ("SRM", CODE, "a", "answered", [GOLD, HIST], ENG, "own_code"),
         ("SRM", CODE, "b", "answered", [GOLD], ENG),
         ("SRM", CODE, "고객", "answered", [GOLD], CUS),
     ]
