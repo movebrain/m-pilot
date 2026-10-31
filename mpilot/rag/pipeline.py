@@ -36,6 +36,7 @@ from mpilot.models import (
     SearchSettings,
     ValidationError,
     Verdict,
+    is_self_guide_candidate,
 )
 from mpilot.rag import generator, retriever
 
@@ -108,14 +109,15 @@ def _validate_engineer_input(request: ChatRequest, settings: SearchSettings) -> 
 def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Answer:
     """고객 안내 처리 흐름을 실행한다.
 
-    신고 코드의 매뉴얼 검색(신고 설비 필터, 다른 코드 청크 제외) → 생성 → 검증 순으로 진행한다.
+    셀프 가이드 후보가 아닌 코드는 검색·생성 없이 보류한다. 그다음 신고 코드의 매뉴얼 절(신고 설비,
+    코드 표 행과 그 코드 절의 `엔지니어 조치 절차` 앞까지) → 생성 → 검증 순으로 진행한다.
     엔지니어 답변과 달리 폴백(필터 없는 재검색)과 `history` 검색은 하지 않는다. 검색 결과가 없거나 생성 결과의
     `verdict`가 `answered`가 아니면 추측하지 않고 `passes_check`를 부르지 않은 채, 보류 모양
     (`steps=[]`, `notice` 있음)만 확인해 그 `Answer`를 돌려준다. `answered`이면 인용을 검증한다.
 
     Args:
         context: 신고 맥락. 대상 에러코드의 상세와 증상 메모.
-        settings: 검색 설정. `manual_k`만 쓴다.
+        settings: 검색 설정. 고객 안내는 절 전체를 쓰므로 검색 개수를 쓰지 않는다(시그니처는 호환용).
 
     Returns:
         Answer: `answered`이고 `passes_check`를 통과하면 출처가 붙은 단계별 안내. 검색 결과가 없거나
@@ -123,11 +125,13 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
             `verdict`만 보고 엔지니어 접수(`held`)로 바꾼다.
 
     Raises:
-        ValidationError: `manual_k`가 1보다 작을 때(`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
         DependencyError: 모델·검색 장애, 제한 시간 초과, 인용·설비 검증 실패, 보류 판정 형식 오류일 때
             (`service`가 엔지니어 접수 `generation_failed`로 바꾼다).
     """
     error_code = context.error_code
+    if not is_self_guide_candidate(error_code):
+        # 고객이 수행할 수 없는 코드는 모델 판정에 맡기지 않고 바로 엔지니어 접수로 보낸다(안전 장치).
+        return _make_hold_answer("고객이 직접 조치할 수 있는 코드가 아니어서 엔지니어가 접수합니다.")
     hits = search_customer_evidence(context, settings)
     if not hits:  # 근거가 하나도 없으면 모델을 부르지 않는다
         return _make_hold_answer("매뉴얼에서 고객이 직접 조치할 수 있는 근거를 찾지 못해 엔지니어가 접수합니다.")
@@ -140,29 +144,28 @@ def run_customer_guidance(context: CaseContext, settings: SearchSettings) -> Ans
 def search_customer_evidence(context: CaseContext, settings: SearchSettings) -> list[SearchHit]:
     """고객 안내의 근거 검색. `run_customer_guidance`가 쓰며, 평가가 생성 없이 같은 검색을 재도록 공개한다.
 
-    신고 코드의 `manual`을 신고 설비 필터로 `<코드> <이름>` 질의로 찾고 다른 코드의 문서를 뺀다.
+    신고 코드의 `manual` 문서(코드 표 행과 그 코드 절의 `엔지니어 조치 절차` 앞까지)를 유사도 검색 없이 가져온다
+    (`retriever.fetch_code_documents`). 상위 k건만 쓰면 여러 청크에 걸친 절차가 잘려 모델이 보류한다.
 
     Args:
-        context: 신고 맥락. 신고한 에러코드의 설비·코드·이름을 쓴다.
-        settings: 검색 설정. `manual_k`만 쓴다.
+        context: 신고 맥락. 신고한 에러코드의 설비·코드를 쓴다.
+        settings: 검색 설정. 쓰지 않는다(엔지니어 검색과 같은 모양을 유지한다).
 
     Returns:
-        list[SearchHit]: 가까운 순으로 최대 `manual_k`건. 없으면 빈 목록이다.
+        list[SearchHit]: 코드 표 행 다음 쪽·청크 순의 근거. 없으면 빈 목록이다.
 
     Raises:
-        ValidationError: `manual_k`가 1보다 작을 때(`retriever.search`가 낸다).
-        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
+        DependencyError: 저장소 조회에 실패했을 때.
     """
     error_code = context.error_code
-    query = f"{error_code.code} {error_code.name}"
-    return retriever.search(CitationKind.MANUAL, error_code.equipment, query, settings.manual_k, error_code.code)
+    return retriever.fetch_code_documents(error_code.equipment, error_code.code)
 
 
 def search_engineer_evidence(context: CaseContext, question: str, settings: SearchSettings) -> list[SearchHit]:
     """엔지니어 답변의 1차 근거 검색. `run_engineer_answer`가 쓰며, 평가가 생성 없이 같은 검색을 재도록 공개한다.
 
-    `<코드> <이름> <질문>` 질의로 신고 설비의 `manual`(다른 코드 문서 제외)과 `history`를 찾는다. 폴백은 질문
-    원문으로 `retriever.search`를 `equipment=None`으로 부른다.
+    신고 설비의 `manual`(다른 코드 문서 제외)은 질문 원문으로, `history`는 `<코드> <이름> <질문>`으로 찾는다.
+    폴백은 질문 원문으로 `retriever.search`를 `equipment=None`으로 부른다.
 
     Args:
         context: 신고 맥락. 신고한 에러코드로 대상 설비와 코드를 고정한다.
@@ -177,9 +180,12 @@ def search_engineer_evidence(context: CaseContext, question: str, settings: Sear
         DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
     """
     error_code = context.error_code
+    # manual은 코드 필터가 신고 코드 절로 좁히므로 질의에 코드·이름을 붙이지 않는다(붙이면 공통 절을 놓친다).
+    # history는 코드 필터가 없어 코드·이름을 붙인 질의가 더 잘 찾는다(실측).
     query = f"{error_code.code} {error_code.name} {question}"
-    manual_hits = retriever.search(CitationKind.MANUAL, error_code.equipment, query, settings.manual_k, error_code.code)
-    return manual_hits + retriever.search(CitationKind.HISTORY, error_code.equipment, query, settings.history_k)
+    return retriever.search(
+        CitationKind.MANUAL, error_code.equipment, question, settings.manual_k, error_code.code
+    ) + retriever.search(CitationKind.HISTORY, error_code.equipment, query, settings.history_k)
 
 
 def run_engineer_answer(

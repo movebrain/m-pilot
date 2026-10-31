@@ -30,10 +30,12 @@ def chunk_hit(ref_id: str = "manual:srm:1:1", code: str | None = None) -> Simple
     return SimpleNamespace(ref_id=ref_id, code=code)
 
 
-def make_context(equipment: str = "SRM", code: str = "S-104") -> CaseContext:
+def make_context(
+    equipment: str = "SRM", code: str = "S-104", severity: str = "하", action_owner: str = "고객사 조치"
+) -> CaseContext:
     error_code = ErrorCode(
-        equipment=equipment, code=code, name="주행 위치 편차", severity="하",
-        action_owner="고객사 조치", cause="엔코더 커넥터", action="커넥터 재체결",
+        equipment=equipment, code=code, name="주행 위치 편차", severity=severity,
+        action_owner=action_owner, cause="엔코더 커넥터", action="커넥터 재체결",
         manual_id="SRM_SPEC_v1", page=41, section="9.4",
     )
     return CaseContext(error_code=error_code, memo="")
@@ -67,6 +69,7 @@ def fakes(monkeypatch):
         generated=Answer.model_construct(verdict=Verdict.ANSWERED, steps=[], notice=None),
         searches=[],  # 검색 호출 기록
         search_codes=[],  # 검색 호출마다 넘긴 code
+        fetches=[],  # 코드 절 전체 조회 기록(고객 안내)
         manual_hits=None,  # 값이 있으면 매뉴얼 검색이 이것을 돌려준다(설비 필터가 있든 없든)
         hits_seen=[],  # 생성 호출마다 넘긴 근거
         generate_calls=0,
@@ -110,7 +113,14 @@ def fakes(monkeypatch):
             raise fake.guidance_error
         return fake.guidance
 
+    def fetch_code_documents(equipment, code):
+        if fake.search_error:
+            raise fake.search_error
+        fake.fetches.append((equipment, code))
+        return fake.manual_hits if fake.manual_hits is not None else [chunk_hit()]
+
     monkeypatch.setattr(pipeline.retriever, "search", search)
+    monkeypatch.setattr(pipeline.retriever, "fetch_code_documents", fetch_code_documents)
     monkeypatch.setattr(pipeline.generator, "generate_engineer_answer", generate_engineer_answer)
     monkeypatch.setattr(pipeline.generator, "passes_check", passes_check)
     monkeypatch.setattr(pipeline.generator, "generate_customer_guidance", generate_customer_guidance)
@@ -155,7 +165,7 @@ def test_다른_설비나_컨베이어를_말해도_신고_설비로_검색한�
         (kind, equipment.value, query, k)
         for kind, equipment, query, k in fakes.searches
     ] == [
-        ("manual", "AGV", expected_query, 3),
+        ("manual", "AGV", question, 3),  # manual은 코드 필터가 좁히므로 질문 원문
         ("history", "AGV", expected_query, 3),
     ]
 
@@ -177,7 +187,7 @@ def test_신고_설비로_검색하고_설정한_건수를_넘긴다(fakes):
         (kind, equipment.value, query, k)
         for kind, equipment, query, k in fakes.searches
     ] == [
-        ("manual", "SRM", expected_query, 4),
+        ("manual", "SRM", "위치가 어긋나요", 4),
         ("history", "SRM", expected_query, 2),
     ]
 
@@ -238,9 +248,9 @@ def test_모델이_답하면_폴백하지_않는다(fakes):
 def test_모델이_보류하면_필터_없이_질문_원문으로_다시_찾는다(fakes):
     fakes.generated_seq = [HOLD, ANSWERED]
     ask(QUESTION, equipment="AGV")
-    first_query = f"S-104 주행 위치 편차 {QUESTION}"  # 1차는 신고 코드·이름을 붙이고, 폴백은 원문만 쓴다
+    history_query = f"S-104 주행 위치 편차 {QUESTION}"  # 1차 history만 신고 코드·이름을 붙인다
     assert fakes.searches == [
-        ("manual", "AGV", first_query, 3), ("history", "AGV", first_query, 3),
+        ("manual", "AGV", QUESTION, 3), ("history", "AGV", history_query, 3),
         ("manual", None, QUESTION, 3), ("history", None, QUESTION, 3),
     ]
 
@@ -271,22 +281,19 @@ def test_폴백에서_인용_검증에_실패하면_DependencyError(fakes):
 
 
 # --- 고객 안내: 매뉴얼 검색·생성·검증 ----------------------------------
-def test_신고_코드의_매뉴얼만_검색하고_폴백과_이력은_쓰지_않는다(fakes):
+def test_신고_코드의_절_전체를_가져오고_유사도_검색_폴백_이력은_쓰지_않는다(fakes):
     ask_customer("AGV")
-    assert [
-        (kind, equipment.value, query, k)
-        for kind, equipment, query, k in fakes.searches
-    ] == [("manual", "AGV", "S-104 주행 위치 편차", 3)]
+    assert [(equipment.value, code) for equipment, code in fakes.fetches] == [("AGV", "S-104")]
+    assert fakes.searches == []
 
 
-def test_검색_건수는_설정값을_쓴다(fakes):
-    ask_customer(settings=SearchSettings(manual_k=2, history_k=9))
-    assert fakes.searches[0][3] == 2
-
-
-def test_안내_검색은_신고_코드로_거른다(fakes):
-    ask_customer()
-    assert fakes.search_codes == ["S-104"]
+def test_셀프_가이드_후보가_아니면_검색과_생성_없이_보류한다(fakes):
+    for severity, owner in [("상", "고객사 조치"), ("하", "엔지니어 필요")]:
+        answer = pipeline.run_customer_guidance(
+            make_context(severity=severity, action_owner=owner), SearchSettings(manual_k=3, history_k=3)
+        )
+        assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE and answer.steps == [] and answer.notice
+    assert fakes.fetches == [] and fakes.guidance_calls == 0
 
 
 def test_검색_결과가_없으면_보류하고_다시_찾지_않으며_생성은_부르지_않는다(fakes):
@@ -296,7 +303,7 @@ def test_검색_결과가_없으면_보류하고_다시_찾지_않으며_생성�
     assert answer.steps == []
     assert answer.notice
     assert fakes.guidance_calls == 0
-    assert len(fakes.searches) == 1  # 폴백 검색을 하지 않는다
+    assert len(fakes.fetches) == 1 and fakes.searches == []  # 다시 찾지 않는다
 
 
 def test_근거가_있으면_모델에_맡겨_생성한_안내를_돌려준다(fakes):
@@ -348,16 +355,15 @@ def test_보류_답변은_조치_단계가_없다():
     assert answer.verdict == Verdict.INSUFFICIENT_EVIDENCE
 
 # --- 검색 공개 함수: 운영과 같은 검색 호출 -----------------------------
-def test_고객_검색_함수는_안내와_같은_검색_호출을_한다(fakes):
+def test_고객_검색_함수는_안내와_같은_조회를_한다(fakes):
     settings = SearchSettings(manual_k=2, history_k=9)
     ask_customer("AGV", settings)
-    run_calls = (list(fakes.searches), list(fakes.search_codes))
-    fakes.searches.clear()
-    fakes.search_codes.clear()
+    run_calls = list(fakes.fetches)
+    fakes.fetches.clear()
 
     hits = pipeline.search_customer_evidence(make_context("AGV"), settings)
 
-    assert (fakes.searches, fakes.search_codes) == run_calls
+    assert fakes.fetches == run_calls
     assert fakes.guidance_hits_seen == [hits]
 
 

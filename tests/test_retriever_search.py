@@ -24,12 +24,23 @@ class FakeStore:
 
     def similarity_search_with_score(self, query, k=4, filter=None):
         self.calls.append({"query": query, "k": k, "filter": filter})
-        hits = [
-            (doc, dist)
-            for doc, dist in self.scored
-            if all(doc.metadata.get(key) == value for key, value in (filter or {}).items())
-        ]
+        hits = [(doc, dist) for doc, dist in self.scored if matches(doc, filter)]
         return hits[:k]  # 입력 순서를 그대로 둬 정렬은 retriever가 하는지 확인한다.
+
+    def get(self, where=None, include=None):
+        return {"metadatas": [doc.metadata for doc, _ in self.scored if matches(doc, where)]}
+
+
+def matches(doc: Document, where: dict | None) -> bool:
+    """Chroma where 중 retriever가 쓰는 동등·`$and`·`$nin`만 흉내 낸다(`$nin`은 키가 없어도 맞음)."""
+    if not where:
+        return True
+    if "$and" in where:
+        return all(matches(doc, cond) for cond in where["$and"])
+    key, value = next(iter(where.items()))
+    if isinstance(value, dict):
+        return doc.metadata.get(key) not in value["$nin"]
+    return doc.metadata.get(key) == value
 
 
 class BrokenStore:
@@ -254,7 +265,7 @@ def code_chunk(chunk_no: int, code: str | None) -> Document:
     return doc
 
 
-def test_code를_주면_다른_코드의_문서를_빼고_k건만_남긴다(install_store):
+def test_code를_주면_다른_코드의_문서를_검색_전에_뺀다(install_store):
     other, same, common = code_chunk(1, "S-999"), code_chunk(2, "S-104"), code_chunk(3, None)
     other_row, same_row = error_row(Equipment.SRM, "S-999"), error_row(Equipment.SRM, "S-104")
     same_late = code_chunk(4, "S-104")
@@ -265,9 +276,73 @@ def test_code를_주면_다른_코드의_문서를_빼고_k건만_남긴다(inst
     hits = retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3, code="S-104")
 
     assert [h.ref_id for h in hits] == [same.id, common.id, same_row.id]
-    assert store.calls[0]["k"] == 3 * retriever.MANUAL_FETCH_FACTOR
+    assert store.calls[0]["k"] == 3
+    assert store.calls[0]["filter"] == {"$and": [{"equipment": "SRM"}, {"code": {"$nin": ["S-999"]}}]}
+
+
+def test_다른_코드가_없으면_설비_필터만_건다(install_store):
+    store = FakeStore([(code_chunk(1, "S-104"), 0.1)])
+    install_store(manual=store)
+    retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3, code="S-104")
+    assert store.calls[0]["filter"] == {"equipment": "SRM"}
 
 
 def test_code로_거르고_모자라면_있는_만큼만_돌려준다(install_store):
     install_store(manual=FakeStore([(code_chunk(1, "S-999"), 0.1)]))
     assert retriever.search(CitationKind.MANUAL, Equipment.SRM, NAME, 3, code="S-104") == []
+
+
+class GetStore:
+    """`get(where=...)`만 흉내 내는 가짜 저장소. 받은 where를 기록한다."""
+
+    def __init__(self, docs: list[Document]):
+        self.docs = docs
+        self.wheres: list[dict] = []
+
+    def get(self, where=None):
+        self.wheres.append(where)
+        conds = {k: v for c in where["$and"] for k, v in c.items()}
+        picked = [d for d in self.docs if all(d.metadata.get(k) == v for k, v in conds.items())]
+        return {"ids": [d.id for d in picked], "documents": [d.page_content for d in picked],
+                "metadatas": [d.metadata for d in picked]}
+
+
+def numbered(page: int, chunk_no: int, code: str) -> Document:
+    doc = code_chunk(chunk_no, code)
+    doc.id = f"manual:SRM-spec:{page}:{chunk_no}"
+    doc.metadata.update(page=page, chunk_no=chunk_no)
+    return doc
+
+
+def test_코드_절_전체를_코드표_행_다음_쪽_청크_순으로_가져온다(monkeypatch):
+    late, early, early2 = numbered(42, 1, "S-104"), numbered(41, 3, "S-104"), numbered(41, 1, "S-104")
+    row, other = error_row(Equipment.SRM, "S-104"), numbered(41, 2, "S-999")
+    store = GetStore([late, early, other, row, early2])
+    monkeypatch.setattr(vectordb, "get_store", lambda kind: store)
+
+    hits = retriever.fetch_code_documents(Equipment.SRM, "S-104")
+
+    assert [h.ref_id for h in hits] == [row.id, early2.id, early.id, late.id]
+    assert all(h.distance is None for h in hits)
+    assert store.wheres == [{"$and": [{"equipment": "SRM"}, {"code": "S-104"}]}]
+
+
+def test_코드_절_조회_실패는_DependencyError(monkeypatch):
+    monkeypatch.setattr(vectordb, "get_store", lambda kind: BrokenStore())
+    with pytest.raises(DependencyError):
+        retriever.fetch_code_documents(Equipment.SRM, "S-104")
+
+
+def test_코드_절은_엔지니어_조치_절차_제목_앞까지만_가져온다(monkeypatch):
+    cond, mixed, eng = numbered(41, 1, "S-104"), numbered(41, 2, "S-104"), numbered(41, 3, "S-104")
+    cond.page_content = "1. 발생 조건\n주행 중 발생"
+    mixed.page_content = "2. 고객사 조치 절차\n1. 정지한다.\n\n3. 엔지니어 조치 절차\n\n1. LOTO 후 교체한다."
+    eng.page_content = "2. 엔코더를 교체한다."
+    table = numbered(41, 4, "S-104")
+    table.page_content = "| 원인 후보 | 확인 방법 | 판별 기준 |\n| --- | --- | --- |\n| 커넥터 풀림 | 육안 | 들뜸 |"
+    monkeypatch.setattr(vectordb, "get_store", lambda kind: GetStore([table, eng, mixed, cond]))
+
+    hits = retriever.fetch_code_documents(Equipment.SRM, "S-104")
+
+    assert [h.ref_id for h in hits] == [cond.id, mixed.id, table.id]  # 원인 후보 표는 제목 뒤에 있어도 남긴다
+    assert hits[1].text == "2. 고객사 조치 절차\n1. 정지한다."
