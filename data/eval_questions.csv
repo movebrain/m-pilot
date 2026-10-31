@@ -7,48 +7,98 @@ engineer_chat,RTV,R237,광통신기 렌즈도 닦고 가리는 물건도 치웠�
 engineer_chat,RTV,R222,화물 높이는 규격 안인데도 R222로 반입이 계속 거부돼요. 엔지니어는 뭘 봐야 하나요?,answered,own_code,"[""manual:HMX-RTV-TSM-001:72:1"", ""manual:HMX-RTV-TSM-001:71:5"", ""error:RTV:R222""]"
 engineer_chat,SRM,S127,여러 화물에서 계속 LU-ID를 못 읽는데 라벨이랑 리더 창은 깨끗해요. 엔지니어가 리더 쪽에서 뭘 점검해야 하죠?,answered,own_code,"[""manual:HMX-SRM-TSM-001:78:3""]"
 engineer_chat,SRM,S134,S134가 반복되는데 화물은 정위치 같아요. 인계하는 RTV나 AGV 정지 오차가 어느 정도면 그쪽 문제로 보나요? 센서는 어떻게 확인하죠?,answered,own_code,"[""manual:HMX-SRM-TSM-001:88:3"", ""manual:HMX-SRM-TSM-001:88:4"", ""error:SRM:S134""]"
+engineer_chat,SRM,S104,"S104로 캐리지가 중간 높이에서 섰는데 랙 빔 쪽 돌출 화물에 걸린 것 같아요. 걸림 풀 때 캐리지는 어떻게 움직여야 하고, 리셋 전에 로프 쪽은 뭘 재 봐야 하나요?",answered,own_code,"[""manual:HMX-SRM-TSM-001:44:3"", ""manual:HMX-SRM-TSM-001:43:5""]"
+engineer_chat,Mini Loader,M445,M445가 통로 아무 데서나 나는 게 아니고 버스바 이음부 지날 때만 떠서 서요. 엔지니어는 집전자랑 이음부에서 뭘 봐야 하고 브러시는 몇 mm면 갈아야 하나요?,answered,own_code,"[""manual:HMX-MLD-TSM-001:97:2"", ""manual:HMX-MLD-TSM-001:97:3"", ""manual:HMX-MLD-TSM-001:97:5"", ""error:Mini Loader:M445""]"
+engineer_chat,Mini Loader,M438,"M438로 두 호기가 R2 안에서 붙어 섰어요. 엔지니어가 두 대 떼어낼 때 모드랑 수동 속도 제한은 어떻게 하고, 끝나고 복구 확인은 뭘로 하나요?",answered,own_code,"[""manual:HMX-MLD-TSM-001:88:1"", ""error:Mini Loader:M438""]"
+engineer_chat,Mini Loader,M412,"M412로 캐리지가 높은 데서 섰는데 내리려니 하강이 좀 불안해요. 이럴 땐 어떻게 하고, 수리 끝나면 브레이크 시험은 어떤 식으로 해야 하나요?",answered,own_code,"[""manual:HMX-MLD-TSM-001:50:2"", ""manual:HMX-MLD-TSM-001:50:3"", ""error:Mini Loader:M412""]"
+engineer_chat,SRM,S121,"S121 떴고 S104도 같이 찍혔어요. 엔지니어가 캐리지 밑으로 접근하기 전에 캐리지를 뭘로 받쳐야 하고, 뭘 전수 점검해야 하나요? 버킷형이에요.",answered,own_code,"[""manual:HMX-SRM-TSM-001:69:3"", ""error:SRM:S121""]"
+engineer_chat,SRM,S146,"지진 감지로 SRM이 섰어요. 리셋 전에 엔지니어가 레일은 어떤 기준으로 재야 하고, 재가동 후에는 뭘 확인해야 하나요?",answered,own_code,"[""manual:HMX-SRM-TSM-001:105:2"", ""manual:HMX-SRM-TSM-001:106:1"", ""error:SRM:S146""]"
+engineer_chat,AGV,A365,"A365로 후방 스캐너를 교체해야 하는데, 교체할 때 필드 설정은 어떻게 옮기고 교정이랑 투입 전 시험은 뭘 해야 해요?",answered,own_code,"[""manual:HMX-AGV-TSM-001:142:2"", ""manual:HMX-AGV-TSM-001:143:1"", ""error:AGV:A365""]"
+engineer_chat,AGV,A371,"A371로 브레이크 시험 실패해서 운용 중지된 차예요. 엔지니어가 평지로 옮긴 다음 뭘 점검하고, 휠 볼트 토크랑 복구 확인 기준은 어떻게 돼요?",answered,own_code,"[""manual:HMX-AGV-TSM-001:152:1"", ""error:AGV:A371""]"
+engineer_chat,AGV,A358,"A358인데 로드 캡 주변에 이물은 없어요. 그럼 엔지니어는 뭘 교체하고, 고친 다음엔 어떻게 확인하나요?",answered,own_code,"[""manual:HMX-AGV-TSM-001:132:1"", ""error:AGV:A358""]"
+engineer_chat,RTV,R226,루프형 대차가 R226으로 섰는데 같은 좌표에서 여러 대가 났어요. 엔지니어는 어느 파라미터랑 테이프를 봐야 하고 복구는 어떻게 확인해요?,answered,own_code,"[""manual:HMX-RTV-TSM-001:78:1"", ""error:RTV:R226""]"
+engineer_chat,RTV,R243,"R243 급전 유닛 과열이 났는데 냉각팬은 돌고 필터도 막혀 보이진 않아요. 엔지니어가 더 볼 게 뭐고, 복구 기준 온도는 몇 도예요?",answered,own_code,"[""manual:HMX-RTV-TSM-001:103:1"", ""manual:HMX-RTV-TSM-001:103:2"", ""error:RTV:R243""]"
+engineer_chat,RTV,R255,R255로 섰던 대차가 OBC 재부팅하니까 일단 돌긴 해요. 원인 잡으려면 엔지니어가 어떤 순서로 뭘 점검해야 하나요?,answered,own_code,"[""manual:HMX-RTV-TSM-001:120:1"", ""error:RTV:R255""]"
 engineer_chat,AGV,A346,"셀 전압 불균형이 뜬 차량인데, 충전 중에 셀 온도가 급하게 오르면서 전압이 같이 뚝 떨어지는 게 보이면 현장에서 어떻게 대응하라고 해야 하나요?",answered,own_common,"[""manual:HMX-AGV-TSM-001:22:7""]"
-engineer_chat,AGV,A347,"충전 단자 접촉이 불량한 차량인데, 접점에 그리스를 좀 발라 줘도 되나요? 그리고 단자는 충전 몇 회쯤에서 교체하나요?",answered,own_common,"[""manual:HMX-AGV-TSM-001:41:2"", ""manual:HMX-AGV-TSM-001:41:4""]"
+engineer_chat,AGV,A347,"충전 단자 접촉이 불량한 차량인데, 접점에 그리스를 좀 발라 줘도 되나요? 그리고 단자는 충전 몇 회쯤에서 교체하나요?",answered,own_common,"[""manual:HMX-AGV-TSM-001:41:2"", ""manual:HMX-AGV-TSM-001:41:4"", ""manual:HMX-AGV-TSM-001:116:1"", ""manual:HMX-AGV-TSM-001:117:2""]"
 engineer_chat,Mini Loader,M411,"승강 벨트 상부 풀리를 확인하려고 마스트 위로 올라가야 하는데, 작업 안전 수칙이 어떻게 되나요?",answered,own_common,"[""manual:HMX-MLD-TSM-001:18:6""]"
 engineer_chat,Mini Loader,M409,승강 서보 부하가 높게 나오는데 타이밍 벨트가 뻑뻑해 보여서 윤활유를 뿌려 줄까 해요. 해도 되나요?,answered,own_common,"[""manual:HMX-MLD-TSM-001:25:3""]"
 engineer_chat,RTV,R234,"R234가 자주 나는 대차 한 대를 루프에서 빼서 정비하려는데, 그동안 나머지 대차는 어떻게 돌고 다시 넣을 때는 뭘 확인해야 하나요?",answered,own_common,"[""manual:HMX-RTV-TSM-001:22:2""]"
 engineer_chat,RTV,R207,R207 휠 슬립이 나서 휠 베어링에 그리스를 더 넣어 볼까 하는데 괜찮을까요? 주기랑 양 기준도 알려주세요.,answered,own_common,"[""manual:HMX-RTV-TSM-001:28:2"", ""manual:HMX-RTV-TSM-001:28:3""]"
-engineer_chat,SRM,S116,S116이 자주 뜨는 호기 주행 휠 답면을 재 봤더니 Φ500 휠이 Φ493이에요. 아직 써도 되는 건가요?,answered,own_common,"[""manual:HMX-SRM-TSM-001:29:5""]"
-engineer_chat,Mini Loader,M420,M420이 같은 호기에서 하루에 몇 번씩 뜨는데 용기나 셀 쪽은 다 멀쩡했어요. 그럼 뭘 의심해야 하나요?,answered,own_history,"[""history:MLD-H-0023"", ""manual:HMX-MLD-TSM-001:61:2"", ""error:Mini Loader:M420""]"
-engineer_chat,Mini Loader,M427,휠 교체하고 기동했더니 위치 이중화가 안 맞는다고 바로 서는데 제가 뭘 빠뜨린 걸까요?,answered,own_history,"[""history:MLD-H-0028"", ""manual:HMX-MLD-TSM-001:71:5""]"
-engineer_chat,SRM,S136,RTV가 스테이션에서 멈춰 있으면 SRM 쪽에서는 어떻게 되나요? 전에 비슷한 경우 어떻게 풀었는지도 알고 싶어요.,answered,own_history,"[""history:SRM-H-0005"", ""manual:HMX-SRM-TSM-001:91:1"", ""manual:HMX-SRM-TSM-001:91:3"", ""error:SRM:S136""]"
-engineer_chat,AGV,A385,"Mini Loader 쪽 입출고 컨베이어가 꽉 차서 AGV가 포트에서 안 움직이는데, 예전엔 어떻게 처리했어요?",answered,own_history,"[""history:AGV-H-0046"", ""manual:HMX-AGV-TSM-001:171:6"", ""error:AGV:A385""]"
-engineer_chat,RTV,R214,"스테이션에 반입할 때 R214로 자꾸 서요. 화물은 멀쩡한데, 반복되면 어디를 봐야 하나요?",answered,own_history,"[""history:RTV-H-0008"", ""manual:HMX-RTV-TSM-001:60:1"", ""error:RTV:R214""]"
-engineer_chat,SRM,S117,"다른 얘긴데, 싱크로형 RTV는 이재하다가 두 대가 같이 서버리던데(R205라고 뜬다던데) 보통 뭐가 원인이에요?",answered,other_code,"[""manual:HMX-RTV-TSM-001:45:2"", ""manual:HMX-RTV-TSM-001:45:5"", ""error:RTV:R205""]"
-engineer_chat,RTV,R201,"AGV에서 A352가 배터리 교환 직후에 주행을 막는다던데, 훅 체결 쪽을 확인하는 게 맞나요?",answered,other_code,"[""manual:HMX-AGV-TSM-001:122:4"", ""manual:HMX-AGV-TSM-001:123:2"", ""manual:HMX-AGV-TSM-001:123:3"", ""error:AGV:A352""]"
-engineer_chat,AGV,A333,"SRM 입고 스테이션에서 AGV가 화물을 내려놨는데 SRM이 S135를 띄우면서 안 집어 가던데, 엔지니어는 어디를 확인하나요?",answered,other_code,"[""manual:HMX-SRM-TSM-001:90:1"", ""manual:HMX-SRM-TSM-001:89:5"", ""error:SRM:S135""]"
-engineer_chat,Mini Loader,M441,"RTV에서 R219가 뜨면서 스테이션 Ready를 못 받는다는데, 스테이션은 자동 운전 상태인데도 반복되면 엔지니어는 신호가 어디서 끊기는지 어떻게 확인하나요?",answered,other_code,"[""manual:HMX-RTV-TSM-001:67:3"", ""error:RTV:R219""]"
-engineer_chat,RTV,R216,"미니로더 트윈 포크가 서로 어긋나서 M418이 뜬다는데, 엔지니어는 어디를 점검하나요? 용기 무게 차이도 영향이 있나요?",answered,other_code,"[""manual:HMX-MLD-TSM-001:58:2"", ""manual:HMX-MLD-TSM-001:58:4"", ""error:Mini Loader:M418""]"
-engineer_chat,AGV,A381,"RTV 라인 쪽 급전 케이블 근처에서 일해야 하는 사람이 있는데, 접근 거리 제한이나 의료기기 착용자 주의 같은 게 있나요?",answered,other_common,"[""manual:HMX-RTV-TSM-001:18:1""]"
-engineer_chat,Mini Loader,M405,"SRM은 정지한 뒤에 마스트 끝이 흔들리는 걸 몇 mm까지 허용하고, 정지 안정화는 몇 초 안에 끝나야 하나요?",answered,other_common,"[""manual:HMX-SRM-TSM-001:14:2""]"
-engineer_chat,SRM,S101,미니로더를 한 랙면에 두 대 돌리는 현장에서는 인접 호기가 몇 m 안으로 들어오면 감속하고 몇 m에서 서나요? 감속 속도는 얼마인가요?,answered,other_common,"[""manual:HMX-MLD-TSM-001:14:3""]"
-engineer_chat,RTV,R232,AGV는 관제와 어떤 규격의 메시지로 통신하나요? 지연이 몇 초부터 문제가 되고 끊김은 몇 초부터인가요?,answered,other_common,"[""manual:HMX-AGV-TSM-001:18:6"", ""manual:HMX-AGV-TSM-001:19:1""]"
-engineer_chat,Mini Loader,M433,"RTV 대차들 OBC 소프트웨어 버전이 v3.0이랑 v3.2로 섞여 있는데, 그대로 같이 운전해도 되나요?",answered,other_common,"[""manual:HMX-RTV-TSM-001:36:3""]"
-engineer_chat,SRM,S111,SRM-SP-101 주행 휠 유닛 교체해야 하는데 단가랑 납기 좀 알 수 있을까요?,insufficient_evidence,none_code,[]
-engineer_chat,AGV,A383,현장 와이파이 AP 모델명이랑 관리자 접속 비밀번호 좀 알려주세요.,insufficient_evidence,none_code,[]
-engineer_chat,AGV,A389,"A389가 떠서 점검 잡았는데, 같이 찍힌 A395는 무슨 에러인가요? 에러표에서 못 찾겠어요.",insufficient_evidence,none_code,[]
-engineer_chat,RTV,R258,R258이랑 같이 R270도 뜨던데 이건 어떤 에러예요?,insufficient_evidence,none_code,[]
-engineer_chat,Mini Loader,M449,파라미터 체크섬 에러 나는 호기에서 M452도 같이 보이던데 이건 무슨 코드죠?,insufficient_evidence,none_code,[]
-engineer_chat,Mini Loader,M448,"M448 워치독이 떠서 PLC를 들여다보려는데, PLC 제조사랑 기종이랑 래더 프로그램은 어디서 열어볼 수 있나요?",insufficient_evidence,none_code,[]
-engineer_chat,SRM,S147,"S147 때문에 PLC 펌웨어를 최신으로 올려 보려는데, 펌웨어 파일은 어디서 받나요?",insufficient_evidence,none_code,[]
-engineer_chat,AGV,A380,"A380 메모리 부족이 계속 나서 차량 컨트롤러 산업용 PC를 초기화하려는데, BIOS 설정값이랑 OS 복구 이미지는 어디서 받아요?",insufficient_evidence,none_code,[]
-engineer_chat,RTV,R204,"R204로 주행 모터가 과열돼서 아예 교체하려는데, 모터 제조사랑 형번이 어떻게 되나요?",insufficient_evidence,none_code,[]
-engineer_chat,RTV,R246,"R246 집전자 마모 경보가 떴는데, 교체용 카본 브러시 제조사랑 재질 등급이 어떻게 되나요?",insufficient_evidence,none_code,[]
-engineer_chat,Mini Loader,M408,"고객사 쪽 일반 지게차가 유압 실린더 오일이 새면서 포크가 안 올라간다는데, 어디부터 점검하라고 안내하죠?",insufficient_evidence,none_common,[]
-engineer_chat,RTV,R201,이번 달 야간 근무 수당은 어디서 신청해요?,insufficient_evidence,none_common,[]
-engineer_chat,AGV,A375,팔레타이저 그리퍼 흡착 패드는 보통 몇 개월마다 교체하나요?,insufficient_evidence,none_common,[]
-engineer_chat,SRM,S109,사무실 프린터가 네트워크에서 안 잡히는데 IP를 어떻게 설정해야 하나요?,insufficient_evidence,none_common,[]
-engineer_chat,RTV,R240,공장 옥상 태양광 인버터가 에러를 내는데 에러코드 표는 어디서 확인해요?,insufficient_evidence,none_common,[]
-engineer_chat,AGV,A390,신입 오퍼레이터 안전교육 이수 확인서 양식은 어디서 받을 수 있죠?,insufficient_evidence,none_common,[]
-engineer_chat,RTV,R250,구역 스프링클러 헤드 점검 주기랑 소방 점검표 양식 좀 알려 주세요.,insufficient_evidence,none_common,[]
-engineer_chat,SRM,S143,모터를 호이스트로 들어 올릴 때 슬링 각도별 허용 하중은 어떻게 되나요?,insufficient_evidence,none_common,[]
-engineer_chat,SRM,S150,이번 달 출장비 정산 양식은 어디에 올리나요?,insufficient_evidence,none_common,[]
-engineer_chat,Mini Loader,M443,교체하고 나온 불량 서보 드라이브랑 센서는 어떤 절차로 폐기물 신고를 하나요?,insufficient_evidence,none_common,[]
+engineer_chat,SRM,S116,S116이 자주 뜨는 호기 주행 휠 답면을 재 봤더니 Φ500 휠이 Φ493이에요. 아직 써도 되는 건가요?,answered,own_common,"[""manual:HMX-SRM-TSM-001:29:5"", ""manual:HMX-SRM-TSM-001:61:5""]"
+engineer_chat,AGV,A301,A301 뜨고 차가 통로 한가운데 서서 기동이 안 돼요. 일단 사람이 밀어서 통로 밖으로 빼려는데 브레이크 풀고 옮기는 순서랑 조심할 게 뭐예요?,answered,own_common,"[""manual:HMX-AGV-TSM-001:23:6"", ""manual:HMX-AGV-TSM-001:20:4""]"
+engineer_chat,RTV,R208,"R208 계속 나는 구간 레일 손보면서 바코드 테이프를 새로 붙이려고 해요. 판독면이랑 거리, 테이프 이음 틈, 붙이기 전 바닥 처리 기준이 어떻게 되죠?",answered,own_common,"[""manual:HMX-RTV-TSM-001:19:4""]"
+engineer_chat,SRM,S118,S118로 올라가다 섰는데 상부 가이드 롤러 상태를 보려면 마스트 위까지 올라가야 해요. 올라갈 때 인원이나 안전대 기준이 따로 있나요?,answered,own_common,"[""manual:HMX-SRM-TSM-001:21:2""]"
+engineer_chat,Mini Loader,M410,"우리 현장은 3교대로 24시간 돌리는데, 정기점검표 주기를 그대로 따르면 되나요?",answered,own_common,"[""manual:HMX-MLD-TSM-001:24:1""]"
+engineer_chat,Mini Loader,M444,"완충기 충돌 점검하면서 마스트 알루미늄 이음 플레이트 볼트도 다시 조이려는데, M10이니까 일반 토크표대로 49 N·m 주면 되죠?",answered,own_common,"[""manual:HMX-MLD-TSM-001:26:3"", ""manual:HMX-MLD-TSM-001:26:2""]"
+engineer_chat,Mini Loader,M417,미니로더 8대 돌리는 현장인데 핑거 액추에이터 예비품은 몇 개 상비해 두면 돼요?,answered,own_common,"[""manual:HMX-MLD-TSM-001:29:1"", ""manual:HMX-MLD-TSM-001:29:2""]"
+engineer_chat,SRM,S113,"주행 감속기 오일 갈 때가 됐는데 오일 규격이랑 교환 주기, 팔레트형은 몇 리터 넣어야 하나요?",answered,own_common,"[""manual:HMX-SRM-TSM-001:29:3"", ""manual:HMX-SRM-TSM-001:16:2""]"
+engineer_chat,SRM,S104,"S104 원인이 로프 손상으로 나와서 와이어로프 2줄을 갈려고 해요. 인원은 몇 명에 시간은 얼마나 잡고, 버킷형이면 캐리지는 몇 톤짜리 체인블록으로 매달아야 해요?",answered,own_common,"[""manual:HMX-SRM-TSM-001:30:3""]"
+engineer_chat,SRM,S136,증설한 SRM 현장 검수(SAT)를 하는데 연속 운전 시험은 몇 시간 돌려야 하고 가용도 기준은 얼마예요? RTV 인계 시험은 몇 번 연속 무오류여야 하죠?,answered,own_common,"[""manual:HMX-SRM-TSM-001:36:2""]"
+engineer_chat,AGV,A368,정기점검에서 AGV 절연 저항을 재려는데 배터리 연결된 채로 재도 돼요? 기준값은 얼마예요?,answered,own_common,"[""manual:HMX-AGV-TSM-001:40:6""]"
+engineer_chat,AGV,A334,"FB-C 상단 컨베이어 모듈을 떼었다가 다시 얹었는데, 주행 플랫폼이랑 결합하는 볼트는 토크 몇으로 조여야 해요?",answered,own_common,"[""manual:HMX-AGV-TSM-001:41:6""]"
+engineer_chat,RTV,R201,"레일 다시 잡으면서 베이스 플레이트 케미컬 앵커를 M16으로 박았는데, 일반 토크표대로 210 N·m 주면 되나요?",answered,own_common,"[""manual:HMX-RTV-TSM-001:29:3"", ""manual:HMX-RTV-TSM-001:29:2""]"
+engineer_chat,RTV,R210,루프형 현장 주행 휠 예비품 수량이 바뀌었다던데 10대 기준 몇 개예요? 우리처럼 10대가 안 되는 현장은요?,answered,own_common,"[""manual:HMX-RTV-TSM-001:33:1"", ""manual:HMX-RTV-TSM-001:33:2""]"
+engineer_chat,Mini Loader,M420,M420이 같은 호기에서 하루에 몇 번씩 뜨는데 용기나 셀 쪽은 다 멀쩡했어요. 그럼 뭘 의심해야 하나요?,answered,history,"[""history:MLD-H-0023""]"
+engineer_chat,Mini Loader,M427,휠 교체하고 기동했더니 위치 이중화가 안 맞는다고 바로 서는데 제가 뭘 빠뜨린 걸까요?,answered,history,"[""history:MLD-H-0028""]"
+engineer_chat,SRM,S136,RTV가 스테이션에서 멈춰 있으면 SRM 쪽에서는 어떻게 되나요? 전에 비슷한 경우 어떻게 풀었는지도 알고 싶어요.,answered,history,"[""history:SRM-H-0005""]"
+engineer_chat,AGV,A385,"Mini Loader 쪽 입출고 컨베이어가 꽉 차서 AGV가 포트에서 안 움직이는데, 예전엔 어떻게 처리했어요?",answered,history,"[""history:AGV-H-0046""]"
+engineer_chat,RTV,R214,"스테이션에 반입할 때 R214로 자꾸 서요. 화물은 멀쩡한데, 반복되면 어디를 봐야 하나요?",answered,history,"[""history:RTV-H-0008""]"
+engineer_chat,AGV,A316,"A316이 다른 포트는 멀쩡한데 한 포트에서만 계속 나요. 수동으로 맞추면 일단 넘어가긴 하는데, 예전에 같은 포트만 반복될 때 결국 원인이 뭐였고 어떻게 마무리했어요?",answered,history,"[""history:AGV-H-0008""]"
+engineer_chat,AGV,A357,A357로 충전이 또 중간에 끊겼어요. 전에 같은 코드 났을 때 실제로 뭐가 원인이었고 어떤 부품을 바꿨는지 알 수 있을까요?,answered,history,"[""history:AGV-H-0015"", ""history:AGV-H-0031""]"
+engineer_chat,SRM,S101,S101이 RESET하고 반사판까지 닦았는데 또 떠요. 예전에 청소로 안 잡혔을 때는 결국 어디가 문제였고 뭘 했어요?,answered,history,"[""history:SRM-H-0012""]"
+engineer_chat,RTV,R204,R204 나서 30분 식히고 다시 돌렸는데 같은 대차가 또 섰어요. 전에 재발했을 때는 실제 원인이 뭐였고 어떻게 조정했나요?,answered,history,"[""history:RTV-H-0028""]"
+engineer_chat,Mini Loader,M406,"M406이 주행 시작하자마자 뜨는데 브레이크는 실제로 잘 풀리는 것 같아요. 예전 사례에서 모터까지 바꿨나요, 아니면 다른 데서 원인을 찾았나요?",answered,history,"[""history:MLD-H-0029""]"
+engineer_chat,Mini Loader,M437,M437 감속 표시가 호기들이 대기 위치로 돌아갈 때마다 계속 떠요. 예전에 같은 증상 있었을 때 대기 위치 간격을 몇 m로 바꿨고 감지 횟수는 얼마나 줄었어요?,answered,history,"[""history:MLD-H-0047""]"
+engineer_chat,Mini Loader,M434,듀얼 운전으로 바꾸고 나서 M434로 감속하다가 서요. 전에 같은 코드 났을 때 뭘 의심했고 결국 해결됐어요?,answered,history,"[""history:MLD-H-0042""]"
+engineer_chat,SRM,S109,"S109로 WCS 재연결이 계속 실패해요. WCS 서버는 멀쩡하다는데, 예전에 재연결만 반복 실패했던 사례는 실제로 뭐가 언제 만료됐었고 누가 어떻게 풀었어요?",answered,history,"[""history:SRM-H-0026""]"
+engineer_chat,SRM,S102,S102 과속도 트립이 났는데 며칠 전에 주행 인버터를 바꿨거든요. 전에 인버터 교체하고 나서 비슷하게 난 적 있었나요? 그때 뭐가 문제였어요?,answered,history,"[""history:SRM-H-0043""]"
+engineer_chat,SRM,S138,S138이 주행 가속할 때만 가끔 떠요. 예전에 같은 증상 났을 때는 실제로 뭐 때문에 전압이 떨어졌고 어디에 무슨 요청을 했어요?,answered,history,"[""history:SRM-H-0030""]"
+engineer_chat,AGV,A306,맵 편집하고 나서 특정 노드에서 직교 전환할 때마다 A306으로 서요. 전에 이런 적 있었으면 원인이 뭐였고 어떻게 풀었어요?,answered,history,"[""history:AGV-H-0039""]"
+engineer_chat,AGV,A349,A349로 충전 암이 제대로 안 움직여서 충전 대기에 걸렸어요. 예전에 같은 코드 났을 때 실제로 뭐가 문제였고 뭘 교체했어요?,answered,history,"[""history:AGV-H-0040""]"
+engineer_chat,RTV,R211,레이아웃 바꾼 뒤에 R211로 곡선 들어가다 섰어요. 전에 R211 났던 사례에서는 곡선 시작 좌표가 실제로 얼마나 어긋나 있었고 뭘 갱신했어요?,answered,history,"[""history:RTV-H-0030""]"
+engineer_chat,RTV,R257,R257 S/W 버전 불일치로 운전 투입이 거부됐어요. 지난번에 같은 코드 났을 때는 왜 버전이 달라졌던 거고 어떻게 맞췄어요?,answered,history,"[""history:RTV-H-0041""]"
+engineer_chat,RTV,R229,R229로 레일 끝단 리밋에서 섰어요. 이전에 이 코드 났을 때 실제 원인이 뭐였는지 알 수 있을까요?,answered,history,"[""history:RTV-H-0046""]"
+engineer_chat,SRM,S117,"다른 얘긴데, 싱크로형 RTV는 이재하다가 두 대가 같이 서버리던데(R205라고 뜬다던데) 보통 뭐가 원인이에요?",answered,other,"[""manual:HMX-RTV-TSM-001:45:2"", ""manual:HMX-RTV-TSM-001:45:5"", ""error:RTV:R205"", ""manual:HMX-RTV-TSM-001:15:3"", ""manual:HMX-RTV-TSM-001:46:1""]"
+engineer_chat,RTV,R201,"AGV에서 A352가 배터리 교환 직후에 주행을 막는다던데, 훅 체결 쪽을 확인하는 게 맞나요?",answered,other,"[""manual:HMX-AGV-TSM-001:122:4"", ""manual:HMX-AGV-TSM-001:123:2"", ""manual:HMX-AGV-TSM-001:123:3"", ""error:AGV:A352"", ""manual:HMX-AGV-TSM-001:123:1""]"
+engineer_chat,AGV,A333,"SRM 입고 스테이션에서 AGV가 화물을 내려놨는데 SRM이 S135를 띄우면서 안 집어 가던데, 엔지니어는 어디를 확인하나요?",answered,other,"[""manual:HMX-SRM-TSM-001:90:1"", ""manual:HMX-SRM-TSM-001:89:5"", ""error:SRM:S135"", ""manual:HMX-SRM-TSM-001:31:7""]"
+engineer_chat,Mini Loader,M441,"RTV에서 R219가 뜨면서 스테이션 Ready를 못 받는다는데, 스테이션은 자동 운전 상태인데도 반복되면 엔지니어는 신호가 어디서 끊기는지 어떻게 확인하나요?",answered,other,"[""manual:HMX-RTV-TSM-001:67:3"", ""error:RTV:R219"", ""manual:HMX-RTV-TSM-001:67:1""]"
+engineer_chat,RTV,R216,"미니로더 트윈 포크가 서로 어긋나서 M418이 뜬다는데, 엔지니어는 어디를 점검하나요? 용기 무게 차이도 영향이 있나요?",answered,other,"[""manual:HMX-MLD-TSM-001:58:2"", ""manual:HMX-MLD-TSM-001:58:4"", ""error:Mini Loader:M418""]"
+engineer_chat,AGV,A381,"RTV 라인 쪽 급전 케이블 근처에서 일해야 하는 사람이 있는데, 접근 거리 제한이나 의료기기 착용자 주의 같은 게 있나요?",answered,other,"[""manual:HMX-RTV-TSM-001:18:1"", ""manual:HMX-RTV-TSM-001:42:1"", ""manual:HMX-RTV-TSM-001:101:2""]"
+engineer_chat,Mini Loader,M405,"SRM은 정지한 뒤에 마스트 끝이 흔들리는 걸 몇 mm까지 허용하고, 정지 안정화는 몇 초 안에 끝나야 하나요?",answered,other,"[""manual:HMX-SRM-TSM-001:14:2"", ""manual:HMX-SRM-TSM-001:110:3"", ""manual:HMX-SRM-TSM-001:111:2""]"
+engineer_chat,SRM,S101,미니로더를 한 랙면에 두 대 돌리는 현장에서는 인접 호기가 몇 m 안으로 들어오면 감속하고 몇 m에서 서나요? 감속 속도는 얼마인가요?,answered,other,"[""manual:HMX-MLD-TSM-001:14:3"", ""manual:HMX-MLD-TSM-001:18:3"", ""manual:HMX-MLD-TSM-001:30:2"", ""manual:HMX-MLD-TSM-001:85:3"", ""manual:HMX-MLD-TSM-001:87:2""]"
+engineer_chat,RTV,R232,AGV는 관제와 어떤 규격의 메시지로 통신하나요? 지연이 몇 초부터 문제가 되고 끊김은 몇 초부터인가요?,answered,other,"[""manual:HMX-AGV-TSM-001:18:6"", ""manual:HMX-AGV-TSM-001:19:1"", ""manual:HMX-AGV-TSM-001:21:8"", ""manual:HMX-AGV-TSM-001:168:3"", ""manual:HMX-AGV-TSM-001:169:3""]"
+engineer_chat,Mini Loader,M433,"RTV 대차들 OBC 소프트웨어 버전이 v3.0이랑 v3.2로 섞여 있는데, 그대로 같이 운전해도 되나요?",answered,other,"[""manual:HMX-RTV-TSM-001:36:3"", ""manual:HMX-RTV-TSM-001:122:2"", ""manual:HMX-RTV-TSM-001:123:1""]"
+engineer_chat,Mini Loader,M423,"SRM 쪽은 랙 증설하고 나서 S133이 뜬다던데, 그쪽 엔지니어는 좌표를 어떻게 채우나요? 설계값이랑 몇 mm 넘게 차이 나면 수동으로 티칭해요?",answered,other,"[""manual:HMX-SRM-TSM-001:87:1"", ""manual:HMX-SRM-TSM-001:23:2"", ""error:SRM:S133""]"
+engineer_chat,Mini Loader,M436,AGV FK-2T는 배터리가 몇 V 몇 Ah이고 한 번 충전으로 몇 시간 돌아요? 충전 들어가는 SOC 기준도 궁금해요.,answered,other,"[""manual:HMX-AGV-TSM-001:17:3"", ""manual:HMX-AGV-TSM-001:107:3""]"
+engineer_chat,SRM,S138,"RTV 루프 비접촉 급전 구간에서 R242로 대차가 서면, 엔지니어는 픽업 공극을 몇 mm로 맞추고 복구 때 출력은 몇 V 이상 나와야 해요?",answered,other,"[""manual:HMX-RTV-TSM-001:101:3"", ""manual:HMX-RTV-TSM-001:102:1"", ""error:RTV:R242"", ""manual:HMX-RTV-TSM-001:101:5"", ""manual:HMX-RTV-TSM-001:28:1"", ""manual:HMX-RTV-TSM-001:18:2"", ""manual:HMX-RTV-TSM-001:32:3""]"
+engineer_chat,SRM,S136,"SRM 스테이션 앞에 AGV(LP-2T) 포트를 새로 잡으면, AGV 쪽에서는 포트 좌표 등록하고 몇 번 도킹해서 확인해요? 반사판은 몇 개 보여야 하고요.",answered,other,"[""manual:HMX-AGV-TSM-001:23:5"", ""manual:HMX-AGV-TSM-001:64:3""]"
+engineer_chat,SRM,S121,"미니로더에도 낙하 방지 장치 걸리는 M414가 있다던데, 거기선 래칫 폴 해제하기 전에 캐리지를 뭘로 받치고 마스트 작업은 몇 명이서 해요?",answered,other,"[""manual:HMX-MLD-TSM-001:53:1"", ""error:Mini Loader:M414""]"
+engineer_chat,AGV,A385,미니로더 입출고대 컨베이어랑은 어떤 순서로 신호를 주고받아요? Ready가 몇 초 안에 안 오면 에러예요?,answered,other,"[""manual:HMX-MLD-TSM-001:14:6"", ""manual:HMX-MLD-TSM-001:84:3""]"
+engineer_chat,AGV,A336,RTV 체인 컨베이어 대차에 팔레트를 실을 때 데크보드 방향 조건이 있어요? 좌우로는 몇 mm까지 튀어나와도 되고요.,answered,other,"[""manual:HMX-RTV-TSM-001:13:1""]"
+engineer_chat,AGV,A386,SRM S141 집전 불량 경고가 뜨면 엔지니어는 카본 브러시를 몇 mm에서 갈고 접촉압은 얼마로 맞춰요?,answered,other,"[""manual:HMX-SRM-TSM-001:98:2"", ""error:SRM:S141"", ""manual:HMX-SRM-TSM-001:98:4"", ""manual:HMX-SRM-TSM-001:28:6"", ""manual:HMX-SRM-TSM-001:29:5""]"
+engineer_chat,RTV,R244,AGV에서 A355 열폭주 징후가 뜨면 그 배터리는 엔지니어가 어떻게 처리해요? 다시 써도 되나요? 새 배터리 달고 첫 충전은 어떻게 하고요.,answered,other,"[""manual:HMX-AGV-TSM-001:127:2"", ""manual:HMX-AGV-TSM-001:128:1"", ""error:AGV:A355""]"
+engineer_chat,RTV,R230,미니로더 랙 셀 자동 티칭은 60연×30단 한 열이면 얼마나 걸려요? 설계 좌표랑 몇 mm 이상 차이 나면 수동으로 해야 하나요?,answered,other,"[""manual:HMX-MLD-TSM-001:19:6"", ""manual:HMX-MLD-TSM-001:76:2""]"
+engineer_chat,SRM,S111,SRM-SP-101 주행 휠 유닛 교체해야 하는데 단가랑 납기 좀 알 수 있을까요?,insufficient_evidence,none,[]
+engineer_chat,AGV,A383,현장 와이파이 AP 모델명이랑 관리자 접속 비밀번호 좀 알려주세요.,insufficient_evidence,none,[]
+engineer_chat,AGV,A389,"A389가 떠서 점검 잡았는데, 같이 찍힌 A395는 무슨 에러인가요? 에러표에서 못 찾겠어요.",insufficient_evidence,none,[]
+engineer_chat,RTV,R258,R258이랑 같이 R270도 뜨던데 이건 어떤 에러예요?,insufficient_evidence,none,[]
+engineer_chat,Mini Loader,M449,파라미터 체크섬 에러 나는 호기에서 M452도 같이 보이던데 이건 무슨 코드죠?,insufficient_evidence,none,[]
+engineer_chat,Mini Loader,M408,"고객사 쪽 일반 지게차가 유압 실린더 오일이 새면서 포크가 안 올라간다는데, 어디부터 점검하라고 안내하죠?",insufficient_evidence,none,[]
+engineer_chat,RTV,R201,이번 달 야간 근무 수당은 어디서 신청해요?,insufficient_evidence,none,[]
+engineer_chat,AGV,A375,팔레타이저 그리퍼 흡착 패드는 보통 몇 개월마다 교체하나요?,insufficient_evidence,none,[]
+engineer_chat,SRM,S109,사무실 프린터가 네트워크에서 안 잡히는데 IP를 어떻게 설정해야 하나요?,insufficient_evidence,none,[]
+engineer_chat,RTV,R240,공장 옥상 태양광 인버터가 에러를 내는데 에러코드 표는 어디서 확인해요?,insufficient_evidence,none,[]
+engineer_chat,Mini Loader,M447,"M447 때문에 SMPS를 바꾸려는데, 정품 SMPS 제조사랑 형명이 뭐예요? 호환품 써도 되나요?",insufficient_evidence,none,[]
+engineer_chat,Mini Loader,M442,"M442 과속 감시가 오검출된다는 얘기가 있던데, 이거 고친 OCP 펌웨어 패치가 몇 버전에 나왔어요?",insufficient_evidence,none,[]
+engineer_chat,Mini Loader,M402,다음 달 미니로더 정비 교육 일정이랑 강사가 누구인지 알 수 있을까요?,insufficient_evidence,none,[]
+engineer_chat,SRM,S146,"S146 진동 감지기는 몇 년마다 교정을 받아야 하고, 교정은 어느 업체에 맡겨요?",insufficient_evidence,none,[]
+engineer_chat,SRM,S113,SRM 통로 조명은 정비할 때 몇 lux 이상 확보해야 하나요?,insufficient_evidence,none,[]
+engineer_chat,SRM,S147,이 현장 SRM 무상 보증을 1년 연장하려면 비용이 얼마나 들어요?,insufficient_evidence,none,[]
+engineer_chat,AGV,A380,A380 메모리 부족 뜨는 차량 컨트롤러 RAM이 몇 GB예요? 증설도 되나요?,insufficient_evidence,none,[]
+engineer_chat,AGV,A305,AGV 주행 구역 바닥 에폭시를 다시 시공하려는데 시공 업체랑 양생 기간은 어떻게 잡아요?,insufficient_evidence,none,[]
+engineer_chat,RTV,R259,R259 떠서 NTP 설정을 다시 넣으려는데 이 고객사 NTP 서버 IP가 뭐였죠?,insufficient_evidence,none,[]
+engineer_chat,RTV,R209,RTV 대차를 다른 공장으로 옮기려는데 운송 업체랑 운송비는 어떻게 돼요?,insufficient_evidence,none,[]
 customer_guidance,Mini Loader,M404,주행 중에 경고가 가끔 떠요,answered,guided,"[""manual:HMX-MLD-TSM-001:38:2"", ""manual:HMX-MLD-TSM-001:38:3"", ""manual:HMX-MLD-TSM-001:38:5"", ""error:Mini Loader:M404""]"
 customer_guidance,Mini Loader,M420,출고할 때 용기를 못 집었다고 떠요,answered,guided,"[""manual:HMX-MLD-TSM-001:61:1"", ""manual:HMX-MLD-TSM-001:61:3"", ""error:Mini Loader:M420""]"
 customer_guidance,Mini Loader,M431,WCS랑 연결이 끊겼다고 나와요,answered,guided,"[""manual:HMX-MLD-TSM-001:77:2"", ""manual:HMX-MLD-TSM-001:77:3"", ""manual:HMX-MLD-TSM-001:77:5"", ""error:Mini Loader:M431""]"
