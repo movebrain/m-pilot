@@ -26,6 +26,9 @@
       환각이 아니다. 지어낸 인용(인용 검증 실패)도 생성 실패라서 목적마다 1건 이하여야 합격이다.
     - 기록 항목: `versions`(모델 이름, 프롬프트·문항 파일 해시), `settings`(검색 설정), `results`(문항별 판정·인용·
       결과 분류), `summary`(건수·합격선·합격 여부), `caveats`(작은 표본 해석 주의).
+    - 검색 지표: 정답 근거가 있는 문항마다 운영과 같은 검색을 생성 없이 한 번 더 실행해 컬렉션(`manual`·`history`)별
+      Recall@k·Hit·역순위를 기록하고 목적별 평균(`summary`의 `retrieval`)을 낸다. 고객 안내와 `own_*`은 1차 검색,
+      `other_*`은 폴백 검색(설비 필터 없이 질문 원문)을 잰다. 합격 조건에는 쓰지 않는다.
     - 후보 `manual_k`·`history_k`(`.env`의 `MANUAL_K`·`HISTORY_K`)마다 따로 실행한다. 결과 파일이 설정을 함께 남긴다.
     - 사람 검수(생성된 고객 안내 전부, 엔지니어 `answered` 답변 최소 5건)는 이 스크립트 밖에서 한다. 고객 안내의
       안전 수칙 준수는 자동으로 재지 않는다.
@@ -33,7 +36,8 @@
 실행 전제: `main`이 `app.initialize()`로 DB·검색 저장소·모델을 연결하고 검색 색인을 준비한다. `run_eval`을 직접
 부르려면 같은 연결이 끝나 있어야 한다.
 
-의존: `config`, `db.rdb`, `models`, `rag.generator`, `rag.pipeline`, `app`(`initialize`)을 쓸 수 있다.
+의존: `config`, `db.rdb`, `models`, `rag.generator`, `rag.pipeline`, `rag.retriever`(폴백 검색), `app`(`initialize`)을
+쓸 수 있다.
 소유: RAG 파트
 """
 
@@ -55,14 +59,16 @@ from mpilot.models import (
     Answer,
     CaseContext,
     ChatRequest,
+    CitationKind,
     DependencyError,
     Equipment,
     ErrorCode,
+    SearchSettings,
     ValidationError,
     Verdict,
     is_self_guide_candidate,
 )
-from mpilot.rag import generator, pipeline, prompts
+from mpilot.rag import generator, pipeline, prompts, retriever
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -256,6 +262,80 @@ def _classify(question: _Question, answer: Answer | None) -> str:
     return "hit" if _cited_ref_ids(answer) & set(question.gold_ref_ids) else "wrong_source"
 
 
+def _search(question: _Question, context: CaseContext, settings: SearchSettings) -> tuple[str | None, list[str]]:
+    """검색 지표용으로 운영과 같은 검색만 실행한다(생성은 하지 않는다).
+
+    Args:
+        question: 검증을 통과한 문항.
+        context: 문항의 신고 맥락.
+        settings: 이 실행의 검색 설정.
+
+    Returns:
+        tuple[str | None, list[str]]: 쓴 검색(`first`·`fallback`, 정답 근거가 없는 문항은 `None`)과 검색된 문서
+            ID 목록(`manual` 다음 `history`, 컬렉션마다 가까운 순).
+
+    Raises:
+        ValidationError: 검색 설정이 허용 범위를 벗어났을 때.
+        DependencyError: 임베딩 생성이나 저장소 검색에 실패했을 때.
+    """
+    if question.expected == Verdict.INSUFFICIENT_EVIDENCE:
+        return None, []
+    if question.purpose == CUSTOMER:
+        return "first", [h.ref_id for h in pipeline.search_customer_evidence(context, settings)]
+    if question.state.startswith("own_"):
+        return "first", [h.ref_id for h in pipeline.search_engineer_evidence(context, question.question, settings)]
+    # other_*의 정답은 다른 설비에 있어 1차(신고 설비 필터)로는 찾을 수 없으므로 폴백 검색을 잰다.
+    hits = retriever.search(CitationKind.MANUAL, None, question.question, settings.manual_k)
+    hits += retriever.search(CitationKind.HISTORY, None, question.question, settings.history_k)
+    return "fallback", [h.ref_id for h in hits]
+
+
+def _retrieval(retrieved: list[str], gold: tuple[str, ...]) -> dict[str, dict[str, object] | None]:
+    """컬렉션별 Recall@k·Hit·역순위. 그 컬렉션에 정답 근거가 없으면 `None`이다.
+
+    Args:
+        retrieved: 검색된 문서 ID 목록(컬렉션마다 가까운 순).
+        gold: 문항의 정답 근거. `history:` 접두로 컬렉션을 가른다.
+
+    Returns:
+        dict[str, dict[str, object] | None]: `manual`·`history`마다 `recall`(정답 중 검색된 비율), `hit`(하나라도
+            검색됐는지), `rr`(컬렉션 안 첫 정답 순위의 역수, 없으면 0).
+    """
+    metrics: dict[str, dict[str, object] | None] = {}
+    for name, is_history in (("manual", False), ("history", True)):
+        wanted = {ref for ref in gold if ref.startswith("history:") == is_history}
+        if not wanted:
+            metrics[name] = None
+            continue
+        ranked = [ref for ref in retrieved if ref.startswith("history:") == is_history]
+        ranks = [rank for rank, ref in enumerate(ranked, 1) if ref in wanted]
+        metrics[name] = {
+            "recall": len(wanted & set(ranked)) / len(wanted),
+            "hit": bool(ranks),
+            "rr": 1 / ranks[0] if ranks else 0.0,
+        }
+    return metrics
+
+
+def _summarize_retrieval(results: list[dict[str, object]]) -> dict[str, object]:
+    """한 목적의 문항별 검색 지표를 컬렉션별 평균으로 모은다. 지표가 없는 컬렉션은 `None`이다."""
+    summary: dict[str, object] = {}
+    for name in ("manual", "history"):
+        picked = [r["retrieval"][name] for r in results if r["retrieval"] and r["retrieval"][name]]
+        summary[name] = (
+            {
+                "questions": len(picked),
+                "recall": sum(m["recall"] for m in picked) / len(picked),
+                "hit_rate": sum(m["hit"] for m in picked) / len(picked),
+                "mrr": sum(m["rr"] for m in picked) / len(picked),
+            }
+            if picked
+            else None
+        )
+    summary["search_failed"] = sum(r["search_error"] is not None for r in results)
+    return summary
+
+
 def _by_state(questions: list[_Question], outcomes: list[str], fallbacks: list[bool | None]) -> dict[str, object]:
     """상태별 문항 수와 결과 분류 건수. 합격 조건에는 쓰이지 않는다.
 
@@ -378,6 +458,11 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
     outcomes: list[str] = []
     fallbacks: list[bool | None] = []
     for question, context in zip(questions, contexts):
+        search_kind, retrieved, search_error = None, [], None
+        try:
+            search_kind, retrieved = _search(question, context, config.search)
+        except DependencyError as e:
+            search_error = str(e)
         answer: Answer | None = None
         error: str | None = None
         try:
@@ -411,8 +496,16 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
                 "cited_ref_ids": sorted(_cited_ref_ids(answer)) if answer else [],
                 "outcome": outcome,
                 "error": error,
+                "search": search_kind,
+                "retrieved_ref_ids": retrieved,
+                "retrieval": _retrieval(retrieved, question.gold_ref_ids) if search_kind else None,
+                "search_error": search_error,
             }
         )
+
+    summary = _summarize_all(questions, outcomes, fallbacks)
+    for purpose in _PURPOSES:
+        summary[purpose]["retrieval"] = _summarize_retrieval([r for r in results if r["purpose"] == purpose])
 
     now = datetime.now(UTC)
     result: dict[str, object] = {
@@ -425,7 +518,7 @@ def run_eval(questions_path: Path, output_dir: Path) -> dict[str, object]:
         },
         "settings": config.search.model_dump(),
         "results": results,
-        "summary": _summarize_all(questions, outcomes, fallbacks),
+        "summary": summary,
         "caveats": _CAVEATS,
     }
     try:
@@ -461,6 +554,17 @@ def _format_purpose(label: str, summary: dict[str, object]) -> list[str]:
         outcomes = ", ".join(f"{name} {n}" for name, n in s["outcomes"].items())
         mismatch = "" if s["fallback_mismatch"] is None else f" (폴백 기대와 어긋남 {s['fallback_mismatch']}건)"
         lines.append(f"  - {state} {s['questions']}건: {outcomes}{mismatch}")
+    retrieval = summary.get("retrieval")
+    if retrieval:  # 합격 판정과 무관한 검색 지표
+        for name in ("manual", "history"):
+            m = retrieval[name]
+            if m:
+                lines.append(
+                    f"  검색 {name} {m['questions']}건: "
+                    f"Recall {m['recall']:.2f}, Hit {m['hit_rate']:.2f}, MRR {m['mrr']:.2f}"
+                )
+        if retrieval["search_failed"]:
+            lines.append(f"  검색 실패 {retrieval['search_failed']}건")
     return lines
 
 
