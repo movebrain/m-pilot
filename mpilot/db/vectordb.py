@@ -15,7 +15,7 @@
     - DB(`rdb`)의 확정 이력이 정본이다. 반영 실패는 건별로 저장하지 않고 앱 재시작의 전체 재생성으로 복구한다.
     - 같은 ID는 같은 원문을 유지한다. 과거 인용 원문은 현재 색인에서 조회하며 스냅샷은 저장하지 않는다.
     - 매뉴얼 본문 청크는 절 제목을 앞에 붙인 글로 임베딩하되 저장하는 원문은 청크 원문 그대로 둔다.
-      에러코드 절(`<번호> <코드> <이름>`)의 청크에는 메타데이터 `code`를 단다.
+      에러코드 절(`<번호> <코드> <이름>`)의 청크에는 메타데이터 `code`를, 그 밖의 청크(공통 절)에는 `COMMON_CODE`를 단다.
     - 모듈을 import할 때 임베딩 API나 저장소에 접속하지 않는다. 연결은 `connect`가 맡는다.
 
 의존: `models`만 import한다(의존 규칙 §2.5).
@@ -135,7 +135,7 @@ def get_document(kind: CitationKind, ref_id: str) -> Document:
 # 문서 메타데이터 키(retriever가 필터·출처 표기에 쓴다):
 #     공통      doc_type("error" | "manual" | "history"), equipment(Equipment 값)
 #     error     code, manual_id, page, section
-#     manual    manual_id, page, section, chunk_no, version
+#     manual    code(에러코드 절이면 그 코드, 아니면 COMMON_CODE), manual_id, page, section, chunk_no, version
 #     history   code, case_id, completed_at(UTC ISO 8601)
 # Chroma 메타데이터에는 None을 넣을 수 없어서, 값이 없는 키는 아예 넣지 않는다.
 #
@@ -150,6 +150,7 @@ def get_document(kind: CitationKind, ref_id: str) -> Document:
 _ID_SEP = ":"  # 문서 ID 구성 요소 사이의 구분자
 
 # 에러코드 절 제목 `<번호> <에러코드> <이름>`(예: `13.1 M401 주행 서보 과전류`)에서 에러코드를 읽는 규칙.
+COMMON_CODE = "common"  # 에러코드 절이 아닌 매뉴얼 청크의 메타데이터 `code`(retriever가 필터에 쓴다)
 _SECTION_CODE = re.compile(r"^\d+\.\d+ ([A-Z]\d{3}) ")
 
 _UPSERT_BATCH = 1000  # Chroma 한 번 쓰기의 최대 건수(저장소 한도 안쪽)
@@ -241,8 +242,8 @@ def _build_manual_document(chunk: Chunk) -> tuple[str, Document]:
         "version": chunk.version,
     }
     section_code = _SECTION_CODE.match(chunk.section)
-    if section_code:  # 에러코드 절의 청크만 코드를 단다(Chroma는 None 값을 받지 않는다). 다른 코드의 청크를 거르는 데 쓴다.
-        metadata["code"] = section_code[1]
+    # Chroma 필터에는 "키 없음" 조건이 없어, 공통 절도 값을 달아야 `code $in [신고 코드, COMMON_CODE]`로 고를 수 있다.
+    metadata["code"] = section_code[1] if section_code else COMMON_CODE
     return doc_id, Document(page_content=chunk.text, metadata=metadata, id=doc_id)
 
 

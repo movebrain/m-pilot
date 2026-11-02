@@ -108,8 +108,10 @@ python app_engineer.py      # 엔지니어 앱  → http://127.0.0.1:7861
 
 ### 시작할 때 보이는 것 (정상)
 
-- 첫 화면이 열리기까지 **몇 분** 걸린다. 매뉴얼 PDF 4종을 파싱하고 OpenAI로 임베딩하기 때문이다.
-- 그동안 아래 경고가 여러 번 찍힌다. **PDF 글꼴 정보에 대한 pdfminer 경고이며 무시해도 된다.**
+- **처음 실행**은 첫 화면이 열리기까지 **몇 분** 걸린다. 매뉴얼 PDF 4종을 파싱하고 OpenAI로 임베딩하기 때문이다.
+- 파싱 결과는 `data/cache/`에 저장된다(git에는 올라가지 않는다). **다음 실행부터는 파싱을 건너뛰어** 20초 안팎이면 열린다. 임베딩은 매번 다시 한다.
+  매뉴얼 PDF나 `mpilot/db/parser/`의 코드가 바뀌면 자동으로 다시 파싱한다. `data/cache/`를 지워도 되며, 다음 시작 때 다시 만든다.
+- 파싱하는 동안(캐시가 없을 때) 아래 경고가 여러 번 찍힌다. **PDF 글꼴 정보에 대한 pdfminer 경고이며 무시해도 된다.**
 
   ```
   Could not get FontBBox from font descriptor because None cannot be parsed as 4 floats
